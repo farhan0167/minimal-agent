@@ -1,1 +1,1 @@
-# Minimal Agent Harness# minimal-agent
+# Minimal Agent Harness
