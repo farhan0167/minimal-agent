@@ -53,9 +53,7 @@ class BaseTool(Generic[InputModel, Out], ABC):
     side-effects) set this True so the harness can gate destructive tools in
     safe/dry-run modes."""
 
-    async def validate(
-        self, args: InputModel, ctx: ToolContext
-    ) -> ValidationResult:
+    async def validate(self, args: InputModel, ctx: ToolContext) -> ValidationResult:
         """Semantic validation beyond what Pydantic expresses.
 
         Called by the dispatcher before `invoke`. Override for preconditions

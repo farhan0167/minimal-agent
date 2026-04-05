@@ -7,15 +7,13 @@ from tools.builtin.get_weather import GetWeather
 
 
 async def main():
-    # Drop unset values — the SDK rejects None for max_retries/timeout and
-    # has its own defaults we want to preserve.
     overrides = {
         "timeout": settings.OPENAI_TIMEOUT,
         "max_retries": settings.OPENAI_MAX_RETRIES,
-        "api_key": settings.OPENAI_API_KEY,
     }
     llm = LLM(
         model=settings.LLM_MODEL,
+        backend=settings.LLM_BACKEND,
         **{k: v for k, v in overrides.items() if v is not None},
     )
 
@@ -28,9 +26,7 @@ async def main():
 
     print("\n--- tool ---")
     messages = [
-        Message(
-            role="user", content="What's the weather in San Francisco in celsius?"
-        )
+        Message(role="user", content="What's the weather in San Francisco in celsius?")
     ]
     tool_resp = await llm.generate(
         messages=messages,

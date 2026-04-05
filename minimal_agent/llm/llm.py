@@ -27,10 +27,23 @@ Escape hatch to the raw SDK client for features we haven't surfaced:
 """
 
 import json
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Type, TypeVar, Union
+from typing import (
+    Any,
+    AsyncIterator,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel
+
+from config import settings
 
 from .types import (
     GenerateResponse,
@@ -49,14 +62,62 @@ T = TypeVar("T", bound=BaseModel)
 # ("auto", "none", "required") or a tool name to force a specific call.
 ToolChoice = str
 
+# Supported backends. All three speak the OpenAI chat-completions wire format;
+# "openrouter" and "anthropic" are reached by pointing AsyncOpenAI at a
+# different base_url (documented by both providers as an OpenAI-compatible
+# path). See:
+#   - https://openrouter.ai/docs/quickstart
+#   - https://platform.claude.com/docs/en/api/openai-sdk
+Backend = Literal["openai", "openrouter", "anthropic"]
+
+_BACKEND_BASE_URLS: Dict[str, str] = {
+    "openrouter": "https://openrouter.ai/api/v1",
+    "anthropic": "https://api.anthropic.com/v1/",
+}
+
 
 class LLM:
-    def __init__(self, model: str, **client_kwargs: Any) -> None:
-        # client_kwargs forwards base_url / api_key / timeout straight to the
-        # SDK, so OpenAI-compatible servers (llama.cpp, vLLM, LM Studio) work
-        # the same as api.openai.com.
+    def __init__(
+        self,
+        model: str,
+        *,
+        backend: Backend = "openai",
+        **client_kwargs: Any,
+    ) -> None:
         self.model = model
+        self.backend: Backend = backend
+        self._apply_backend_defaults(client_kwargs)
         self._client = AsyncOpenAI(**client_kwargs)
+
+    def _apply_backend_defaults(
+        self,
+        client_kwargs: Dict[str, Any],
+    ) -> None:
+        """Mutate *client_kwargs* with sensible defaults for the backend.
+
+        Reads the api_key and optional headers from settings, sets the
+        provider's base_url, and injects OpenRouter's leaderboard headers.
+        """
+        if "api_key" not in client_kwargs:
+            client_kwargs["api_key"] = settings.LLM_BACKEND_API_KEY
+
+        if self.backend in _BACKEND_BASE_URLS:
+            client_kwargs.setdefault("base_url", _BACKEND_BASE_URLS[self.backend])
+
+        if self.backend == "openrouter":
+            site_url = settings.LLM_BACKEND_SITE_URL
+            app_name = settings.LLM_BACKEND_APP_NAME
+            if site_url or app_name:
+                headers: Dict[str, str] = {}
+                if site_url:
+                    headers["HTTP-Referer"] = site_url
+                if app_name:
+                    headers["X-Title"] = app_name
+                existing = client_kwargs.get("default_headers") or {}
+                client_kwargs["default_headers"] = {
+                    **headers,
+                    **existing,
+                }
 
     @property
     def raw(self) -> AsyncOpenAI:

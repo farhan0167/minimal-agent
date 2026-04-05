@@ -267,9 +267,7 @@ class TestCompletionParams:
 
     def test_tools_block_emitted_with_tools(self, llm: LLM) -> None:
         tool = LLMTool(name="f", description="d")
-        params = _params(
-            llm, tools=[tool], tool_choice="f", parallel_tool_calls=False
-        )
+        params = _params(llm, tools=[tool], tool_choice="f", parallel_tool_calls=False)
         assert params["tools"][0]["function"]["name"] == "f"
         assert params["tool_choice"] == {
             "type": "function",
