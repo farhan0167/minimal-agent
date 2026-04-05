@@ -32,7 +32,6 @@ from typing import (
     AsyncIterator,
     Dict,
     List,
-    Literal,
     Optional,
     Tuple,
     Type,
@@ -43,7 +42,7 @@ from typing import (
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from config import settings
+from config import Backend, settings
 
 from .types import (
     GenerateResponse,
@@ -61,14 +60,6 @@ T = TypeVar("T", bound=BaseModel)
 # Type for the `tool_choice` argument. Accepts OpenAI's string modes
 # ("auto", "none", "required") or a tool name to force a specific call.
 ToolChoice = str
-
-# Supported backends. All three speak the OpenAI chat-completions wire format;
-# "openrouter" and "anthropic" are reached by pointing AsyncOpenAI at a
-# different base_url (documented by both providers as an OpenAI-compatible
-# path). See:
-#   - https://openrouter.ai/docs/quickstart
-#   - https://platform.claude.com/docs/en/api/openai-sdk
-Backend = Literal["openai", "openrouter", "anthropic"]
 
 _BACKEND_BASE_URLS: Dict[str, str] = {
     "openrouter": "https://openrouter.ai/api/v1",
@@ -99,9 +90,13 @@ class LLM:
         provider's base_url, and injects OpenRouter's leaderboard headers.
         """
         if "api_key" not in client_kwargs:
-            client_kwargs["api_key"] = settings.LLM_BACKEND_API_KEY
+            client_kwargs["api_key"] = settings.LLM_BACKEND_API_KEY or (
+                "not-needed" if self.backend == "localhost" else None
+            )
 
-        if self.backend in _BACKEND_BASE_URLS:
+        if settings.LLM_BACKEND_BASE_URL:
+            client_kwargs.setdefault("base_url", settings.LLM_BACKEND_BASE_URL)
+        elif self.backend in _BACKEND_BASE_URLS:
             client_kwargs.setdefault("base_url", _BACKEND_BASE_URLS[self.backend])
 
         if self.backend == "openrouter":

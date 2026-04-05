@@ -15,12 +15,13 @@ from typing import Literal, Optional
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-Backend = Literal["openai", "openrouter", "anthropic"]
+Backend = Literal["openai", "openrouter", "anthropic", "localhost"]
 
 _BACKEND_FALLBACK_KEYS: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
+    "localhost": "OPENAI_API_KEY",
 }
 
 
@@ -47,6 +48,11 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: Optional[str] = Field(default=None)
     ANTHROPIC_API_KEY: Optional[str] = Field(default=None)
 
+    # Override the base URL for the backend. Required for "localhost"
+    # (e.g. http://localhost:8000/v1 for vLLM, llama.cpp, LM Studio, Ollama).
+    # For other backends this overrides the provider's default URL.
+    LLM_BACKEND_BASE_URL: Optional[str] = Field(default=None)
+
     # Optional: site URL and app name shown on OpenRouter's leaderboards.
     # Ignored by other backends.
     LLM_BACKEND_SITE_URL: Optional[str] = Field(default=None)
@@ -68,6 +74,10 @@ class Settings(BaseSettings):
             fallback_value = getattr(self, fallback_field, None)
             if fallback_value is not None:
                 self.LLM_BACKEND_API_KEY = fallback_value
+        if self.LLM_BACKEND == "localhost" and not self.LLM_BACKEND_BASE_URL:
+            raise ValueError(
+                "LLM_BACKEND_BASE_URL is required when LLM_BACKEND='localhost'"
+            )
         return self
 
 
