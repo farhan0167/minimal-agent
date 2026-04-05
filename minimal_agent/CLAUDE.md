@@ -12,8 +12,14 @@ Dependency management uses `uv` (see [uv.lock](uv.lock) and [pyproject.toml](pyp
 - Format: `make format` (runs `uv run ruff format .`)
 - Lint: `make lint` (runs `uv run ruff check .`)
 - Auto-fix lint: `make lint-fix` (runs `uv run ruff check --fix .`)
+- Run tests: `make test` (runs `uv run pytest`)
 
-Ruff is the only linter/formatter. Its config lives in [pyproject.toml](pyproject.toml) under `[tool.ruff.lint]` and `[tool.ruff.format]` — enabled rule groups are `E`, `F`, `B`, `I`, `W` (with `B008` ignored). There is no test suite configured yet.
+Ruff is the only linter/formatter. Its config lives in [pyproject.toml](pyproject.toml) under `[tool.ruff.lint]` and `[tool.ruff.format]` — enabled rule groups are `E`, `F`, `B`, `I`, `W` (with `B008` ignored).
+
+## Testing
+
+- Tests live in `tests/`, mirroring the source layout. pytest-asyncio is in auto mode, so `async def test_*` works without decorators.
+- Always run `make test` as the final step after changing code, and fix any failures before handing back.
 
 Configuration is loaded via `pydantic-settings` from environment variables and a `.env` file in the working directory. Copy [.env.example](.env.example) to `.env` and fill in `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL` to point at a local OpenAI-compatible server like vLLM / llama.cpp / LM Studio / Ollama's `/v1`).
 

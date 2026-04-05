@@ -1,4 +1,4 @@
-.PHONY: format lint lint-fix
+.PHONY: format lint lint-fix test
 
 # Format code using Ruff
 format:
@@ -11,3 +11,7 @@ lint:
 # Automatically fix linting issues using Ruff
 lint-fix:
 	uv run ruff check --fix .
+
+# Run the test suite
+test:
+	uv run pytest
