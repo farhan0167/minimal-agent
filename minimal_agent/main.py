@@ -35,7 +35,12 @@ async def main():
 
     # Non-streaming
     resp = await llm.generate(
-        [Message(role="user", content="Write a one-sentence bedtime story about a unicorn.")],
+        [
+            Message(
+                role="user",
+                content="Write a one-sentence bedtime story about a unicorn.",
+            )
+        ],
         system="You are a concise storyteller.",
     )
     print(resp.text)
@@ -45,7 +50,11 @@ async def main():
     weather_tool = Tool.from_model(GetWeatherArgs, name="get_weather")
     print(f"tool: {weather_tool.name} — {weather_tool.description}")
     tool_resp = await llm.generate(
-        [Message(role="user", content="What's the weather in San Francisco in celsius?")],
+        [
+            Message(
+                role="user", content="What's the weather in San Francisco in celsius?"
+            )
+        ],
         tools=[weather_tool],
         tool_choice="auto",
     )
