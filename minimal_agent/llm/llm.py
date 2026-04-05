@@ -13,7 +13,7 @@ Streaming:
 
 Tool calling:
 
-    tools = [Tool(name="get_weather", description="...", parameters={...})]
+    tools = [LLMTool(name="get_weather", description="...", parameters={...})]
     resp = await llm.generate(messages, tools=tools)
     if resp.tool_calls:
         for tc in resp.tool_calls:
@@ -34,10 +34,10 @@ from pydantic import BaseModel
 
 from .types import (
     GenerateResponse,
+    LLMTool,
     Message,
     StreamChunk,
     StructuredResponse,
-    Tool,
     ToolCall,
     ToolCallDelta,
     Usage,
@@ -112,8 +112,8 @@ class LLM:
             out.append(self._message_to_openai(m))
         return out
 
-    def _build_tools(self, tools: List[Tool]) -> List[Dict[str, Any]]:
-        """Wrap each neutral Tool in OpenAI's {"type":"function", ...} envelope."""
+    def _build_tools(self, tools: List[LLMTool]) -> List[Dict[str, Any]]:
+        """Wrap each neutral LLMTool in OpenAI's {"type":"function", ...} envelope."""
         return [
             {
                 "type": "function",
@@ -147,7 +147,7 @@ class LLM:
         self,
         messages: List[Message],
         system: Optional[str],
-        tools: Optional[List[Tool]],
+        tools: Optional[List[LLMTool]],
         tool_choice: Optional[ToolChoice],
         parallel_tool_calls: Optional[bool],
         response_format: Optional[Dict[str, Any]],
@@ -248,7 +248,7 @@ class LLM:
         messages: List[Message],
         *,
         system: Optional[str] = None,
-        tools: Optional[List[Tool]] = None,
+        tools: Optional[List[LLMTool]] = None,
         tool_choice: Optional[ToolChoice] = None,
         parallel_tool_calls: Optional[bool] = None,
         response_format: Optional[Dict[str, Any]] = None,
@@ -302,7 +302,7 @@ class LLM:
         *,
         schema: Type[T],
         system: Optional[str] = None,
-        tools: Optional[List[Tool]] = None,
+        tools: Optional[List[LLMTool]] = None,
         tool_choice: Optional[ToolChoice] = None,
         parallel_tool_calls: Optional[bool] = None,
         max_tokens: Optional[int] = None,
@@ -371,7 +371,7 @@ class LLM:
         messages: List[Message],
         *,
         system: Optional[str] = None,
-        tools: Optional[List[Tool]] = None,
+        tools: Optional[List[LLMTool]] = None,
         tool_choice: Optional[ToolChoice] = None,
         parallel_tool_calls: Optional[bool] = None,
         response_format: Optional[Dict[str, Any]] = None,

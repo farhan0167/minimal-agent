@@ -10,7 +10,7 @@ import json
 import pytest
 
 from llm.llm import LLM
-from llm.types import ImagePart, ImageUrl, Message, TextPart, Tool, ToolCall
+from llm.types import ImagePart, ImageUrl, LLMTool, Message, TextPart, ToolCall
 
 
 @pytest.fixture
@@ -128,7 +128,7 @@ class TestBuildMessages:
 
 class TestBuildTools:
     def test_wraps_in_function_envelope(self, llm: LLM) -> None:
-        tool = Tool(
+        tool = LLMTool(
             name="get_weather",
             description="Look up the weather",
             parameters={
@@ -266,7 +266,7 @@ class TestCompletionParams:
         assert "parallel_tool_calls" not in params
 
     def test_tools_block_emitted_with_tools(self, llm: LLM) -> None:
-        tool = Tool(name="f", description="d")
+        tool = LLMTool(name="f", description="d")
         params = _params(
             llm, tools=[tool], tool_choice="f", parallel_tool_calls=False
         )

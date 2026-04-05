@@ -19,7 +19,8 @@ Ruff is the only linter/formatter. Its config lives in [pyproject.toml](pyprojec
 ## Testing
 
 - Tests live in `tests/`, mirroring the source layout. pytest-asyncio is in auto mode, so `async def test_*` works without decorators.
-- Always run `make test` as the final step after changing code, and fix any failures before handing back.
+- Run `make test` as the final step after any change that could affect behavior — new code, refactors, dependency bumps, config changes — and fix failures before handing back.
+- **Skip `make test` for trivial edits** that cannot plausibly break tests: renaming a local variable, fixing a typo in a comment or docstring, editing a markdown file, touching `CLAUDE.md`, or adjusting whitespace. If in doubt, run them.
 
 Configuration is loaded via `pydantic-settings` from environment variables and a `.env` file in the working directory. Copy [.env.example](.env.example) to `.env` and fill in `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL` to point at a local OpenAI-compatible server like vLLM / llama.cpp / LM Studio / Ollama's `/v1`).
 
@@ -45,7 +46,7 @@ Pydantic models mirroring (but not depending on) the OpenAI chat shapes:
 
 - `Message` — `content` can be `str`, a list of `ContentPart` (`TextPart` / `ImagePart` for multimodal), or `None` (assistant messages that are pure tool calls). Tool-result messages set `role="tool"` + `tool_call_id`.
 - `ToolCall` stores `arguments` as a **parsed dict** for ergonomics; the facade `json.dumps` on the way out to OpenAI and `json.loads` on the way in. If the model emits malformed JSON, the parser falls back to `{"__raw__": <string>}` rather than raising.
-- `Tool` is provider-neutral (`name` / `description` / `parameters` JSON Schema). `Tool.from_model(PydanticModel)` delegates to the SDK's `pydantic_function_tool` helper to generate a strict schema (`additionalProperties=false`, all fields required), then unwraps the OpenAI envelope back into the neutral shape. OpenAI's function-calling envelope only exists at request time inside `_build_tools`.
+- `LLMTool` is the provider-neutral wire-format description (`name` / `description` / `parameters` JSON Schema) that the facade ships to the model. It is distinct from `tools.BaseTool`, which is the executable tool interface authors implement — see [.claude/specifications/tool-system.md](.claude/specifications/tool-system.md). `LLMTool.from_model(PydanticModel)` delegates to the SDK's `pydantic_function_tool` helper to generate a strict schema (`additionalProperties=false`, all fields required), then unwraps the OpenAI envelope back into the neutral shape. OpenAI's function-calling envelope only exists at request time inside `_build_tools`.
 - `ToolChoice` accepts `"auto" | "none" | "required"` *or* a bare tool name string (which the facade wraps into OpenAI's forced-call object).
 
 ### Tool-call streaming
