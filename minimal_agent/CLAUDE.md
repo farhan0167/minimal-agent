@@ -24,6 +24,10 @@ Ruff is the only linter/formatter. Its config lives in [pyproject.toml](pyprojec
 
 Configuration is loaded via `pydantic-settings` from environment variables and a `.env` file in the working directory. Copy [.env.example](.env.example) to `.env` and fill in `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL` to point at a local OpenAI-compatible server like vLLM / llama.cpp / LM Studio / Ollama's `/v1`).
 
+## Style
+
+- Prefer type-safe constructs over magic strings. Use `StrEnum`, `Literal`, or similar typed constants for fixed sets of values (e.g. `Backend.OPENAI` instead of `"openai"`). This catches typos at the type-checker level and enables autocompletion.
+
 ## Architecture
 
 This is a minimal async LLM facade over the OpenAI Python SDK, designed so that the rest of the codebase never imports `openai` directly. The neutral types in [llm/types.py](llm/types.py) are the public surface; [llm/llm.py](llm/llm.py) is the only place that translates to/from OpenAI's SDK shapes.
@@ -38,7 +42,7 @@ One class wrapping `AsyncOpenAI` with three public coroutines:
 
 The `.raw` property exposes the underlying `AsyncOpenAI` client as an escape hatch for features the facade hasn't surfaced.
 
-**Backends.** `LLM(..., backend=...)` accepts `"openai"` (default), `"openrouter"`, or `"anthropic"`. The latter two set a default `base_url` for each provider's OpenAI-compatible endpoint ([OpenRouter quickstart](https://openrouter.ai/docs/quickstart), [Anthropic OpenAI SDK compat](https://platform.claude.com/docs/en/api/openai-sdk)); an explicit `base_url` in `client_kwargs` still wins. OpenRouter's optional `site_url` / `app_name` kwargs become `HTTP-Referer` / `X-Title` headers for their leaderboards. Beyond `response_format`, Anthropic's compat layer also silently ignores `seed`, `frequency_penalty`, `presence_penalty`, `logprobs`, and `user` — `_completion_params` still sends them, they just have no effect.
+**Backends.** `LLM(..., backend=...)` accepts a `Backend` enum value (`Backend.OPENAI` (default), `Backend.OPENROUTER`, `Backend.ANTHROPIC`, or `Backend.LOCALHOST`). The latter two set a default `base_url` for each provider's OpenAI-compatible endpoint ([OpenRouter quickstart](https://openrouter.ai/docs/quickstart), [Anthropic OpenAI SDK compat](https://platform.claude.com/docs/en/api/openai-sdk)); an explicit `base_url` in `client_kwargs` still wins. OpenRouter's optional `site_url` / `app_name` kwargs become `HTTP-Referer` / `X-Title` headers for their leaderboards. Beyond `response_format`, Anthropic's compat layer also silently ignores `seed`, `frequency_penalty`, `presence_penalty`, `logprobs`, and `user` — `_completion_params` still sends them, they just have no effect.
 
 Request building is centralized in `_completion_params`: every optional parameter is only inserted when non-None, so provider defaults (and the SDK's own defaults) are preserved. Note that `max_tokens` is mapped to `max_completion_tokens` because the old field is deprecated and reasoning models reject it.
 

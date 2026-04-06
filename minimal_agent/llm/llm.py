@@ -61,9 +61,9 @@ T = TypeVar("T", bound=BaseModel)
 # ("auto", "none", "required") or a tool name to force a specific call.
 ToolChoice = str
 
-_BACKEND_BASE_URLS: Dict[str, str] = {
-    "openrouter": "https://openrouter.ai/api/v1",
-    "anthropic": "https://api.anthropic.com/v1/",
+_BACKEND_BASE_URLS: Dict[Backend, str] = {
+    Backend.OPENROUTER: "https://openrouter.ai/api/v1",
+    Backend.ANTHROPIC: "https://api.anthropic.com/v1/",
 }
 
 
@@ -72,7 +72,7 @@ class LLM:
         self,
         model: str,
         *,
-        backend: Backend = "openai",
+        backend: Backend = Backend.OPENAI,
         **client_kwargs: Any,
     ) -> None:
         self.model = model
@@ -91,7 +91,7 @@ class LLM:
         """
         if "api_key" not in client_kwargs:
             client_kwargs["api_key"] = settings.LLM_BACKEND_API_KEY or (
-                "not-needed" if self.backend == "localhost" else None
+                "not-needed" if self.backend == Backend.LOCALHOST else None
             )
 
         if settings.LLM_BACKEND_BASE_URL:
@@ -99,7 +99,7 @@ class LLM:
         elif self.backend in _BACKEND_BASE_URLS:
             client_kwargs.setdefault("base_url", _BACKEND_BASE_URLS[self.backend])
 
-        if self.backend == "openrouter":
+        if self.backend == Backend.OPENROUTER:
             site_url = settings.LLM_BACKEND_SITE_URL
             app_name = settings.LLM_BACKEND_APP_NAME
             if site_url or app_name:

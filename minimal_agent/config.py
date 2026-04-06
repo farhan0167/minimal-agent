@@ -10,18 +10,25 @@ Values come from (in priority order): process env vars, then a .env file in
 the working directory. See .env.example for the full list.
 """
 
-from typing import Literal, Optional
+from enum import StrEnum
+from typing import Optional
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-Backend = Literal["openai", "openrouter", "anthropic", "localhost"]
 
-_BACKEND_FALLBACK_KEYS: dict[str, str] = {
-    "openai": "OPENAI_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "localhost": "OPENAI_API_KEY",
+class Backend(StrEnum):
+    OPENAI = "openai"
+    OPENROUTER = "openrouter"
+    ANTHROPIC = "anthropic"
+    LOCALHOST = "localhost"
+
+
+_BACKEND_FALLBACK_KEYS: dict[Backend, str] = {
+    Backend.OPENAI: "OPENAI_API_KEY",
+    Backend.OPENROUTER: "OPENROUTER_API_KEY",
+    Backend.ANTHROPIC: "ANTHROPIC_API_KEY",
+    Backend.LOCALHOST: "OPENAI_API_KEY",
 }
 
 
@@ -34,7 +41,7 @@ class Settings(BaseSettings):
     )
 
     # --- Backend selection -------------------------------------------------
-    LLM_BACKEND: Backend = Field(default="openai")
+    LLM_BACKEND: Backend = Field(default=Backend.OPENAI)
 
     # --- Backend credentials ------------------------------------------------
     # Preferred: set LLM_BACKEND_API_KEY to the key for whatever backend
@@ -74,7 +81,7 @@ class Settings(BaseSettings):
             fallback_value = getattr(self, fallback_field, None)
             if fallback_value is not None:
                 self.LLM_BACKEND_API_KEY = fallback_value
-        if self.LLM_BACKEND == "localhost" and not self.LLM_BACKEND_BASE_URL:
+        if self.LLM_BACKEND == Backend.LOCALHOST and not self.LLM_BACKEND_BASE_URL:
             raise ValueError(
                 "LLM_BACKEND_BASE_URL is required when LLM_BACKEND='localhost'"
             )
