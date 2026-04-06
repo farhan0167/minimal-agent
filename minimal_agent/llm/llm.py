@@ -13,7 +13,7 @@ Streaming:
 
 Tool calling:
 
-    tools = [Tool(name="get_weather", description="...", parameters={...})]
+    tools = [LLMTool(name="get_weather", description="...", parameters={...})]
     resp = await llm.generate(messages, tools=tools)
     if resp.tool_calls:
         for tc in resp.tool_calls:
@@ -27,17 +27,29 @@ Escape hatch to the raw SDK client for features we haven't surfaced:
 """
 
 import json
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Type, TypeVar, Union
+from typing import (
+    Any,
+    AsyncIterator,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+from config import Backend, settings
+
 from .types import (
     GenerateResponse,
+    LLMTool,
     Message,
     StreamChunk,
     StructuredResponse,
-    Tool,
     ToolCall,
     ToolCallDelta,
     Usage,
@@ -49,14 +61,58 @@ T = TypeVar("T", bound=BaseModel)
 # ("auto", "none", "required") or a tool name to force a specific call.
 ToolChoice = str
 
+_BACKEND_BASE_URLS: Dict[Backend, str] = {
+    Backend.OPENROUTER: "https://openrouter.ai/api/v1",
+    Backend.ANTHROPIC: "https://api.anthropic.com/v1/",
+}
+
 
 class LLM:
-    def __init__(self, model: str, **client_kwargs: Any) -> None:
-        # client_kwargs forwards base_url / api_key / timeout straight to the
-        # SDK, so OpenAI-compatible servers (llama.cpp, vLLM, LM Studio) work
-        # the same as api.openai.com.
+    def __init__(
+        self,
+        model: str,
+        *,
+        backend: Backend = Backend.OPENAI,
+        **client_kwargs: Any,
+    ) -> None:
         self.model = model
+        self.backend: Backend = backend
+        self._apply_backend_defaults(client_kwargs)
         self._client = AsyncOpenAI(**client_kwargs)
+
+    def _apply_backend_defaults(
+        self,
+        client_kwargs: Dict[str, Any],
+    ) -> None:
+        """Mutate *client_kwargs* with sensible defaults for the backend.
+
+        Reads the api_key and optional headers from settings, sets the
+        provider's base_url, and injects OpenRouter's leaderboard headers.
+        """
+        if "api_key" not in client_kwargs:
+            client_kwargs["api_key"] = settings.LLM_BACKEND_API_KEY or (
+                "not-needed" if self.backend == Backend.LOCALHOST else None
+            )
+
+        if settings.LLM_BACKEND_BASE_URL:
+            client_kwargs.setdefault("base_url", settings.LLM_BACKEND_BASE_URL)
+        elif self.backend in _BACKEND_BASE_URLS:
+            client_kwargs.setdefault("base_url", _BACKEND_BASE_URLS[self.backend])
+
+        if self.backend == Backend.OPENROUTER:
+            site_url = settings.LLM_BACKEND_SITE_URL
+            app_name = settings.LLM_BACKEND_APP_NAME
+            if site_url or app_name:
+                headers: Dict[str, str] = {}
+                if site_url:
+                    headers["HTTP-Referer"] = site_url
+                if app_name:
+                    headers["X-Title"] = app_name
+                existing = client_kwargs.get("default_headers") or {}
+                client_kwargs["default_headers"] = {
+                    **headers,
+                    **existing,
+                }
 
     @property
     def raw(self) -> AsyncOpenAI:
@@ -112,8 +168,8 @@ class LLM:
             out.append(self._message_to_openai(m))
         return out
 
-    def _build_tools(self, tools: List[Tool]) -> List[Dict[str, Any]]:
-        """Wrap each neutral Tool in OpenAI's {"type":"function", ...} envelope."""
+    def _build_tools(self, tools: List[LLMTool]) -> List[Dict[str, Any]]:
+        """Wrap each neutral LLMTool in OpenAI's {"type":"function", ...} envelope."""
         return [
             {
                 "type": "function",
@@ -147,7 +203,7 @@ class LLM:
         self,
         messages: List[Message],
         system: Optional[str],
-        tools: Optional[List[Tool]],
+        tools: Optional[List[LLMTool]],
         tool_choice: Optional[ToolChoice],
         parallel_tool_calls: Optional[bool],
         response_format: Optional[Dict[str, Any]],
@@ -248,7 +304,7 @@ class LLM:
         messages: List[Message],
         *,
         system: Optional[str] = None,
-        tools: Optional[List[Tool]] = None,
+        tools: Optional[List[LLMTool]] = None,
         tool_choice: Optional[ToolChoice] = None,
         parallel_tool_calls: Optional[bool] = None,
         response_format: Optional[Dict[str, Any]] = None,
@@ -302,7 +358,7 @@ class LLM:
         *,
         schema: Type[T],
         system: Optional[str] = None,
-        tools: Optional[List[Tool]] = None,
+        tools: Optional[List[LLMTool]] = None,
         tool_choice: Optional[ToolChoice] = None,
         parallel_tool_calls: Optional[bool] = None,
         max_tokens: Optional[int] = None,
@@ -371,7 +427,7 @@ class LLM:
         messages: List[Message],
         *,
         system: Optional[str] = None,
-        tools: Optional[List[Tool]] = None,
+        tools: Optional[List[LLMTool]] = None,
         tool_choice: Optional[ToolChoice] = None,
         parallel_tool_calls: Optional[bool] = None,
         response_format: Optional[Dict[str, Any]] = None,

@@ -41,16 +41,10 @@ class TestAccumulateToolCalls:
         string chunks that must be concatenated in order."""
         chunks = [
             StreamChunk(
-                tool_calls=[
-                    ToolCallDelta(index=0, id="call_1", name="get_weather")
-                ]
+                tool_calls=[ToolCallDelta(index=0, id="call_1", name="get_weather")]
             ),
-            StreamChunk(
-                tool_calls=[ToolCallDelta(index=0, arguments='{"city":')]
-            ),
-            StreamChunk(
-                tool_calls=[ToolCallDelta(index=0, arguments=' "NYC"}')]
-            ),
+            StreamChunk(tool_calls=[ToolCallDelta(index=0, arguments='{"city":')]),
+            StreamChunk(tool_calls=[ToolCallDelta(index=0, arguments=' "NYC"}')]),
         ]
         text, calls = await accumulate_tool_calls(_gen(chunks))
         assert text == ""

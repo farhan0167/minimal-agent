@@ -71,8 +71,15 @@ class Message(BaseModel):
 _EMPTY_SCHEMA: Dict[str, Any] = {"type": "object", "properties": {}}
 
 
-class Tool(BaseModel):
-    """A tool the model may call."""
+class LLMTool(BaseModel):
+    """A tool the model may call, in neutral wire-format.
+
+    This is the serialized *description* of a tool — name, human-readable
+    description, and JSON Schema for arguments — that the LLM facade ships to
+    the model. It is distinct from `tools.BaseTool`, which is the executable
+    interface tool authors implement. See
+    [.claude/specifications/tool-system.md](../.claude/specifications/tool-system.md).
+    """
 
     name: str
     description: str
@@ -85,7 +92,7 @@ class Tool(BaseModel):
         *,
         name: Optional[str] = None,
         description: Optional[str] = None,
-    ) -> "Tool":
+    ) -> "LLMTool":
         """Build a Tool from a Pydantic model describing its arguments.
 
         Defers all JSON Schema generation to the OpenAI SDK's public

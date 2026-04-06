@@ -87,9 +87,7 @@ class TestParseUsage:
         assert llm._parse_usage(None) is None
 
     def test_populated_usage(self, llm: LLM) -> None:
-        raw = SimpleNamespace(
-            prompt_tokens=10, completion_tokens=20, total_tokens=30
-        )
+        raw = SimpleNamespace(prompt_tokens=10, completion_tokens=20, total_tokens=30)
         usage = llm._parse_usage(raw)
         assert usage is not None
         assert usage.prompt_tokens == 10
