@@ -7,14 +7,11 @@ from tools.builtin.get_weather import GetWeather
 
 
 async def main():
-    overrides = {
-        "timeout": settings.OPENAI_TIMEOUT,
-        "max_retries": settings.OPENAI_MAX_RETRIES,
-    }
     llm = LLM(
         model=settings.LLM_MODEL,
         backend=settings.LLM_BACKEND,
-        **{k: v for k, v in overrides.items() if v is not None},
+        timeout=settings.OPENAI_TIMEOUT,
+        max_retries=settings.OPENAI_MAX_RETRIES,
     )
 
     # Wire tools once at startup. `tools_by_name` is the dispatcher's lookup

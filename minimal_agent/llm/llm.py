@@ -73,10 +73,25 @@ class LLM:
         model: str,
         *,
         backend: Backend = Backend.OPENAI,
-        **client_kwargs: Any,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[float] = None,
+        max_retries: Optional[int] = None,
+        default_headers: Optional[Dict[str, str]] = None,
     ) -> None:
         self.model = model
         self.backend: Backend = backend
+        client_kwargs: Dict[str, Any] = {}
+        if api_key is not None:
+            client_kwargs["api_key"] = api_key
+        if base_url is not None:
+            client_kwargs["base_url"] = base_url
+        if timeout is not None:
+            client_kwargs["timeout"] = timeout
+        if max_retries is not None:
+            client_kwargs["max_retries"] = max_retries
+        if default_headers is not None:
+            client_kwargs["default_headers"] = default_headers
         self._apply_backend_defaults(client_kwargs)
         self._client = AsyncOpenAI(**client_kwargs)
 
