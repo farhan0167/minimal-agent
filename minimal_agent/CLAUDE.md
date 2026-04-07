@@ -32,9 +32,13 @@ Configuration is loaded via `pydantic-settings` from environment variables and a
 
 A minimal async agent framework: an **agent loop** drives an LLM that can call tools, with the LLM details abstracted behind a provider-agnostic facade. The three pillars are the agent loop, the tool system, and the LLM facade.
 
-### Agent loop ([main.py](main.py))
+### Agent loop ([agent/](agent/))
 
-`agent_loop()` is a recursive async generator. Each iteration: call `LLM.generate` with the current message history and tools → yield the assistant message → if it contains tool calls, dispatch each one via `tools/dispatcher.py`, yield the tool-result messages, and recurse. Stops when the model produces no tool calls or `max_turns` (default 10) is exhausted.
+`Agent` ([agent/agent.py](agent/agent.py)) owns the decide-act-observe loop. `Agent.run()` is an iterative async generator: call `LLM.generate` with the current context and tools → yield the assistant message → if it contains tool calls, dispatch each via `tools/dispatcher.py`, yield the tool-result messages → repeat. Stops when the model produces no tool calls or `max_turns` (default 10) is exhausted. The agent is stateless per-run; conversation state lives in `Context`.
+
+**Context & storage.** `Context` ([agent/context.py](agent/context.py)) is the agent's interface to conversation state. It composes a `MessageStore` ([agent/message_store.py](agent/message_store.py)) with a system prompt and a projection strategy (default: return all messages). `MessageStore` is append-only; when constructed with a path, each append writes a JSONL line to disk.
+
+**Sessions.** `Session` ([agent/session.py](agent/session.py)) is the user-facing unit of conversation. It owns a `Context` and a `SessionMeta` dataclass (identity, model, backend, timestamps, usage). Factory methods `Session.create()` and `Session.load()` handle disk persistence (JSONL messages + JSON metadata). `Session.load()` validates that model/backend match the original session.
 
 ### Tool system ([tools/](tools/))
 
@@ -56,4 +60,4 @@ The rest of the codebase never imports `openai` directly. [llm/llm.py](llm/llm.p
 
 ### Config ([config.py](config.py))
 
-`Settings` (pydantic-settings) reads from env vars / `.env`. Env vars are prefixed `LLM_BACKEND_*` for backend/API key/base URL, plus `LLM_MODEL` (default `gpt-4o-mini`). Filter out `None` values before forwarding to `LLM()` — the SDK has its own defaults worth preserving.
+`Settings` (pydantic-settings) reads from env vars / `.env`. Env vars are prefixed `LLM_BACKEND_*` for backend/API key/base URL, plus `LLM_MODEL` (default `gpt-4o-mini`) and `SESSIONS_DIR` (default `.minimal_agent/sessions`). Filter out `None` values before forwarding to `LLM()` — the SDK has its own defaults worth preserving.
