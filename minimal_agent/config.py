@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # --- Model selection ---------------------------------------------------
     LLM_MODEL: str = Field(default="gpt-4o-mini")
 
+    # --- Session persistence -----------------------------------------------
+    SESSIONS_DIR: str = Field(default=".minimal_agent/sessions")
+
     @model_validator(mode="after")
     def _resolve_api_key(self) -> "Settings":
         """If LLM_BACKEND_API_KEY isn't set, fall back to the

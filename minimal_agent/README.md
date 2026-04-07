@@ -97,70 +97,61 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## Tool Calling Example
+## Agent Example
 
 ```python
 import asyncio
+from pathlib import Path
 
+from agent import Agent, Session
 from config import settings
 from llm import LLM, Message
-from tools import ToolContext, dispatch
 from tools.builtin.get_weather import GetWeather
 
 
 async def main():
-    overrides = {
-        "timeout": settings.OPENAI_TIMEOUT,
-        "max_retries": settings.OPENAI_MAX_RETRIES,
-    }
     llm = LLM(
         model=settings.LLM_MODEL,
         backend=settings.LLM_BACKEND,
-        **{k: v for k, v in overrides.items() if v is not None},
+        timeout=settings.OPENAI_TIMEOUT,
+        max_retries=settings.OPENAI_MAX_RETRIES,
     )
 
-    # Wire tools once at startup. `tools_by_name` is the dispatcher's lookup
-    # table; `llm_tools` is the schema projection the LLM facade ships to the
-    # model.
-    tools = [GetWeather()]
-    tools_by_name = {t.name: t for t in tools}
-    llm_tools = [t.as_llm_tool() for t in tools]
+    agent = Agent(llm=llm, tools=[GetWeather()])
 
-    print("\n--- tool ---")
-    messages = [
-        Message(role="user", content="What's the weather in San Francisco in celsius?")
-    ]
-    tool_resp = await llm.generate(
-        messages=messages,
-        tools=llm_tools,
-        tool_choice="auto",
+    sessions_dir = Path(settings.SESSIONS_DIR)
+    # session = Session.create(
+    #     model=settings.LLM_MODEL,
+    #     backend=settings.LLM_BACKEND,
+    #     system_prompt="You are a helpful assistant.",
+    #     base_dir=sessions_dir,
+    # )
+
+    # To resume an existing session:
+    session = Session.load(
+        session_id="20260407-044552-0e5e",
+        model=settings.LLM_MODEL,
+        backend=settings.LLM_BACKEND,
+        system_prompt="You are a helpful assistant.",
+        base_dir=sessions_dir,
     )
 
-    if tool_resp.tool_calls:
-        messages.append(
-            Message(
-                role="assistant",
-                content=tool_resp.text,
-                tool_calls=tool_resp.tool_calls,
-            )
-        )
-        ctx = ToolContext()
-        for tc in tool_resp.tool_calls:
-            result_msg = await dispatch(tc, tools_by_name, ctx)
-            messages.append(result_msg)
-    else:
-        print(tool_resp.text)
+    user_input = input("> ")
+    session.context.add(Message(role="user", content=user_input))
 
-    final_resp = await llm.generate(
-        messages=messages,
-        tools=llm_tools,
-        tool_choice="auto",
-    )
-    print(final_resp)
+    async for msg in agent.run(
+        session.context, on_usage=session.update_usage
+    ):
+        if msg.role == "assistant":
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    print(f"[tool call] {tc.name}({tc.arguments})")
+            if msg.content:
+                print(f"[assistant] {msg.content}")
+        elif msg.role == "tool":
+            print(f"[tool result] {msg.content}")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
 ```
