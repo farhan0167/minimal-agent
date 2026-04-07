@@ -30,35 +30,30 @@ Configuration is loaded via `pydantic-settings` from environment variables and a
 
 ## Architecture
 
-This is a minimal async LLM facade over the OpenAI Python SDK, designed so that the rest of the codebase never imports `openai` directly. The neutral types in [llm/types.py](llm/types.py) are the public surface; [llm/llm.py](llm/llm.py) is the only place that translates to/from OpenAI's SDK shapes.
+A minimal async agent framework: an **agent loop** drives an LLM that can call tools, with the LLM details abstracted behind a provider-agnostic facade. The three pillars are the agent loop, the tool system, and the LLM facade.
 
-### The `LLM` facade ([llm/llm.py](llm/llm.py))
+### Agent loop ([main.py](main.py))
 
-One class wrapping `AsyncOpenAI` with three public coroutines:
+`agent_loop()` is a recursive async generator. Each iteration: call `LLM.generate` with the current message history and tools → yield the assistant message → if it contains tool calls, dispatch each one via `tools/dispatcher.py`, yield the tool-result messages, and recurse. Stops when the model produces no tool calls or `max_turns` (default 10) is exhausted.
 
-- `generate(...)` — non-streaming chat completion, returns `GenerateResponse`.
-- `generate_structured(..., schema=MyModel)` — uses the SDK's `chat.completions.parse` to get a validated Pydantic instance back. **Backend caveat:** requires a server that honors strict `json_schema` response_format. OpenAI and vLLM work; llama.cpp works via grammars; Ollama's `/v1` does *not* reliably honor it; **Anthropic's OpenAI-compat layer silently ignores `response_format`** (and OpenRouter inherits this when routing to Anthropic models) — prompt-engineer JSON manually or use the native provider SDK for those targets.
-- `stream(...)` — async iterator of `StreamChunk`. Sets `stream_options.include_usage=True` by default so the final (choice-less) event carries usage; the facade surfaces that as a final `StreamChunk` with `usage` set rather than dropping it.
+### Tool system ([tools/](tools/))
 
-The `.raw` property exposes the underlying `AsyncOpenAI` client as an escape hatch for features the facade hasn't surfaced.
+Three layers:
 
-**Backends.** `LLM(..., backend=...)` accepts a `Backend` enum value (`Backend.OPENAI` (default), `Backend.OPENROUTER`, `Backend.ANTHROPIC`, or `Backend.LOCALHOST`). The latter two set a default `base_url` for each provider's OpenAI-compatible endpoint ([OpenRouter quickstart](https://openrouter.ai/docs/quickstart), [Anthropic OpenAI SDK compat](https://platform.claude.com/docs/en/api/openai-sdk)); an explicit `base_url` in `client_kwargs` still wins. OpenRouter's optional `site_url` / `app_name` kwargs become `HTTP-Referer` / `X-Title` headers for their leaderboards. Beyond `response_format`, Anthropic's compat layer also silently ignores `seed`, `frequency_penalty`, `presence_penalty`, `logprobs`, and `user` — `_completion_params` still sends them, they just have no effect.
+1. **Definition** — `BaseTool[InputT, OutputT]` ([tools/base.py](tools/base.py)) is the abstract class tool authors implement. Requires `name`, `input_schema` (a Pydantic model), and `invoke()`. Optional hooks: `validate()`, `needs_permission()`, `render_result_for_assistant()`. `as_llm_tool()` projects the Pydantic schema into an `LLMTool` for the wire format.
+2. **Dispatch** — `dispatch()` ([tools/dispatcher.py](tools/dispatcher.py)) runs the full pipeline: lookup → parse/validate args → semantic validation → permission check → invoke → serialize result. All errors are caught and returned as tool-result messages so the agent loop never crashes.
+3. **Context** — `ToolContext` ([tools/context.py](tools/context.py)) is a per-call bag passed to every tool invocation (currently a placeholder for future fields like cancellation tokens, loggers, permission callbacks).
 
-Request building is centralized in `_completion_params`: every optional parameter is only inserted when non-None, so provider defaults (and the SDK's own defaults) are preserved. Note that `max_tokens` is mapped to `max_completion_tokens` because the old field is deprecated and reasoning models reject it.
+Concrete tools live under [tools/builtin/](tools/builtin/) (e.g. `get_weather`). See [.claude/specifications/tool-system.md](.claude/specifications/tool-system.md) for the full tool-authoring contract.
 
-### Neutral types ([llm/types.py](llm/types.py))
+### LLM facade ([llm/](llm/))
 
-Pydantic models mirroring (but not depending on) the OpenAI chat shapes:
+The rest of the codebase never imports `openai` directly. [llm/llm.py](llm/llm.py) wraps `AsyncOpenAI` with three public coroutines (`generate`, `generate_structured`, `stream`) and translates between the neutral Pydantic types in [llm/types.py](llm/types.py) and OpenAI's SDK shapes.
 
-- `Message` — `content` can be `str`, a list of `ContentPart` (`TextPart` / `ImagePart` for multimodal), or `None` (assistant messages that are pure tool calls). Tool-result messages set `role="tool"` + `tool_call_id`.
-- `ToolCall` stores `arguments` as a **parsed dict** for ergonomics; the facade `json.dumps` on the way out to OpenAI and `json.loads` on the way in. If the model emits malformed JSON, the parser falls back to `{"__raw__": <string>}` rather than raising.
-- `LLMTool` is the provider-neutral wire-format description (`name` / `description` / `parameters` JSON Schema) that the facade ships to the model. It is distinct from `tools.BaseTool`, which is the executable tool interface authors implement — see [.claude/specifications/tool-system.md](.claude/specifications/tool-system.md). `LLMTool.from_model(PydanticModel)` delegates to the SDK's `pydantic_function_tool` helper to generate a strict schema (`additionalProperties=false`, all fields required), then unwraps the OpenAI envelope back into the neutral shape. OpenAI's function-calling envelope only exists at request time inside `_build_tools`.
-- `ToolChoice` accepts `"auto" | "none" | "required"` *or* a bare tool name string (which the facade wraps into OpenAI's forced-call object).
+**Backends.** `Backend` enum selects provider: `OPENAI` (default), `OPENROUTER`, `ANTHROPIC`, `LOCALHOST`. Each sets an appropriate `base_url`; an explicit `base_url` still wins. Anthropic's OpenAI-compat layer silently ignores `response_format`, `seed`, and several other params — see docstrings for details.
 
-### Tool-call streaming
-
-OpenAI streams tool calls as fragments keyed by `index`: the first fragment usually carries `id` and `function.name`, subsequent fragments carry `arguments` as incremental JSON string chunks that must be concatenated. `accumulate_tool_calls(chunks)` in [llm/llm.py](llm/llm.py) does the reassembly for callers that want "streaming text + completed tool calls" without writing the bookkeeping themselves.
+**Key types** in [llm/types.py](llm/types.py): `Message` (supports multimodal content and tool-result role), `ToolCall` (arguments stored as parsed dict), `LLMTool` (provider-neutral tool schema), `GenerateResponse`, `StreamChunk`.
 
 ### Config ([config.py](config.py))
 
-`Settings` is a `BaseSettings` with all OpenAI client params (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_TIMEOUT`, `OPENAI_MAX_RETRIES`) as `Optional`. Callers must **filter out `None` values** before forwarding to `LLM(...)` because the SDK rejects `None` for `max_retries` / `timeout` and has its own defaults worth preserving — see the `overrides` dict in [main.py](main.py) for the pattern.
+`Settings` (pydantic-settings) reads from env vars / `.env`. Env vars are prefixed `LLM_BACKEND_*` for backend/API key/base URL, plus `LLM_MODEL` (default `gpt-4o-mini`). Filter out `None` values before forwarding to `LLM()` — the SDK has its own defaults worth preserving.
