@@ -10,7 +10,7 @@ to disk. When constructed without a path, behavior is pure in-memory.
 import logging
 from pathlib import Path
 
-from llm.types import Message
+from llm.types import Message, Role
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class MessageStore:
             if msg.tool_calls:
                 for tc in msg.tool_calls:
                     seen_tool_call_ids.add(tc.id)
-            if msg.role == "tool" and msg.tool_call_id:
+            if msg.role == Role.TOOL and msg.tool_call_id:
                 if msg.tool_call_id not in seen_tool_call_ids:
                     raise ValueError(
                         f"Orphaned tool result: tool_call_id={msg.tool_call_id!r} "
@@ -114,7 +114,7 @@ class MessageStore:
         # Tail orphans: append synthetic interrupt results (truthful record).
         for orphan_id in tail_orphans:
             msg = Message(
-                role="tool",
+                role=Role.TOOL,
                 tool_call_id=orphan_id,
                 content=(
                     "error: tool execution was interrupted "

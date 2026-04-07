@@ -10,7 +10,7 @@ import json
 import pytest
 
 from llm.llm import LLM
-from llm.types import ImagePart, ImageUrl, LLMTool, Message, TextPart, ToolCall
+from llm.types import ImagePart, ImageUrl, LLMTool, Message, Role, TextPart, ToolCall
 
 
 @pytest.fixture
@@ -25,12 +25,12 @@ def llm() -> LLM:
 
 class TestMessageToOpenAI:
     def test_plain_user_message(self, llm: LLM) -> None:
-        out = llm._message_to_openai(Message(role="user", content="hello"))
+        out = llm._message_to_openai(Message(role=Role.USER, content="hello"))
         assert out == {"role": "user", "content": "hello"}
 
     def test_assistant_with_only_tool_calls_omits_content(self, llm: LLM) -> None:
         msg = Message(
-            role="assistant",
+            role=Role.ASSISTANT,
             content=None,
             tool_calls=[
                 ToolCall(id="call_1", name="get_weather", arguments={"city": "NYC"})
@@ -53,7 +53,7 @@ class TestMessageToOpenAI:
     def test_tool_call_arguments_serialized_as_json_string(self, llm: LLM) -> None:
         """Neutral shape stores arguments as dict; wire format is a JSON string."""
         msg = Message(
-            role="assistant",
+            role=Role.ASSISTANT,
             tool_calls=[
                 ToolCall(
                     id="c1",
@@ -69,7 +69,7 @@ class TestMessageToOpenAI:
 
     def test_tool_result_message(self, llm: LLM) -> None:
         msg = Message(
-            role="tool",
+            role=Role.TOOL,
             content="72 degrees",
             tool_call_id="call_1",
         )
@@ -82,7 +82,7 @@ class TestMessageToOpenAI:
 
     def test_multimodal_content_parts_dumped_to_dicts(self, llm: LLM) -> None:
         msg = Message(
-            role="user",
+            role=Role.USER,
             content=[
                 TextPart(text="what's this?"),
                 ImagePart(image_url=ImageUrl(url="https://example.com/x.png")),
@@ -96,7 +96,7 @@ class TestMessageToOpenAI:
 
     def test_multimodal_image_detail_included_when_set(self, llm: LLM) -> None:
         msg = Message(
-            role="user",
+            role=Role.USER,
             content=[
                 ImagePart(image_url=ImageUrl(url="https://x/y.png", detail="high"))
             ],
@@ -111,14 +111,14 @@ class TestMessageToOpenAI:
 class TestBuildMessages:
     def test_system_prompt_prepended(self, llm: LLM) -> None:
         out = llm._build_messages(
-            [Message(role="user", content="hi")],
+            [Message(role=Role.USER, content="hi")],
             system="you are helpful",
         )
         assert out[0] == {"role": "system", "content": "you are helpful"}
         assert out[1] == {"role": "user", "content": "hi"}
 
     def test_no_system_prompt(self, llm: LLM) -> None:
-        out = llm._build_messages([Message(role="user", content="hi")], system=None)
+        out = llm._build_messages([Message(role=Role.USER, content="hi")], system=None)
         assert len(out) == 1
         assert out[0]["role"] == "user"
 
@@ -178,7 +178,7 @@ class TestNormalizeToolChoice:
 def _params(llm: LLM, **overrides):
     """Call `_completion_params` with defaults, overriding only what's asked."""
     defaults = dict(
-        messages=[Message(role="user", content="hi")],
+        messages=[Message(role=Role.USER, content="hi")],
         system=None,
         tools=None,
         tool_choice=None,

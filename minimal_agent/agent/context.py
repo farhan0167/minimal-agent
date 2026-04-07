@@ -4,7 +4,7 @@ The Agent interacts with the conversation exclusively through this class.
 Storage is append-only; projection is where shaping lives.
 """
 
-from llm.types import Message
+from llm.types import Message, Role
 
 from .message_store import MessageStore
 
@@ -39,7 +39,7 @@ class Context:
         """
         msgs: list[Message] = []
         if self._system_prompt is not None:
-            msgs.append(Message(role="system", content=self._system_prompt))
+            msgs.append(Message(role=Role.SYSTEM, content=self._system_prompt))
         msgs.extend(self._project())
         return msgs
 

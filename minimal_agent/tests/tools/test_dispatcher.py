@@ -9,7 +9,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from llm.types import ToolCall
+from llm.types import Role, ToolCall
 from tools import (
     BaseTool,
     ToolContext,
@@ -61,14 +61,14 @@ def _call(name: str, arguments: dict) -> ToolCall:
 async def test_happy_path_renders_result():
     tools = {"echo": EchoTool()}
     msg = await dispatch(_call("echo", {"text": "hi"}), tools, ToolContext())
-    assert msg.role == "tool"
+    assert msg.role == Role.TOOL
     assert msg.tool_call_id == "call_1"
     assert msg.content == "hi"
 
 
 async def test_unknown_tool_returns_error_message():
     msg = await dispatch(_call("missing", {}), {}, ToolContext())
-    assert msg.role == "tool"
+    assert msg.role == Role.TOOL
     assert "unknown tool" in msg.content
     assert "'missing'" in msg.content
 
@@ -92,7 +92,7 @@ async def test_invoke_exception_becomes_error_message():
     the error and can recover."""
     tools = {"boom": BoomTool()}
     msg = await dispatch(_call("boom", {"text": "x"}), tools, ToolContext())
-    assert msg.role == "tool"
+    assert msg.role == Role.TOOL
     assert "tool error" in msg.content
     assert "RuntimeError" in msg.content
     assert "kaboom" in msg.content

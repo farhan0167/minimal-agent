@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 from pydantic import BaseModel
 
 from agent import Agent, Context
-from llm.types import GenerateResponse, Message, ToolCall, Usage
+from llm.types import GenerateResponse, Message, Role, ToolCall, Usage
 from tools.base import BaseTool
 from tools.context import ToolContext
 
@@ -43,12 +43,12 @@ async def test_terminates_when_no_tool_calls():
     )
     agent = Agent(llm=llm, tools=[])
     context = Context(system_prompt="sys")
-    context.add(Message(role="user", content="hi"))
+    context.add(Message(role=Role.USER, content="hi"))
 
     messages = [msg async for msg in agent.run(context)]
 
     assert len(messages) == 1
-    assert messages[0].role == "assistant"
+    assert messages[0].role == Role.ASSISTANT
     assert messages[0].content == "Hello!"
 
 
@@ -64,7 +64,7 @@ async def test_max_turns_respected():
     agent = Agent(llm=llm, tools=[tool], max_turns=2)
 
     context = Context()
-    context.add(Message(role="user", content="go"))
+    context.add(Message(role=Role.USER, content="go"))
 
     messages = [msg async for msg in agent.run(context)]
 
@@ -87,15 +87,15 @@ async def test_tool_calls_dispatched_and_yielded():
     agent = Agent(llm=llm, tools=[tool])
 
     context = Context()
-    context.add(Message(role="user", content="question"))
+    context.add(Message(role=Role.USER, content="question"))
 
     messages = [msg async for msg in agent.run(context)]
 
     # Turn 1: assistant + tool result. Turn 2: assistant (no tools). Total: 3
     assert len(messages) == 3
-    assert messages[0].role == "assistant"
-    assert messages[1].role == "tool"
-    assert messages[2].role == "assistant"
+    assert messages[0].role == Role.ASSISTANT
+    assert messages[1].role == Role.TOOL
+    assert messages[2].role == Role.ASSISTANT
     assert messages[2].content == "The answer is 42."
 
 
@@ -108,7 +108,7 @@ async def test_context_store_matches_yielded():
     agent = Agent(llm=llm, tools=[])
 
     context = Context()
-    context.add(Message(role="user", content="hi"))
+    context.add(Message(role=Role.USER, content="hi"))
 
     yielded = [msg async for msg in agent.run(context)]
 
@@ -138,7 +138,7 @@ async def test_on_usage_callback_called_per_api_call():
     agent = Agent(llm=llm, tools=[tool])
 
     context = Context()
-    context.add(Message(role="user", content="go"))
+    context.add(Message(role=Role.USER, content="go"))
 
     collected: list[Usage] = []
     async for _msg in agent.run(
@@ -161,7 +161,7 @@ async def test_on_usage_not_called_when_none():
     agent = Agent(llm=llm, tools=[])
 
     context = Context()
-    context.add(Message(role="user", content="hi"))
+    context.add(Message(role=Role.USER, content="hi"))
 
     collected: list[Usage] = []
     async for _msg in agent.run(

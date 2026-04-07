@@ -3,7 +3,7 @@ import json
 import pytest
 
 from agent.session import Session, SessionConfigMismatchError
-from llm.types import Message, Usage
+from llm.types import Message, Role, Usage
 
 _MODEL = "gpt-4o-mini"
 _BACKEND = "openai"
@@ -47,7 +47,7 @@ def test_create_makes_directory_and_files(tmp_path):
 
 def test_add_message_writes_to_jsonl(tmp_path):
     session = _create(tmp_path, system_prompt="sys")
-    session.context.add(Message(role="user", content="hello"))
+    session.context.add(Message(role=Role.USER, content="hello"))
 
     messages_path = tmp_path / session.session_id / "messages.jsonl"
     lines = messages_path.read_text().strip().splitlines()
@@ -57,8 +57,8 @@ def test_add_message_writes_to_jsonl(tmp_path):
 
 def test_load_recovers_messages(tmp_path):
     session = _create(tmp_path, system_prompt="sys")
-    session.context.add(Message(role="user", content="q"))
-    session.context.add(Message(role="assistant", content="a"))
+    session.context.add(Message(role=Role.USER, content="q"))
+    session.context.add(Message(role=Role.ASSISTANT, content="a"))
     sid = session.session_id
 
     loaded = _load(sid, tmp_path, system_prompt="sys")
@@ -70,13 +70,13 @@ def test_load_recovers_messages(tmp_path):
 
 def test_load_uses_provided_system_prompt(tmp_path):
     session = _create(tmp_path, system_prompt="original")
-    session.context.add(Message(role="user", content="hi"))
+    session.context.add(Message(role=Role.USER, content="hi"))
     sid = session.session_id
 
     loaded = _load(sid, tmp_path, system_prompt="updated")
     msgs = loaded.context.get_messages()
 
-    assert msgs[0].role == "system"
+    assert msgs[0].role == Role.SYSTEM
     assert msgs[0].content == "updated"
 
 

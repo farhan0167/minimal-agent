@@ -5,6 +5,7 @@ Pydantic models so call sites get validation and autocompletion without
 touching the SDK's typed dicts directly.
 """
 
+from enum import StrEnum
 from typing import Any, Dict, Generic, List, Literal, Optional, Type, TypeVar, Union
 
 from openai import pydantic_function_tool
@@ -12,7 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T", bound=BaseModel)
 
-Role = Literal["system", "user", "assistant", "tool"]
+
+class Role(StrEnum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
 
 
 class TextPart(BaseModel):

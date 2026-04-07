@@ -7,7 +7,7 @@ by accepting different Contexts.
 from collections.abc import AsyncGenerator, Callable
 from typing import Optional
 
-from llm import LLM, Message
+from llm import LLM, Message, Role
 from llm.types import LLMTool, Usage
 from tools import ToolContext, dispatch
 from tools.base import BaseTool
@@ -60,7 +60,7 @@ class Agent:
                 on_usage(resp.usage)
 
             assistant_msg = Message(
-                role="assistant",
+                role=Role.ASSISTANT,
                 content=resp.text,
                 tool_calls=resp.tool_calls,
             )

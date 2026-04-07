@@ -3,7 +3,7 @@
     from minimal_agent.llm import LLM, Message
 
     llm = LLM(model="gpt-4o-mini")
-    resp = await llm.generate([Message(role="user", content="hi")])
+    resp = await llm.generate([Message(role=Role.USER, content="hi")])
     print(resp.text)
 
 Streaming:
@@ -19,7 +19,7 @@ Tool calling:
         for tc in resp.tool_calls:
             result = run_tool(tc.name, tc.arguments)
             messages.append(assistant_message_from(resp))
-            messages.append(Message(role="tool", tool_call_id=tc.id, content=result))
+            messages.append(Message(role=Role.TOOL, tool_call_id=tc.id, content=result))
 
 Escape hatch to the raw SDK client for features we haven't surfaced:
 
@@ -143,7 +143,7 @@ class LLM:
           {id, type:"function", function:{name, arguments:<JSON string>}}.
           Our neutral shape stores `arguments` as a dict for ergonomics, so
           we json.dumps on the way out.
-        - Tool result messages (role="tool") need tool_call_id and a string
+        - Tool result messages (role=Role.TOOL) need tool_call_id and a string
           content.
         - Multimodal content is a list of parts (text / image_url); each part
           is a Pydantic model and needs to be dumped to a plain dict for the

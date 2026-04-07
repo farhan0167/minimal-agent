@@ -1,11 +1,11 @@
 from agent.message_store import MessageStore
-from llm.types import Message, ToolCall
+from llm.types import Message, Role, ToolCall
 
 
 def test_append_and_ordering():
     store = MessageStore()
-    m1 = Message(role="user", content="hello")
-    m2 = Message(role="assistant", content="hi")
+    m1 = Message(role=Role.USER, content="hello")
+    m2 = Message(role=Role.ASSISTANT, content="hi")
     store.append(m1)
     store.append(m2)
 
@@ -16,10 +16,10 @@ def test_append_and_ordering():
 
 def test_messages_returns_copy():
     store = MessageStore()
-    store.append(Message(role="user", content="hello"))
+    store.append(Message(role=Role.USER, content="hello"))
 
     msgs = store.messages
-    msgs.append(Message(role="user", content="injected"))
+    msgs.append(Message(role=Role.USER, content="injected"))
 
     assert len(store) == 1
 
@@ -37,8 +37,8 @@ def test_append_writes_to_disk(tmp_path):
     path = tmp_path / "messages.jsonl"
     store = MessageStore(path=path)
 
-    store.append(Message(role="user", content="hello"))
-    store.append(Message(role="assistant", content="world"))
+    store.append(Message(role=Role.USER, content="hello"))
+    store.append(Message(role=Role.ASSISTANT, content="world"))
 
     lines = path.read_text().strip().splitlines()
     assert len(lines) == 2
@@ -50,8 +50,8 @@ def test_append_writes_to_disk(tmp_path):
 def test_from_file_round_trip(tmp_path):
     path = tmp_path / "messages.jsonl"
     store = MessageStore(path=path)
-    store.append(Message(role="user", content="q"))
-    store.append(Message(role="assistant", content="a"))
+    store.append(Message(role=Role.USER, content="q"))
+    store.append(Message(role=Role.ASSISTANT, content="a"))
 
     loaded = MessageStore.from_file(path)
 
@@ -67,7 +67,7 @@ def test_from_file_nonexistent_path(tmp_path):
     assert len(store) == 0
 
     # First append should create the file
-    store.append(Message(role="user", content="first"))
+    store.append(Message(role=Role.USER, content="first"))
     assert path.exists()
     assert len(path.read_text().strip().splitlines()) == 1
 
@@ -77,12 +77,12 @@ def test_append_after_from_file_only_writes_new(tmp_path):
 
     # Write two messages
     store = MessageStore(path=path)
-    store.append(Message(role="user", content="one"))
-    store.append(Message(role="assistant", content="two"))
+    store.append(Message(role=Role.USER, content="one"))
+    store.append(Message(role=Role.ASSISTANT, content="two"))
 
     # Reload and append one more
     loaded = MessageStore.from_file(path)
-    loaded.append(Message(role="user", content="three"))
+    loaded.append(Message(role=Role.USER, content="three"))
 
     # File should have exactly 3 lines, not 5
     lines = path.read_text().strip().splitlines()
@@ -91,7 +91,7 @@ def test_append_after_from_file_only_writes_new(tmp_path):
 
 def test_in_memory_store_no_files(tmp_path):
     store = MessageStore()  # No path
-    store.append(Message(role="user", content="ephemeral"))
+    store.append(Message(role=Role.USER, content="ephemeral"))
 
     # tmp_path should still be empty
     assert list(tmp_path.iterdir()) == []
@@ -99,7 +99,7 @@ def test_in_memory_store_no_files(tmp_path):
 
 def test_from_file_corrupt_last_line(tmp_path):
     path = tmp_path / "messages.jsonl"
-    msg = Message(role="user", content="good")
+    msg = Message(role=Role.USER, content="good")
     path.write_text(msg.model_dump_json() + "\n" + "this is not json\n")
 
     store = MessageStore.from_file(path)
@@ -112,7 +112,7 @@ def test_from_file_corrupt_mid_line(tmp_path):
     import pytest
 
     path = tmp_path / "messages.jsonl"
-    good = Message(role="user", content="good")
+    good = Message(role=Role.USER, content="good")
     path.write_text(
         good.model_dump_json()
         + "\n"
@@ -130,7 +130,7 @@ def test_from_file_orphaned_tool_result(tmp_path):
 
     path = tmp_path / "messages.jsonl"
     # A tool result with no preceding tool call
-    orphan = Message(role="tool", tool_call_id="tc_999", content="result")
+    orphan = Message(role=Role.TOOL, tool_call_id="tc_999", content="result")
     path.write_text(orphan.model_dump_json() + "\n")
 
     with pytest.raises(ValueError, match="Orphaned tool result"):
@@ -142,7 +142,7 @@ def test_from_file_orphaned_tool_call_at_tail_healed(tmp_path):
     path = tmp_path / "messages.jsonl"
 
     assistant = Message(
-        role="assistant",
+        role=Role.ASSISTANT,
         content="calling tools",
         tool_calls=[
             ToolCall(id="tc_1", name="a", arguments={}),
@@ -150,7 +150,7 @@ def test_from_file_orphaned_tool_call_at_tail_healed(tmp_path):
             ToolCall(id="tc_3", name="c", arguments={}),
         ],
     )
-    result_1 = Message(role="tool", tool_call_id="tc_1", content="ok")
+    result_1 = Message(role=Role.TOOL, tool_call_id="tc_1", content="ok")
 
     path.write_text(
         assistant.model_dump_json() + "\n" + result_1.model_dump_json() + "\n"
@@ -182,18 +182,18 @@ def test_from_file_orphaned_tool_call_mid_conversation(tmp_path):
 
     # Assistant requests tool call, no result follows, then a new user message
     assistant = Message(
-        role="assistant",
+        role=Role.ASSISTANT,
         content="calling tool",
         tool_calls=[ToolCall(id="tc_1", name="a", arguments={})],
     )
-    user = Message(role="user", content="moving on")
+    user = Message(role=Role.USER, content="moving on")
     # Second assistant with a complete tool pair so tail is clean
     assistant2 = Message(
-        role="assistant",
+        role=Role.ASSISTANT,
         content="calling another",
         tool_calls=[ToolCall(id="tc_2", name="b", arguments={})],
     )
-    result_2 = Message(role="tool", tool_call_id="tc_2", content="ok")
+    result_2 = Message(role=Role.TOOL, tool_call_id="tc_2", content="ok")
 
     path.write_text(
         assistant.model_dump_json()
@@ -215,7 +215,7 @@ def test_from_file_all_tool_calls_orphaned_at_tail(tmp_path):
     path = tmp_path / "messages.jsonl"
 
     assistant = Message(
-        role="assistant",
+        role=Role.ASSISTANT,
         content="calling tools",
         tool_calls=[
             ToolCall(id="tc_1", name="a", arguments={}),
@@ -229,7 +229,7 @@ def test_from_file_all_tool_calls_orphaned_at_tail(tmp_path):
 
     assert len(store) == 3  # 1 assistant + 2 synthetic
     synthetic_ids = {
-        m.tool_call_id for m in store.messages if m.role == "tool"
+        m.tool_call_id for m in store.messages if m.role == Role.TOOL
     }
     assert synthetic_ids == {"tc_1", "tc_2"}
 
@@ -238,11 +238,11 @@ def test_from_file_valid_tool_pairs(tmp_path):
     path = tmp_path / "messages.jsonl"
 
     assistant = Message(
-        role="assistant",
+        role=Role.ASSISTANT,
         content="calling tool",
         tool_calls=[ToolCall(id="tc_1", name="test", arguments={})],
     )
-    tool_result = Message(role="tool", tool_call_id="tc_1", content="done")
+    tool_result = Message(role=Role.TOOL, tool_call_id="tc_1", content="done")
 
     path.write_text(
         assistant.model_dump_json() + "\n" + tool_result.model_dump_json() + "\n"

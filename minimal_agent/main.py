@@ -3,7 +3,7 @@ from pathlib import Path
 
 from agent import Agent, Session
 from config import settings
-from llm import LLM, Message
+from llm import LLM, Message, Role
 from tools.builtin.get_weather import GetWeather
 
 
@@ -27,7 +27,7 @@ async def main():
 
     # To resume an existing session:
     session = Session.load(
-        session_id="20260407-042555-5e1f",
+        session_id="20260407-061717-56cc",
         model=settings.LLM_MODEL,
         backend=settings.LLM_BACKEND,
         system_prompt="You are a helpful assistant.",
@@ -35,18 +35,18 @@ async def main():
     )
 
     user_input = input("> ")
-    session.context.add(Message(role="user", content=user_input))
+    session.context.add(Message(role=Role.USER, content=user_input))
 
     async for msg in agent.run(
         session.context, on_usage=session.update_usage
     ):
-        if msg.role == "assistant":
+        if msg.role == Role.ASSISTANT:
             if msg.tool_calls:
                 for tc in msg.tool_calls:
                     print(f"[tool call] {tc.name}({tc.arguments})")
             if msg.content:
                 print(f"[assistant] {msg.content}")
-        elif msg.role == "tool":
+        elif msg.role == Role.TOOL:
             print(f"[tool result] {msg.content}")
 
 

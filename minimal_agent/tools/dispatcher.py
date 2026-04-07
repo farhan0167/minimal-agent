@@ -10,7 +10,7 @@ from typing import Any, Dict
 
 from pydantic import ValidationError
 
-from llm.types import Message, ToolCall
+from llm.types import Message, Role, ToolCall
 
 from .base import BaseTool
 from .context import ToolContext
@@ -25,7 +25,7 @@ async def dispatch(
     tool = tools_by_name.get(tool_call.name)
     if tool is None:
         return Message(
-            role="tool",
+            role=Role.TOOL,
             tool_call_id=tool_call.id,
             content=f"error: unknown tool {tool_call.name!r}",
         )
@@ -35,7 +35,7 @@ async def dispatch(
         args = tool.input_schema.model_validate(tool_call.arguments)
     except ValidationError as e:
         return Message(
-            role="tool",
+            role=Role.TOOL,
             tool_call_id=tool_call.id,
             content=f"invalid arguments: {e}",
         )
@@ -44,7 +44,7 @@ async def dispatch(
     validation = await tool.validate(args, ctx)
     if not validation.ok:
         return Message(
-            role="tool",
+            role=Role.TOOL,
             tool_call_id=tool_call.id,
             content=f"validation failed: {validation.message}",
         )
@@ -56,14 +56,14 @@ async def dispatch(
         out = await tool.invoke(args, ctx)
     except Exception as e:
         return Message(
-            role="tool",
+            role=Role.TOOL,
             tool_call_id=tool_call.id,
             content=f"tool error: {type(e).__name__}: {e}",
         )
 
     # 5. Serialize for the assistant.
     return Message(
-        role="tool",
+        role=Role.TOOL,
         tool_call_id=tool_call.id,
         content=tool.render_result_for_assistant(out),
     )
