@@ -137,6 +137,103 @@ def test_from_file_orphaned_tool_result(tmp_path):
         MessageStore.from_file(path)
 
 
+def test_from_file_orphaned_tool_call_at_tail_healed(tmp_path):
+    """Interrupted tool calls at the tail get synthetic error results appended."""
+    path = tmp_path / "messages.jsonl"
+
+    assistant = Message(
+        role="assistant",
+        content="calling tools",
+        tool_calls=[
+            ToolCall(id="tc_1", name="a", arguments={}),
+            ToolCall(id="tc_2", name="b", arguments={}),
+            ToolCall(id="tc_3", name="c", arguments={}),
+        ],
+    )
+    result_1 = Message(role="tool", tool_call_id="tc_1", content="ok")
+
+    path.write_text(
+        assistant.model_dump_json() + "\n" + result_1.model_dump_json() + "\n"
+    )
+
+    store = MessageStore.from_file(path)
+
+    # Original 2 messages + 2 synthetic interrupt results
+    assert len(store) == 4
+    # The two synthetic results should be for tc_2 and tc_3
+    synthetic = [m for m in store.messages if "interrupted" in (m.content or "")]
+    assert len(synthetic) == 2
+    synthetic_ids = {m.tool_call_id for m in synthetic}
+    assert synthetic_ids == {"tc_2", "tc_3"}
+    # They should suggest retrying
+    for m in synthetic:
+        assert "you may retry" in m.content
+
+    # Synthetic results should also be persisted to disk
+    lines = path.read_text().strip().splitlines()
+    assert len(lines) == 4
+
+
+def test_from_file_orphaned_tool_call_mid_conversation(tmp_path):
+    """Orphaned tool calls mid-conversation (not at tail) are corruption."""
+    import pytest
+
+    path = tmp_path / "messages.jsonl"
+
+    # Assistant requests tool call, no result follows, then a new user message
+    assistant = Message(
+        role="assistant",
+        content="calling tool",
+        tool_calls=[ToolCall(id="tc_1", name="a", arguments={})],
+    )
+    user = Message(role="user", content="moving on")
+    # Second assistant with a complete tool pair so tail is clean
+    assistant2 = Message(
+        role="assistant",
+        content="calling another",
+        tool_calls=[ToolCall(id="tc_2", name="b", arguments={})],
+    )
+    result_2 = Message(role="tool", tool_call_id="tc_2", content="ok")
+
+    path.write_text(
+        assistant.model_dump_json()
+        + "\n"
+        + user.model_dump_json()
+        + "\n"
+        + assistant2.model_dump_json()
+        + "\n"
+        + result_2.model_dump_json()
+        + "\n"
+    )
+
+    with pytest.raises(ValueError, match="mid-conversation"):
+        MessageStore.from_file(path)
+
+
+def test_from_file_all_tool_calls_orphaned_at_tail(tmp_path):
+    """All tool calls orphaned (none completed) — all get healed."""
+    path = tmp_path / "messages.jsonl"
+
+    assistant = Message(
+        role="assistant",
+        content="calling tools",
+        tool_calls=[
+            ToolCall(id="tc_1", name="a", arguments={}),
+            ToolCall(id="tc_2", name="b", arguments={}),
+        ],
+    )
+
+    path.write_text(assistant.model_dump_json() + "\n")
+
+    store = MessageStore.from_file(path)
+
+    assert len(store) == 3  # 1 assistant + 2 synthetic
+    synthetic_ids = {
+        m.tool_call_id for m in store.messages if m.role == "tool"
+    }
+    assert synthetic_ids == {"tc_1", "tc_2"}
+
+
 def test_from_file_valid_tool_pairs(tmp_path):
     path = tmp_path / "messages.jsonl"
 
