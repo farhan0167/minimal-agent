@@ -5,6 +5,11 @@ from agent import Agent, Session
 from config import settings
 from llm import LLM, Message, Role
 from tools.builtin.get_weather import GetWeather
+from tools.builtin.glob import Glob
+from tools.builtin.grep import Grep
+from tools.builtin.read_file import ReadFile
+from tools.builtin.run_shell import RunShell
+from tools.builtin.write_file import WriteFile
 
 
 async def main():
@@ -15,23 +20,44 @@ async def main():
         max_retries=settings.OPENAI_MAX_RETRIES,
     )
 
-    agent = Agent(llm=llm, tools=[GetWeather()])
+    workspace = Path.cwd()
+    read_timestamps: dict[str, float] = {}
+
+    agent = Agent(
+        llm=llm,
+        tools=[
+            GetWeather(),
+            ReadFile(
+                workspace_root=workspace,
+                read_timestamps=read_timestamps,
+            ),
+            WriteFile(
+                workspace_root=workspace,
+                read_timestamps=read_timestamps,
+            ),
+            RunShell(workspace_root=workspace),
+            Grep(workspace_root=workspace),
+            Glob(workspace_root=workspace),
+        ],
+        # prompt defaults to the built-in software engineering prompt
+        # context_sources defaults to [GitStatusSource(), DirectoryTreeSource()]
+    )
 
     sessions_dir = Path(settings.SESSIONS_DIR)
+    system_prompt = await agent.build_system_prompt(workspace_root=workspace)
+
     # session = Session.create(
     #     model=settings.LLM_MODEL,
     #     backend=settings.LLM_BACKEND,
-    #     system_prompt="You are a helpful assistant.",
+    #     system_prompt=system_prompt,
     #     base_dir=sessions_dir,
     # )
 
-    # To resume an existing session:
     session = Session.load(
-        session_id="20260407-061717-56cc",
+        session_id="20260408-052847-4d51",  # from a previous Session.create()
         model=settings.LLM_MODEL,
         backend=settings.LLM_BACKEND,
-        system_prompt="You are a helpful assistant.",
-        base_dir=sessions_dir,
+        system_prompt=system_prompt,  # rebuilt fresh — not restored from disk
     )
 
     user_input = input("> ")

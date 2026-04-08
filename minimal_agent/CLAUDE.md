@@ -30,15 +30,28 @@ Configuration is loaded via `pydantic-settings` from environment variables and a
 
 ## Architecture
 
-A minimal async agent framework: an **agent loop** drives an LLM that can call tools, with the LLM details abstracted behind a provider-agnostic facade. The three pillars are the agent loop, the tool system, and the LLM facade.
+A minimal async agent framework: an **agent loop** drives an LLM that can call tools, with the LLM details abstracted behind a provider-agnostic facade. The four pillars are the agent loop, the system prompt module, the tool system, and the LLM facade.
 
 ### Agent loop ([agent/](agent/))
 
-`Agent` ([agent/agent.py](agent/agent.py)) owns the decide-act-observe loop. `Agent.run()` is an iterative async generator: call `LLM.generate` with the current context and tools → yield the assistant message → if it contains tool calls, dispatch each via `tools/dispatcher.py`, yield the tool-result messages → repeat. Stops when the model produces no tool calls or `max_turns` (default 10) is exhausted. The agent is stateless per-run; conversation state lives in `Context`.
+`Agent` ([agent/agent.py](agent/agent.py)) owns the agent's identity and the decide-act-observe loop. Identity is defined by the behavior prompt (`prompt`), context sources (`context_sources`), and tools. `Agent.run()` is an iterative async generator: call `LLM.generate` with the current context and tools → yield the assistant message → if it contains tool calls, dispatch each via `tools/dispatcher.py`, yield the tool-result messages → repeat. Stops when the model produces no tool calls or `max_turns` (default 10) is exhausted. The agent is stateless per-run; conversation state lives in `Context`.
+
+The Agent constructs the system prompt via `agent.build_system_prompt(workspace_root)`, which the caller passes to `Session.create()`. Default prompt (no `prompt` arg) uses the built-in software engineering agent and auto-includes `GitStatusSource` + `DirectoryTreeSource`. Custom prompts get no context sources by default (blank slate).
 
 **Context & storage.** `Context` ([agent/context.py](agent/context.py)) is the agent's interface to conversation state. It composes a `MessageStore` ([agent/message_store.py](agent/message_store.py)) with a system prompt and a projection strategy (default: return all messages). `MessageStore` is append-only; when constructed with a path, each append writes a JSONL line to disk.
 
 **Sessions.** `Session` ([agent/session.py](agent/session.py)) is the user-facing unit of conversation. It owns a `Context` and a `SessionMeta` dataclass (identity, model, backend, timestamps, usage). Factory methods `Session.create()` and `Session.load()` handle disk persistence (JSONL messages + JSON metadata). `Session.load()` validates that model/backend match the original session.
+
+### System prompt ([system_prompt/](system_prompt/))
+
+Builds the agent's system prompt from three parts: a **behavior prompt** (static markdown), an **environment block** (dynamic `<env>` XML with workspace root, platform, date, git status), and **context blocks** (dynamic `<context>` XML from opt-in sources). See [.claude/specifications/system-prompt-module.md](.claude/specifications/system-prompt-module.md) for the full design spec.
+
+- **[builder.py](system_prompt/builder.py)** — `build_system_prompt()` assembles all parts into a single string. `load_prompt()` resolves `str | Path | None` to a prompt string.
+- **[env.py](system_prompt/env.py)** — `build_env_block()` produces the `<env>` block.
+- **[context_sources.py](system_prompt/context_sources.py)** — `ContextSource` protocol (structural typing, no inheritance required) plus built-in sources: `GitStatusSource`, `DirectoryTreeSource`. Context sources are gathered concurrently once per session, not per turn.
+- **[defaults/behavior.md](system_prompt/defaults/behavior.md)** — The default behavior prompt (software engineering agent).
+
+The module has no imports from `agent/`, `tools/`, or `llm/` — it's a pure utility that takes configuration and produces a string.
 
 ### Tool system ([tools/](tools/))
 

@@ -1,20 +1,35 @@
 """Agent — owns the decide-act-observe loop.
 
-Stateless per-run: the same Agent instance can drive multiple conversations
-by accepting different Contexts.
+The Agent owns its identity: behavior prompt, context sources, tools, and
+LLM configuration. Sessions are instances of that identity — every session
+created by an agent inherits its prompt.
 """
 
 from collections.abc import AsyncGenerator, Callable
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
 from llm import LLM, Message, Role
 from llm.types import LLMTool, Usage
+from system_prompt import (
+    ContextSource,
+    DirectoryTreeSource,
+    GitStatusSource,
+    build_system_prompt,
+    load_prompt,
+)
 from tools import ToolContext, dispatch
 from tools.base import BaseTool
 
 from .context import Context
 
 OnUsageCallback = Callable[[Usage], None]
+
+# Default context sources for the built-in software engineering agent.
+_DEFAULT_CONTEXT_SOURCES: list[ContextSource] = [
+    GitStatusSource(),
+    DirectoryTreeSource(),
+]
 
 
 class Agent:
@@ -23,12 +38,36 @@ class Agent:
         llm: LLM,
         tools: list[BaseTool],
         *,
+        prompt: Union[str, Path, None] = None,
+        context_sources: list[ContextSource] | None = None,
         max_turns: int = 10,
     ) -> None:
         self._llm = llm
         self._tools_by_name: dict[str, BaseTool] = {t.name: t for t in tools}
         self._llm_tools: list[LLMTool] = [t.as_llm_tool() for t in tools]
         self._max_turns = max_turns
+        self._behavior_prompt = load_prompt(prompt)
+
+        # Default prompt → default context sources.
+        # Custom prompt → blank slate (user opts in).
+        if context_sources is not None:
+            self._context_sources = context_sources
+        elif prompt is None:
+            self._context_sources = _DEFAULT_CONTEXT_SOURCES
+        else:
+            self._context_sources = []
+
+    async def build_system_prompt(self, workspace_root: Path) -> str:
+        """Build the full system prompt for a new session.
+
+        Combines the behavior prompt, environment block, and context
+        blocks from this agent's configured sources.
+        """
+        return await build_system_prompt(
+            behavior_prompt=self._behavior_prompt,
+            workspace_root=workspace_root,
+            context_sources=self._context_sources,
+        )
 
     async def run(
         self,
