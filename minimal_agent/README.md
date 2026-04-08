@@ -1,103 +1,27 @@
-## Starter Code
+# minimal-agent
 
-```python
-import asyncio
-from typing import Literal
+A minimal async agent framework in Python. An agent loop drives an LLM that can call tools — you define the prompt, pick the tools, and let the loop handle the rest.
 
-from pydantic import BaseModel, Field
+Built on top of the OpenAI SDK (works with any OpenAI-compatible API), Pydantic for schemas, and `asyncio` for concurrency.
 
-from config import settings
-from llm import LLM, LLMTool, Message
+## Setup
 
+**Requirements:** Python >= 3.10, [uv](https://docs.astral.sh/uv/) for dependency management.
 
-class CalendarEvent(BaseModel):
-    name: str
-    date: str
-    participants: list[str]
+```bash
+# Install dependencies
+uv sync
 
-
-class GetWeatherArgs(BaseModel):
-    """Get the current weather for a city."""
-
-    city: str = Field(..., description="City name, e.g. 'San Francisco'")
-    units: Literal["celsius", "fahrenheit"] = "celsius"
-
-
-async def main():
-    # Drop unset values — the SDK rejects None for max_retries/timeout and
-    # has its own defaults we want to preserve.
-    overrides = {
-        "timeout": settings.OPENAI_TIMEOUT,
-        "max_retries": settings.OPENAI_MAX_RETRIES,
-        "api_key": settings.OPENAI_API_KEY,
-    }
-    llm = LLM(
-        model=settings.LLM_MODEL,
-        **{k: v for k, v in overrides.items() if v is not None},
-    )
-
-    # Non-streaming
-    resp = await llm.generate(
-        [
-            Message(
-                role="user",
-                content="Write a one-sentence bedtime story about a unicorn.",
-            )
-        ],
-        system="You are a concise storyteller.",
-    )
-    print(resp.text)
-
-    # Tool calling — schema generated from a Pydantic model.
-    print("\n--- tool ---")
-    weather_tool = LLMTool.from_model(GetWeatherArgs, name="get_weather")
-    print(f"tool: {weather_tool.name} — {weather_tool.description}")
-    tool_resp = await llm.generate(
-        [
-            Message(
-                role="user", content="What's the weather in San Francisco in celsius?"
-            )
-        ],
-        tools=[weather_tool],
-        tool_choice="auto",
-    )
-    if tool_resp.tool_calls:
-        for tc in tool_resp.tool_calls:
-            print(f"  call: {tc.name}({tc.arguments})")
-    else:
-        print(tool_resp.text)
-
-    # Structured output
-    print("\n--- structured ---")
-    structured = await llm.generate_structured(
-        [
-            Message(
-                role="user",
-                content="Alice and Bob are going to a science fair on Friday.",
-            )
-        ],
-        schema=CalendarEvent,
-        system="Extract the event information.",
-    )
-    if structured.refusal:
-        print(f"refused: {structured.refusal}")
-    else:
-        print(structured.parsed)
-
-    # Streaming
-    print("\n--- streaming ---")
-    async for chunk in llm.stream(
-        [Message(role="user", content="Count from 1 to 5.")],
-    ):
-        print(chunk.text, end="", flush=True)
-    print()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# Copy the example env file and add your API key
+cp .env.example .env
+# Edit .env → set LLM_BACKEND_API_KEY=sk-...
 ```
 
-## Agent Example
+The framework supports multiple LLM backends out of the box: `openai`, `openrouter`, `anthropic`, and `localhost` (for local servers like vLLM, Ollama, LM Studio). Set `LLM_BACKEND` and `LLM_MODEL` in your `.env` file.
+
+## Quickstart
+
+The framework ships with a built-in software engineering agent. Out of the box it can read and write files, search codebases, and run shell commands.
 
 ```python
 import asyncio
@@ -105,53 +29,225 @@ from pathlib import Path
 
 from agent import Agent, Session
 from config import settings
-from llm import LLM, Message
-from tools.builtin.get_weather import GetWeather
+from llm import LLM, Message, Role
+from tools.builtin.glob import Glob
+from tools.builtin.grep import Grep
+from tools.builtin.read_file import ReadFile
+from tools.builtin.run_shell import RunShell
+from tools.builtin.write_file import WriteFile
 
 
 async def main():
     llm = LLM(
         model=settings.LLM_MODEL,
         backend=settings.LLM_BACKEND,
-        timeout=settings.OPENAI_TIMEOUT,
-        max_retries=settings.OPENAI_MAX_RETRIES,
     )
 
-    agent = Agent(llm=llm, tools=[GetWeather()])
+    workspace = Path.cwd()
+    read_timestamps: dict[str, float] = {}
 
-    sessions_dir = Path(settings.SESSIONS_DIR)
-    # session = Session.create(
-    #     model=settings.LLM_MODEL,
-    #     backend=settings.LLM_BACKEND,
-    #     system_prompt="You are a helpful assistant.",
-    #     base_dir=sessions_dir,
-    # )
+    agent = Agent(
+        llm=llm,
+        tools=[
+            ReadFile(workspace_root=workspace, read_timestamps=read_timestamps),
+            WriteFile(workspace_root=workspace, read_timestamps=read_timestamps),
+            RunShell(workspace_root=workspace),
+            Grep(workspace_root=workspace),
+            Glob(workspace_root=workspace),
+        ],
+    )
 
-    # To resume an existing session:
-    session = Session.load(
-        session_id="20260407-044552-0e5e",
+    # Build the system prompt (gathers git status, directory tree, etc.)
+    system_prompt = await agent.build_system_prompt(workspace_root=workspace)
+
+    # Start a new conversation
+    session = Session.create(
         model=settings.LLM_MODEL,
         backend=settings.LLM_BACKEND,
-        system_prompt="You are a helpful assistant.",
-        base_dir=sessions_dir,
+        system_prompt=system_prompt,
     )
 
-    user_input = input("> ")
-    session.context.add(Message(role="user", content=user_input))
+    # Send a message and stream the agent's responses
+    session.context.add(Message(role=Role.USER, content="What files are in this project?"))
 
-    async for msg in agent.run(
-        session.context, on_usage=session.update_usage
-    ):
-        if msg.role == "assistant":
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    print(f"[tool call] {tc.name}({tc.arguments})")
-            if msg.content:
-                print(f"[assistant] {msg.content}")
-        elif msg.role == "tool":
-            print(f"[tool result] {msg.content}")
+    async for msg in agent.run(session.context):
+        if msg.role == Role.ASSISTANT and msg.content:
+            print(msg.content)
 
-
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 ```
+
+The agent decides which tools to call, calls them, reads the results, and keeps going until it has an answer. You don't need to manage the loop yourself.
+
+### Resuming a session
+
+Sessions are persisted to disk automatically. To pick up where you left off:
+
+```python
+session = Session.load(
+    session_id="20260408-143022-a1b2",  # from a previous Session.create()
+    model=settings.LLM_MODEL,
+    backend=settings.LLM_BACKEND,
+    system_prompt=system_prompt,  # rebuilt fresh — not restored from disk
+)
+```
+
+## Concepts
+
+### Agent
+
+The `Agent` is the core loop. It takes an LLM, a list of tools, and a prompt that defines its personality. Each call to `agent.run(context)` drives a decide-act-observe cycle: ask the LLM what to do → execute tool calls → feed results back → repeat until the LLM is done or `max_turns` is hit.
+
+The agent owns its **identity** — the same agent instance can drive many sessions, and every session inherits its prompt and behavior.
+
+### Session
+
+A `Session` is a single conversation. It holds the message history and metadata (model, backend, timestamps, token usage). Sessions are created with `Session.create()` and resumed with `Session.load()`. Message history is persisted as JSONL on disk.
+
+### Context
+
+`Context` is the agent's view of the conversation. It wraps a `MessageStore` (append-only message log) with the system prompt and a projection strategy. When the agent asks for messages, Context prepends the system prompt and returns the projected history.
+
+### Tools
+
+Tools are how the agent interacts with the world. Each tool is a class that inherits from `BaseTool` and defines an input schema (Pydantic model) and an `invoke()` method. The framework handles argument parsing, validation, permission checks, and error handling — your tool just does its job.
+
+**Built-in tools:**
+
+| Tool | What it does |
+|---|---|
+| `ReadFile` | Read files with optional offset/limit |
+| `WriteFile` | Create or overwrite files |
+| `RunShell` | Execute shell commands with timeout and permission checks |
+| `Grep` | Search file contents using ripgrep |
+| `Glob` | Find files by name pattern |
+
+### System Prompt
+
+The system prompt is built from three parts: a **behavior prompt** (markdown that defines the agent's personality), an **environment block** (workspace metadata), and **context blocks** (dynamic info like git status). The `system_prompt` module handles assembly — you just pass a markdown file or string.
+
+## Building a Custom Agent
+
+The default agent is a software engineer, but you can build anything. Here's a code review agent with a custom prompt and no shell access:
+
+### 1. Write a behavior prompt
+
+Create a markdown file — no special syntax, just instructions for the LLM.
+
+```markdown
+<!-- review_agent.md -->
+You are a code review assistant. You help developers improve their code
+by finding bugs, suggesting simplifications, and enforcing project conventions.
+
+# Tool usage
+
+- Use grep and glob to understand the codebase before commenting.
+- Use read_file to see the full context of files mentioned in a review.
+- Do not modify any files. You are read-only.
+
+# Style
+
+- Be direct. Say what's wrong, why, and how to fix it.
+- Cite specific line numbers when pointing out issues.
+```
+
+### 2. Build the agent
+
+Point the agent at your prompt file. Since this isn't a general coding agent, we skip the shell and write tools and explicitly choose our context sources.
+
+```python
+from pathlib import Path
+
+from agent import Agent
+from llm import LLM
+from system_prompt import GitStatusSource
+from tools.builtin.glob import Glob
+from tools.builtin.grep import Grep
+from tools.builtin.read_file import ReadFile
+
+
+llm = LLM(model="gpt-4o", backend="openai")
+workspace = Path.cwd()
+
+agent = Agent(
+    llm=llm,
+    tools=[
+        ReadFile(workspace_root=workspace, read_timestamps={}),
+        Grep(workspace_root=workspace),
+        Glob(workspace_root=workspace),
+    ],
+    prompt=Path("review_agent.md"),
+    context_sources=[GitStatusSource()],  # git status but no directory tree
+)
+```
+
+When you pass a custom `prompt`, context sources default to empty — you opt in to exactly what's relevant. The default agent (no `prompt` arg) auto-includes `GitStatusSource` and `DirectoryTreeSource`.
+
+### 3. Write a custom tool
+
+Tools are just async classes with a Pydantic schema. Here's a minimal example:
+
+```python
+from pydantic import BaseModel, Field
+
+from tools.base import BaseTool
+from tools.context import ToolContext
+
+
+class GreetInput(BaseModel):
+    """Say hello to someone."""
+    name: str = Field(..., description="The person's name")
+
+
+class Greet(BaseTool[GreetInput, str]):
+    name = "greet"
+    input_schema = GreetInput
+
+    async def invoke(self, args: GreetInput, ctx: ToolContext) -> str:
+        return f"Hello, {args.name}!"
+
+    def render_result_for_assistant(self, out: str) -> str:
+        return out
+```
+
+The `input_schema` docstring becomes the tool description the LLM sees. Field descriptions become parameter descriptions. That's all the LLM needs to know how to call your tool.
+
+**Optional hooks you can override:**
+
+- `validate(args, ctx)` — reject bad inputs before execution
+- `needs_permission(args)` — return `True` if this invocation needs user approval
+- `render_result_for_assistant(out)` — control what the LLM sees as the tool result
+
+### 4. Write a custom context source
+
+Context sources gather dynamic information about the environment at session start. Any object with a `name` property and an async `gather()` method works — no base class needed.
+
+```python
+from pathlib import Path
+
+
+class PackageJsonSource:
+    """Injects package.json contents into the system prompt."""
+
+    @property
+    def name(self) -> str:
+        return "packageJson"
+
+    async def gather(self, workspace_root: Path) -> str | None:
+        pkg = workspace_root / "package.json"
+        if not pkg.exists():
+            return None
+        return pkg.read_text()
+```
+
+Pass it to the agent:
+
+```python
+agent = Agent(
+    llm=llm,
+    tools=[...],
+    context_sources=[PackageJsonSource(), GitStatusSource()],
+)
+```
+
+The gathered content shows up in the system prompt as `<context name="packageJson">...</context>`.

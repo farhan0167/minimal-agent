@@ -20,40 +20,44 @@ async def main():
         max_retries=settings.OPENAI_MAX_RETRIES,
     )
 
+    workspace = Path.cwd()
     read_timestamps: dict[str, float] = {}
+
     agent = Agent(
         llm=llm,
         tools=[
             GetWeather(),
             ReadFile(
-                workspace_root=Path.cwd(),
+                workspace_root=workspace,
                 read_timestamps=read_timestamps,
             ),
             WriteFile(
-                workspace_root=Path.cwd(),
+                workspace_root=workspace,
                 read_timestamps=read_timestamps,
             ),
-            RunShell(workspace_root=Path.cwd()),
-            Grep(workspace_root=Path.cwd()),
-            Glob(workspace_root=Path.cwd()),
+            RunShell(workspace_root=workspace),
+            Grep(workspace_root=workspace),
+            Glob(workspace_root=workspace),
         ],
+        # prompt defaults to the built-in software engineering prompt
+        # context_sources defaults to [GitStatusSource(), DirectoryTreeSource()]
     )
 
     sessions_dir = Path(settings.SESSIONS_DIR)
+    system_prompt = await agent.build_system_prompt(workspace_root=workspace)
+
     # session = Session.create(
     #     model=settings.LLM_MODEL,
     #     backend=settings.LLM_BACKEND,
-    #     system_prompt="You are a helpful assistant.",
+    #     system_prompt=system_prompt,
     #     base_dir=sessions_dir,
     # )
 
-    # To resume an existing session:
     session = Session.load(
-        session_id="20260407-202941-e01d",
+        session_id="20260408-052847-4d51",  # from a previous Session.create()
         model=settings.LLM_MODEL,
         backend=settings.LLM_BACKEND,
-        system_prompt="You are a helpful assistant.",
-        base_dir=sessions_dir,
+        system_prompt=system_prompt,  # rebuilt fresh — not restored from disk
     )
 
     user_input = input("> ")

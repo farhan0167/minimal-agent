@@ -3,10 +3,9 @@
 from pathlib import Path
 
 from tools.base import BaseTool
+from tools.builtin._filesystem import truncate_text
 from tools.context import ToolContext
 from tools.results import ValidationErr, ValidationResult
-
-from tools.builtin._filesystem import truncate_text
 
 from .helpers import is_command_safe, validate_command
 from .schema import RunShellInput

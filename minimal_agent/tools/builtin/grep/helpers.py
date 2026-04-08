@@ -3,8 +3,6 @@
 import asyncio
 import shutil
 
-from tools.builtin._filesystem import truncate_text
-
 from .schema import GrepInput
 
 RIPGREP_TIMEOUT_S = 10
