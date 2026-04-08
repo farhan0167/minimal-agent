@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # --- Model selection ---------------------------------------------------
     LLM_MODEL: str = Field(default="gpt-4o-mini")
 
+    # --- Web search (Tavily) -----------------------------------------------
+    TAVILY_API_KEY: Optional[str] = Field(default=None)
+
     # --- Session persistence -----------------------------------------------
     SESSIONS_DIR: str = Field(default=".minimal_agent/sessions")
 

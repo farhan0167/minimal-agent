@@ -11,6 +11,8 @@ from tools.builtin.grep import Grep
 from tools.builtin.read_file import ReadFile
 from tools.builtin.run_shell import RunShell
 from tools.builtin.spawn_agents import SpawnAgents
+from tools.builtin.web_extract import WebExtract
+from tools.builtin.web_search import WebSearch
 from tools.builtin.write_file import WriteFile
 
 from . import render
@@ -41,6 +43,8 @@ def _build_agent(workspace: Path) -> Agent:
         RunShell(workspace_root=workspace),
         Grep(workspace_root=workspace),
         Glob(workspace_root=workspace),
+        WebSearch(),
+        WebExtract(),
     ]
 
     # Build a name→tool map so SpawnAgents can resolve sub-agent tool sets.
