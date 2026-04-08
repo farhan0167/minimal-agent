@@ -1,5 +1,8 @@
 """The REPL loop: input → agent.run() → render."""
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.live import Live
 from rich.spinner import Spinner
@@ -12,11 +15,32 @@ from . import render
 console = Console()
 
 
+def _build_prompt_session() -> PromptSession:
+    """Build a prompt_toolkit session with multiline support.
+
+    Enter submits. Shift+Enter or Alt+Enter inserts a newline.
+    """
+    bindings = KeyBindings()
+
+    @bindings.add("escape", "enter")
+    def _newline(event):
+        event.current_buffer.insert_text("\n")
+
+    return PromptSession(
+        key_bindings=bindings,
+        multiline=False,  # Enter submits by default
+    )
+
+
 async def run_loop(agent: Agent, session: Session) -> None:
     """Run the interactive REPL loop."""
+    prompt_session = _build_prompt_session()
+
     while True:
         try:
-            user_input = console.input("[bold green]> [/bold green]")
+            user_input = await prompt_session.prompt_async(
+                HTML("<ansigreen><b>&gt; </b></ansigreen>"),
+            )
         except (EOFError, KeyboardInterrupt):
             render.print_info("\nGoodbye.")
             return
@@ -79,6 +103,8 @@ def _handle_command(command: str, session: Session) -> bool:
         render.print_info("  /usage    — show token usage")
         render.print_info("  /session  — show session info")
         render.print_info("  /exit     — exit the REPL")
+        render.print_info("")
+        render.print_info("Alt+Enter for multiline input.")
 
     else:
         render.print_error(f"Unknown command: {cmd}")

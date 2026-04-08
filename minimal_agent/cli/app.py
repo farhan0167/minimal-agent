@@ -46,7 +46,7 @@ def _build_agent(workspace: Path) -> Agent:
     )
 
 
-async def _pick_session(system_prompt: str) -> Session:
+async def _pick_session(system_prompt: str) -> Session | None:
     """Let the user pick an existing session or create a new one."""
     sessions_dir = Path(settings.SESSIONS_DIR)
     sessions = Session.list_sessions(base_dir=sessions_dir)
@@ -78,6 +78,9 @@ async def _pick_session(system_prompt: str) -> Session:
             )
 
         choice = choice.strip().lower()
+
+        if choice in ("/exit", "/quit", "/q"):
+            return None
 
         if choice == "n" or choice == "":
             return Session.create(
@@ -117,6 +120,10 @@ async def run() -> None:
 
     system_prompt = await agent.build_system_prompt(workspace_root=workspace)
     session = await _pick_session(system_prompt)
+
+    if session is None:
+        render.print_info("Goodbye.")
+        return
 
     render.print_info(f"Session: {session.session_id}")
     render.print_info("")
