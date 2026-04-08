@@ -68,8 +68,25 @@ async def run_loop(agent: Agent, session: Session) -> None:
             live.start()
             first = True
 
+            def _make_permission_callback(spinner: Live):
+                async def _ask(tool_name: str, description: str) -> bool:
+                    """Stop spinner, prompt user, restart spinner."""
+                    was_started = spinner.is_started
+                    if was_started:
+                        spinner.stop()
+                    allowed = render.prompt_permission(tool_name, description)
+                    if was_started:
+                        spinner.start()
+                    return allowed
+
+                return _ask
+
+            _ask_permission = _make_permission_callback(live)
+
             async for msg in agent.run(
-                session.context, on_usage=session.update_usage
+                session.context,
+                on_usage=session.update_usage,
+                permission_callback=_ask_permission,
             ):
                 if first:
                     live.stop()

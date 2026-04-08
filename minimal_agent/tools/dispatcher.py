@@ -49,7 +49,23 @@ async def dispatch(
             content=f"validation failed: {validation.message}",
         )
 
-    # 3. Permission check — deferred until ToolContext grows a callback.
+    # 3. Permission check.
+    if tool.needs_permission(args) and ctx.permission_callback is not None:
+        description = tool.permission_description(args)
+        try:
+            allowed = await ctx.permission_callback(tool_call.name, description)
+        except Exception as e:
+            return Message(
+                role=Role.TOOL,
+                tool_call_id=tool_call.id,
+                content=f"permission error: {type(e).__name__}: {e}",
+            )
+        if not allowed:
+            return Message(
+                role=Role.TOOL,
+                tool_call_id=tool_call.id,
+                content=f"permission denied: user rejected {tool_call.name}",
+            )
 
     # 4. Execute.
     try:
