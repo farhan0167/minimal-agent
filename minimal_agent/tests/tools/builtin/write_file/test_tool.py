@@ -3,8 +3,8 @@
 import time
 from pathlib import Path
 
-from tools.builtin.write_file import WriteFile, WriteFileInput
-from tools.context import ToolContext
+from minimal_agent.tools.builtin.write_file import WriteFile, WriteFileInput
+from minimal_agent.tools.context import ToolContext
 
 
 def _make_tool(

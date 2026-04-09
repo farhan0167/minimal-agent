@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from system_prompt.builder import (
+from minimal_agent.system_prompt.builder import (
     build_context_blocks,
     build_system_prompt,
     load_prompt,

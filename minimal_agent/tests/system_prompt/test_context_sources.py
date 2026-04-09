@@ -2,7 +2,10 @@
 
 from pathlib import Path
 
-from system_prompt.context_sources import DirectoryTreeSource, GitStatusSource
+from minimal_agent.system_prompt.context_sources import (
+    DirectoryTreeSource,
+    GitStatusSource,
+)
 
 
 class TestGitStatusSource:

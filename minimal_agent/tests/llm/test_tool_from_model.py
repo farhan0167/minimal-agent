@@ -7,7 +7,7 @@ properties and the description-unwrapping survive SDK upgrades.
 
 from pydantic import BaseModel, Field
 
-from llm.types import LLMTool
+from minimal_agent.llm.types import LLMTool
 
 
 class GetWeatherArgs(BaseModel):

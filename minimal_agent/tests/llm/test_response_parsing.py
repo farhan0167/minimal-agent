@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from llm.llm import LLM
+from minimal_agent.llm.llm import LLM
 
 
 @pytest.fixture

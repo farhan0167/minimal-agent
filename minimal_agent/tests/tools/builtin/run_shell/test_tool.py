@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from tools.builtin.run_shell import RunShell, RunShellInput
-from tools.builtin.run_shell.shell import ShellResult
-from tools.context import ToolContext
+from minimal_agent.tools.builtin.run_shell import RunShell, RunShellInput
+from minimal_agent.tools.builtin.run_shell.shell import ShellResult
+from minimal_agent.tools.context import ToolContext
 
 
 class TestValidation:

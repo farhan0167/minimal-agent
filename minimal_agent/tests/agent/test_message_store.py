@@ -1,5 +1,5 @@
-from agent.message_store import MessageStore
-from llm.types import Message, Role, ToolCall
+from minimal_agent.agent.message_store import MessageStore
+from minimal_agent.llm.types import Message, Role, ToolCall
 
 
 def test_append_and_ordering():

@@ -3,8 +3,8 @@
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from tools.builtin.grep import Grep, GrepInput
-from tools.context import ToolContext
+from minimal_agent.tools.builtin.grep import Grep, GrepInput
+from minimal_agent.tools.context import ToolContext
 
 
 def _make_tool(tmp_path: Path) -> Grep:
@@ -51,7 +51,7 @@ class TestValidation:
 
 
 class TestInvoke:
-    @patch("tools.builtin.grep.tool.run_ripgrep", new_callable=AsyncMock)
+    @patch("minimal_agent.tools.builtin.grep.tool.run_ripgrep", new_callable=AsyncMock)
     async def test_files_with_matches(self, mock_rg, tmp_path: Path):
         # Create actual files so sort_by_mtime can stat them
         f1 = tmp_path / "a.py"
@@ -68,7 +68,7 @@ class TestInvoke:
         assert result["num_files"] == 2
         assert len(result["filenames"]) == 2
 
-    @patch("tools.builtin.grep.tool.run_ripgrep", new_callable=AsyncMock)
+    @patch("minimal_agent.tools.builtin.grep.tool.run_ripgrep", new_callable=AsyncMock)
     async def test_no_matches(self, mock_rg, tmp_path: Path):
         mock_rg.return_value = ("", 1)
         tool = _make_tool(tmp_path)
@@ -77,7 +77,7 @@ class TestInvoke:
 
         assert result["num_files"] == 0
 
-    @patch("tools.builtin.grep.tool.run_ripgrep", new_callable=AsyncMock)
+    @patch("minimal_agent.tools.builtin.grep.tool.run_ripgrep", new_callable=AsyncMock)
     async def test_content_mode(self, mock_rg, tmp_path: Path):
         mock_rg.return_value = ("1:hello world\n2:hello there\n", 0)
         tool = _make_tool(tmp_path)
@@ -87,7 +87,7 @@ class TestInvoke:
         assert result["output_mode"] == "content"
         assert "hello" in result["content"]
 
-    @patch("tools.builtin.grep.tool.run_ripgrep", new_callable=AsyncMock)
+    @patch("minimal_agent.tools.builtin.grep.tool.run_ripgrep", new_callable=AsyncMock)
     async def test_count_mode(self, mock_rg, tmp_path: Path):
         mock_rg.return_value = ("a.py:3\nb.py:1\n", 0)
         tool = _make_tool(tmp_path)

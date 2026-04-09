@@ -1,5 +1,5 @@
-from agent.context import Context
-from llm.types import Message, Role
+from minimal_agent.agent.context import Context
+from minimal_agent.llm.types import Message, Role
 
 
 def test_get_messages_with_system_prompt():

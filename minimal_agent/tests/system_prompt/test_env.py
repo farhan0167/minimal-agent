@@ -4,7 +4,7 @@ import datetime
 import platform
 from pathlib import Path
 
-from system_prompt.env import build_env_block
+from minimal_agent.system_prompt.env import build_env_block
 
 
 class TestBuildEnvBlock:

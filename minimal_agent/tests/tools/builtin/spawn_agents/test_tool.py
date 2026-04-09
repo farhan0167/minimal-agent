@@ -6,10 +6,14 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from llm.types import GenerateResponse
-from tools.base import BaseTool
-from tools.builtin.spawn_agents import SpawnAgents, SpawnAgentsInput, SubAgentSpec
-from tools.context import ToolContext
+from minimal_agent.llm.types import GenerateResponse
+from minimal_agent.tools.base import BaseTool
+from minimal_agent.tools.builtin.spawn_agents import (
+    SpawnAgents,
+    SpawnAgentsInput,
+    SubAgentSpec,
+)
+from minimal_agent.tools.context import ToolContext
 
 # -- Helpers -----------------------------------------------------------------
 
@@ -197,7 +201,7 @@ async def test_agent_error_captured_not_raised():
 
 async def test_max_turns_forwarded_to_sub_agent():
     """The max_turns from the spec is respected by the sub-agent."""
-    from llm.types import ToolCall
+    from minimal_agent.llm.types import ToolCall
 
     responses = [
         GenerateResponse(

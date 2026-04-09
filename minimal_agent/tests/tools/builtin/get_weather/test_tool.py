@@ -1,7 +1,7 @@
 """Tests for the `get_weather` builtin tool."""
 
-from tools import ToolContext
-from tools.builtin.get_weather import GetWeather, GetWeatherInput
+from minimal_agent.tools import ToolContext
+from minimal_agent.tools.builtin.get_weather import GetWeather, GetWeatherInput
 
 
 async def test_invoke_returns_stub_string():

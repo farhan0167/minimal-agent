@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from tools.builtin.write_file.helpers import write_text_content
+from minimal_agent.tools.builtin.write_file.helpers import write_text_content
 
 
 class TestWriteTextContent:

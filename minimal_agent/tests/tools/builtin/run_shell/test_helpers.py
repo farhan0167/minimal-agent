@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from tools.builtin._filesystem import truncate_text
-from tools.builtin.run_shell.helpers import validate_command
+from minimal_agent.tools.builtin._filesystem import truncate_text
+from minimal_agent.tools.builtin.run_shell.helpers import validate_command
 
 
 class TestTruncateOutput:

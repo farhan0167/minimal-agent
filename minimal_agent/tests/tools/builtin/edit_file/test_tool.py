@@ -3,9 +3,9 @@
 import time
 from pathlib import Path
 
-from tools import ToolContext
-from tools.builtin.edit_file import EditFile, EditFileInput
-from tools.results import ValidationErr, ValidationOk
+from minimal_agent.tools import ToolContext
+from minimal_agent.tools.builtin.edit_file import EditFile, EditFileInput
+from minimal_agent.tools.results import ValidationErr, ValidationOk
 
 
 def _make_tool(tmp_path: Path) -> tuple[EditFile, dict[str, float]]:
