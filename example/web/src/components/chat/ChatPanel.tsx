@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { Thread, makeMarkdownText } from "@assistant-ui/react-ui";
 import { useChatRuntime } from "../../hooks/use-chat-runtime";
-import { toolUIs } from "../tools";
+import { getTools } from "../../api/tools";
+import { buildToolUIs } from "../tools";
 import { ShikiSyntaxHighlighter } from "./ShikiHighlighter";
 
 const MarkdownText = makeMarkdownText({
@@ -16,6 +18,13 @@ interface ChatPanelProps {
 
 export function ChatPanel({ sessionId }: ChatPanelProps) {
   const { runtime, isLoaded } = useChatRuntime(sessionId);
+  const [toolUIs, setToolUIs] = useState<ReturnType<typeof buildToolUIs>>([]);
+
+  useEffect(() => {
+    getTools().then((tools) => {
+      setToolUIs(buildToolUIs(tools.map((t) => t.name)));
+    });
+  }, []);
 
   if (!isLoaded) {
     return (

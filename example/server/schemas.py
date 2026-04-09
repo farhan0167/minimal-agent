@@ -52,3 +52,11 @@ class MessageResponse(BaseModel):
 
 class MessageHistoryResponse(BaseModel):
     messages: list[MessageResponse]
+
+
+class ToolInfo(BaseModel):
+    name: str
+
+
+class ToolListResponse(BaseModel):
+    tools: list[ToolInfo]

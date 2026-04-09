@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from routes.chat import router as chat_router
 from routes.sessions import router as sessions_router
+from routes.tools import router as tools_router
 
 app = FastAPI(
     title="minimal-agent",
@@ -16,6 +17,7 @@ app = FastAPI(
 
 app.include_router(sessions_router)
 app.include_router(chat_router)
+app.include_router(tools_router)
 
 
 @app.get("/health")

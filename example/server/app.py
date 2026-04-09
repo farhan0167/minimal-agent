@@ -54,6 +54,23 @@ def validate_workspace(workspace_root: str) -> Path:
     return path
 
 
+def get_tool_names() -> list[str]:
+    """Return the names of all tools the server registers, without instantiation."""
+    tool_classes = [
+        GetWeather,
+        ReadFile,
+        EditFile,
+        WriteFile,
+        RunShell,
+        Grep,
+        Glob,
+        WebSearch,
+        WebExtract,
+        SpawnAgents,
+    ]
+    return [cls.name for cls in tool_classes]
+
+
 def build_agent(workspace: Path) -> Agent:
     """Construct the default agent with all builtin tools for a workspace."""
     llm = LLM(
