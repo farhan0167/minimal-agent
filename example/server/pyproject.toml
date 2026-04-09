@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-minimal-agent = { path = "../minimal_agent", editable = true }
+minimal-agent = { path = "../../minimal_agent", editable = true }
 
 [dependency-groups]
 dev = [
