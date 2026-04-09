@@ -1,0 +1,235 @@
+@import "tailwindcss";
+@import "@assistant-ui/react-ui/styles/index.css";
+@import "@assistant-ui/react-ui/styles/markdown.css";
+
+/*
+ * Claude-inspired theme for assistant-ui.
+ * Warm cream background, serif typography, orange-brown accent.
+ * Based on: https://www.assistant-ui.com/examples/claude
+ */
+:root {
+  /* Warm cream backgrounds */
+  --aui-background: 40 20% 96%;       /* #F5F5F0 */
+  --aui-foreground: 60 6% 10%;        /* #1a1a18 */
+
+  --aui-card: 0 0% 100%;
+  --aui-card-foreground: 60 6% 10%;
+
+  --aui-popover: 0 0% 100%;
+  --aui-popover-foreground: 60 6% 10%;
+
+  /* Claude's signature orange-brown */
+  --aui-primary: 18 56% 43%;          /* #ae5630 */
+  --aui-primary-foreground: 0 0% 100%;
+
+  /* Warm muted tones */
+  --aui-secondary: 40 10% 90%;
+  --aui-secondary-foreground: 60 6% 10%;
+
+  --aui-muted: 40 10% 90%;
+  --aui-muted-foreground: 40 2% 41%;  /* #6b6a68 */
+
+  --aui-accent: 40 10% 90%;
+  --aui-accent-foreground: 60 6% 10%;
+
+  --aui-destructive: 0 84% 60%;
+  --aui-destructive-foreground: 0 0% 98%;
+
+  --aui-border: 40 8% 85%;
+  --aui-input: 40 8% 85%;
+  --aui-ring: 18 56% 43%;             /* matches primary */
+
+  --aui-radius: 0.75rem;
+
+  --aui-thread-max-width: 48rem;
+
+  /* Extended Claude palette tokens */
+  --claude-sidebar: 40 14% 90%;       /* #eae8e1 */
+  --claude-user-bubble: 37 14% 83%;   /* #DDD9CE */
+  --claude-composer: 0 0% 100%;       /* white */
+  --claude-code-bg: 40 14% 98%;       /* #e8e5db — subtly darker than page */
+  --claude-code-header: 60 5% 16%;    /* #2d2d2a */
+  --claude-code-button: 50 3% 34%;    /* #5a5955 */
+  --claude-inline-code-bg: 40 12% 89%; /* #e8e6df */
+  --claude-inline-code-text: 14 67% 36%; /* #953a21 */
+  --claude-primary-hover: 18 56% 38%; /* #9a4a29 */
+  --claude-border: 0 0% 0% / 0.08;
+  --claude-border-subtle: 0 0% 0% / 0.06;
+  --claude-hover: 0 0% 0% / 0.06;
+  --claude-active: 0 0% 0% / 0.08;
+  --claude-shadow: 0 0.25rem 1.25rem hsl(0 0% 0% / 0.04), 0 0 0 1px hsl(0 0% 0% / 0.06);
+}
+
+.dark {
+  --aui-background: 36 6% 15%;        /* #2b2a27 */
+  --aui-foreground: 40 14% 93%;       /* #eee */
+
+  --aui-card: 40 7% 12%;              /* #1f1e1b */
+  --aui-card-foreground: 40 14% 93%;
+
+  --aui-popover: 40 7% 12%;
+  --aui-popover-foreground: 40 14% 93%;
+
+  --aui-primary: 18 56% 43%;          /* #ae5630 — same in dark */
+  --aui-primary-foreground: 0 0% 100%;
+
+  --aui-secondary: 40 4% 22%;
+  --aui-secondary-foreground: 40 14% 93%;
+
+  --aui-muted: 40 4% 22%;
+  --aui-muted-foreground: 36 4% 59%;  /* #9a9893 */
+
+  --aui-accent: 40 4% 22%;
+  --aui-accent-foreground: 40 14% 93%;
+
+  --aui-destructive: 0 84% 60%;
+  --aui-destructive-foreground: 0 0% 98%;
+
+  --aui-border: 40 4% 25%;
+  --aui-input: 40 4% 25%;
+  --aui-ring: 18 56% 43%;
+
+  /* Extended dark tokens */
+  --claude-sidebar: 36 5% 13%;        /* darker than bg */
+  --claude-user-bubble: 40 3% 22%;    /* #393937 */
+  --claude-composer: 40 7% 12%;       /* #1f1e1b */
+  --claude-code-bg: 40 5% 18%;
+  --claude-code-header: 40 14% 85%;
+  --claude-code-button: 36 4% 59%;
+  --claude-inline-code-bg: 40 5% 20%;
+  --claude-inline-code-text: 18 56% 55%;
+  --claude-primary-hover: 18 50% 50%;
+  --claude-border: 0 0% 100% / 0.08;
+  --claude-border-subtle: 0 0% 100% / 0.06;
+  --claude-hover: 0 0% 100% / 0.06;
+  --claude-active: 0 0% 100% / 0.08;
+  --claude-shadow: 0 0.25rem 1.25rem hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(0 0% 100% / 0.06);
+}
+
+/* Serif font for the chat area (Claude's signature look) */
+.aui-thread-root {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 450;
+  background-color: hsl(var(--aui-background));
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tighter font sizing for messages */
+.aui-assistant-message-content,
+.aui-user-message-content {
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+/* Markdown content — match Claude's tight, readable spacing */
+.aui-md h1 { font-size: 1.125rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.375rem; }
+.aui-md h2 { font-size: 1rem; font-weight: 700; margin-top: 0.75rem; margin-bottom: 0.25rem; }
+.aui-md h3 { font-size: 0.9375rem; font-weight: 700; margin-top: 0.625rem; margin-bottom: 0.25rem; }
+.aui-md p { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+.aui-md ul, .aui-md ol { margin-top: 0.125rem; margin-bottom: 0.125rem; padding-left: 1.25rem; }
+.aui-md li { margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; line-height: 1.5; }
+.aui-md li p { margin: 0; }
+.aui-md hr { margin-top: 0.625rem; margin-bottom: 0.625rem; border-color: hsl(var(--claude-border)); }
+/* Code blocks — warm off-white with visible contrast against page */
+.aui-md-pre {
+  font-size: 0.8rem;
+  margin-top: 0.375rem;
+  margin-bottom: 0.375rem;
+  background-color: hsl(var(--claude-code-bg)) !important;
+  border: 1px solid hsl(var(--claude-border));
+}
+.aui-md-pre code {
+  font-size: 0.8rem;
+  background-color: transparent !important;
+}
+/* Code header (language label bar) */
+.aui-code-header-root {
+  background-color: hsl(var(--claude-code-bg)) !important;
+  color: hsl(var(--claude-code-header)) !important;
+  border-bottom: none !important;
+}
+.aui-code-header-root button {
+  color: hsl(var(--claude-code-button)) !important;
+}
+/* Inline code — warm tinted background, matching text color */
+.aui-md-inline-code {
+  font-size: 0.8rem;
+  background-color: hsl(var(--claude-inline-code-bg)) !important;
+  color: hsl(var(--claude-inline-code-text)) !important;
+  padding: 0.15em 0.4em;
+  border-radius: 0.25rem;
+  border: 1px solid hsl(var(--claude-border)) !important;
+  font-weight: 500 !important;
+}
+/* Shiki code body — same background as header */
+.shiki-wrapper {
+  background-color: hsl(var(--claude-code-bg));
+  border-radius: 0 0 var(--aui-radius) var(--aui-radius);
+}
+/* Shiki syntax highlighter — dual theme support */
+.shiki {
+  --shiki-light-bg: transparent !important;
+  --shiki-dark-bg: transparent !important;
+  background-color: transparent !important;
+  font-size: 0.8rem;
+  padding: 1rem;
+  overflow-x: auto;
+}
+.shiki,
+.shiki span {
+  color: var(--shiki-light) !important;
+}
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark) !important;
+}
+
+.aui-md table { font-size: 0.8125rem; }
+.aui-md th, .aui-md td { padding: 0.25rem 0.75rem; }
+.aui-md strong { font-weight: 700; }
+
+/* User messages — right-aligned within the centered content column */
+.aui-user-message-content {
+  background-color: hsl(var(--claude-user-bubble));
+  color: hsl(var(--aui-foreground));
+  padding: 1rem 1.25rem;
+  border-radius: 1.25rem;
+}
+
+/* Remove assistant avatar circle */
+.aui-avatar-root {
+  display: none;
+}
+
+/* Composer — match Claude's centered rounded input */
+.aui-composer-root {
+  background-color: hsl(var(--claude-composer));
+  box-shadow: var(--claude-shadow);
+  border: none;
+  border-radius: 1.5rem;
+  padding: 0.25rem;
+  align-items: flex-end;
+}
+
+.aui-composer-input {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1rem;
+  padding: 1.25rem 1.5rem;
+  min-height: 6rem;
+}
+
+/* Send button — Claude's rounded orange, bottom-right */
+.aui-composer-send {
+  background-color: hsl(var(--aui-primary));
+  border-radius: 0.75rem;
+  margin-bottom: 0.5rem;
+  margin-right: 0.75rem;
+}
+.aui-composer-send:hover {
+  background-color: hsl(var(--claude-primary-hover));
+}
+
+/* Composer footer area */
+.aui-thread-viewport-footer {
+  padding: 0.5rem 1rem 1.25rem;
+}

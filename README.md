@@ -199,23 +199,62 @@ agent = Agent(
 )
 ```
 
-## Repo structure
-
-```
-minimal_agent/              # Core library (installable package, src layout)
-  src/minimal_agent/
-    agent/                  # Agent loop, context, sessions
-    llm/                    # Provider-agnostic LLM facade
-    system_prompt/          # System prompt builder + context sources
-    tools/                  # Tool system (base class, dispatcher, builtins)
-    config.py               # Settings via pydantic-settings
-cli/                        # Terminal client (Rich + prompt-toolkit)
-streamlit_client/           # Streamlit web client
-```
-
 ### Built-in tools
 
 `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell`, `spawn_agents`, `web_search`, `web_extract`, `get_weather` (stub)
+
+## Example: Full-stack web app
+
+The `example/` directory contains a ready-to-run chat application with a **FastAPI backend** and a **React frontend** that demonstrates the agent in action.
+
+```
+example/
+  server/       # FastAPI + SSE streaming
+  web/          # React + Vite + Tailwind
+```
+
+### Prerequisites
+
+- Python 3.11+ with [uv](https://docs.astral.sh/uv/)
+- Node.js 18+
+- An API key for your chosen LLM backend
+
+### 1. Start the server
+
+```bash
+cd example/server
+uv sync
+cp .env.example .env   # then edit with your API keys
+python main.py         # runs on http://localhost:8000
+```
+
+Key env vars in `.env`:
+
+| Variable | Purpose |
+|---|---|
+| `LLM_BACKEND` | `openai`, `anthropic`, `openrouter`, or `localhost` |
+| `LLM_BACKEND_API_KEY` | API key for the chosen backend |
+| `LLM_MODEL` | Model name (e.g. `gpt-4o-mini`) |
+| `TAVILY_API_KEY` | Enables `web_search` and `web_extract` tools |
+| `ALLOWED_WORKSPACES` | Comma-separated paths the agent is allowed to access |
+
+### 2. Start the frontend
+
+```bash
+cd example/web
+npm install
+npm run dev            # runs on http://localhost:5173
+```
+
+The Vite dev server proxies `/api/*` requests to the backend on port 8000.
+
+### 3. Use it
+
+1. Open `http://localhost:5173`
+2. Create a new session (pick a workspace directory)
+3. Chat with the agent — it can read/write/edit files, run shell commands, search the web, and more
+
+The agent streams responses back via Server-Sent Events, and session history is persisted to disk so you can pick up where you left off.
 
 ## Development
 

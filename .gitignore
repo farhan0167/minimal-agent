@@ -1,6 +1,6 @@
 .venv
 __pycache__
 .env
-*/.minimal_agent/
+**/.minimal_agent/
 .pytest_cache
 .ruff_cache

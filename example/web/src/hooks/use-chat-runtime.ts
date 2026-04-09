@@ -1,0 +1,239 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  useLocalRuntime,
+  type ChatModelAdapter,
+  type ChatModelRunResult,
+  type ThreadMessageLike,
+} from "@assistant-ui/react";
+import { sendMessage, getMessages } from "../api/chat";
+import type { Message } from "../types/message";
+
+type ContentPart = NonNullable<ChatModelRunResult["content"]>[number];
+
+/**
+ * Convert server messages to assistant-ui ThreadMessageLike format.
+ *
+ * The server stores messages as a flat sequence per agent turn:
+ *   assistant {content:"", tool_calls:[...]}  → tool {result} → assistant {content:"final text"}
+ *
+ * We merge each such sequence into a single assistant ThreadMessageLike
+ * containing tool-call parts (with results) + final text.
+ */
+function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
+  const result: ThreadMessageLike[] = [];
+
+  // Index tool results by tool_call_id for quick lookup.
+  const toolResults = new Map<string, string>();
+  for (const msg of messages) {
+    if (msg.role === "tool" && msg.tool_call_id) {
+      toolResults.set(msg.tool_call_id, (msg.content as string) ?? "");
+    }
+  }
+
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i];
+
+    // Skip system and tool messages (tool results are merged via the map).
+    if (msg.role === "system" || msg.role === "tool") {
+      i++;
+      continue;
+    }
+
+    if (msg.role === "user") {
+      result.push({
+        role: "user",
+        content: (msg.content as string) ?? "",
+      });
+      i++;
+      continue;
+    }
+
+    // Assistant message — collect this and any continuation into one turn.
+    // A turn is: assistant(tool_calls) → tool(s) → assistant(text)
+    // Or just: assistant(text) alone.
+    const parts: (
+      | { type: "text"; text: string }
+      | {
+          type: "tool-call";
+          toolCallId: string;
+          toolName: string;
+          argsText: string;
+          args: Record<string, unknown>;
+          result?: unknown;
+        }
+    )[] = [];
+
+    // Walk forward, merging consecutive assistant+tool messages into one turn.
+    while (i < messages.length && messages[i].role !== "user") {
+      const m = messages[i];
+
+      if (m.role === "assistant") {
+        if (m.tool_calls && m.tool_calls.length > 0) {
+          for (const tc of m.tool_calls) {
+            parts.push({
+              type: "tool-call",
+              toolCallId: tc.id,
+              toolName: tc.name,
+              argsText: JSON.stringify(tc.arguments),
+              args: tc.arguments,
+              result: toolResults.get(tc.id),
+            });
+          }
+        }
+        if (m.content) {
+          parts.push({ type: "text", text: m.content as string });
+        }
+      }
+      // Skip tool messages — already indexed above.
+      i++;
+    }
+
+    if (parts.length > 0) {
+      result.push({
+        role: "assistant",
+        content: parts as ThreadMessageLike["content"],
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Build a LocalRuntime wired to our FastAPI SSE backend.
+ *
+ * Loads existing message history on mount via initialMessages.
+ * Each yield must contain the FULL cumulative content, not deltas.
+ */
+export function useChatRuntime(sessionId: string) {
+  const [initialMessages, setInitialMessages] = useState<
+    readonly ThreadMessageLike[]
+  >([]);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  // Fetch message history when session changes.
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoaded(false);
+
+    getMessages(sessionId)
+      .then((data) => {
+        if (cancelled) return;
+        setInitialMessages(toThreadMessages(data.messages));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setInitialMessages([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setIsLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  const adapter = useMemo<ChatModelAdapter>(
+    () => ({
+      async *run({ messages, abortSignal }) {
+        const lastMessage = messages[messages.length - 1];
+        if (!lastMessage || lastMessage.role !== "user") return;
+
+        const textParts = lastMessage.content.filter(
+          (part) => part.type === "text",
+        );
+        const userText = textParts
+          .map((p) => ("text" in p ? p.text : ""))
+          .join("\n");
+        if (!userText) return;
+
+        let currentText = "";
+        const toolCalls: ContentPart[] = [];
+        const toolCallIndex = new Map<string, number>();
+
+        for await (const event of sendMessage(
+          sessionId,
+          userText,
+          abortSignal,
+        )) {
+          switch (event.type) {
+            case "assistant": {
+              const msg = event.data;
+
+              if (msg.content) {
+                currentText = msg.content as string;
+              }
+
+              if (msg.tool_calls) {
+                for (const tc of msg.tool_calls) {
+                  toolCallIndex.set(tc.id, toolCalls.length);
+                  toolCalls.push({
+                    type: "tool-call",
+                    toolCallId: tc.id,
+                    toolName: tc.name,
+                    argsText: JSON.stringify(tc.arguments),
+                    args: tc.arguments as never,
+                  } as ContentPart);
+                }
+              }
+
+              yield {
+                content: [
+                  ...toolCalls,
+                  ...(currentText
+                    ? [{ type: "text" as const, text: currentText }]
+                    : []),
+                ],
+              };
+              break;
+            }
+
+            case "tool_result": {
+              const msg = event.data;
+              const tcId = msg.tool_call_id;
+              if (tcId && toolCallIndex.has(tcId)) {
+                const idx = toolCallIndex.get(tcId)!;
+                const existing = toolCalls[idx] as Record<string, unknown>;
+                toolCalls[idx] = {
+                  ...existing,
+                  result: msg.content,
+                } as ContentPart;
+              }
+
+              yield {
+                content: [
+                  ...toolCalls,
+                  ...(currentText
+                    ? [{ type: "text" as const, text: currentText }]
+                    : []),
+                ],
+              };
+              break;
+            }
+
+            case "error": {
+              currentText += `\n\n**Error:** ${event.data.detail}`;
+              yield {
+                content: [{ type: "text" as const, text: currentText }],
+              };
+              break;
+            }
+
+            case "done":
+              break;
+          }
+        }
+      },
+    }),
+    [sessionId],
+  );
+
+  const runtime = useLocalRuntime(adapter, {
+    initialMessages,
+  });
+
+  return { runtime, isLoaded };
+}
