@@ -49,7 +49,7 @@ async def _stream_agent(
         yield {"event": "error", "data": json.dumps({"detail": str(e)})}
         return
 
-    agent = build_agent(workspace)
+    agent = build_agent(workspace, model=session._meta.model, backend=session._meta.backend)
 
     # Add user message to context.
     session.context.add(Message(role=Role.USER, content=user_message))

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { Thread, makeMarkdownText } from "@assistant-ui/react-ui";
+import remarkGfm from "remark-gfm";
 import { useChatRuntime } from "../../hooks/use-chat-runtime";
 import { getTools } from "../../api/tools";
 import { buildToolUIs } from "../tools";
 import { ShikiSyntaxHighlighter } from "./ShikiHighlighter";
 
 const MarkdownText = makeMarkdownText({
+  remarkPlugins: [remarkGfm],
   components: {
     SyntaxHighlighter: ShikiSyntaxHighlighter,
   },
