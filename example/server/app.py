@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from minimal_agent.agent import Agent, Session
-from minimal_agent.config import settings
+from minimal_agent.config import Backend, settings
 from minimal_agent.llm import LLM
 from minimal_agent.tools.builtin.edit_file import EditFile
 from minimal_agent.tools.builtin.get_weather import GetWeather
@@ -71,11 +71,15 @@ def get_tool_names() -> list[str]:
     return [cls.name for cls in tool_classes]
 
 
-def build_agent(workspace: Path) -> Agent:
+def build_agent(
+    workspace: Path,
+    model: str | None = None,
+    backend: str | None = None,
+) -> Agent:
     """Construct the default agent with all builtin tools for a workspace."""
     llm = LLM(
-        model=settings.LLM_MODEL,
-        backend=settings.LLM_BACKEND,
+        model=model or settings.LLM_MODEL,
+        backend=Backend(backend) if backend else settings.LLM_BACKEND,
         timeout=settings.OPENAI_TIMEOUT,
         max_retries=settings.OPENAI_MAX_RETRIES,
     )
@@ -121,7 +125,7 @@ async def create_session(
     model = model or settings.LLM_MODEL
     backend = backend or settings.LLM_BACKEND
 
-    agent = build_agent(workspace)
+    agent = build_agent(workspace, model=model, backend=backend)
     system_prompt = await agent.build_system_prompt(workspace_root=workspace)
 
     return Session.create(
