@@ -41,7 +41,7 @@
 
   --aui-radius: 0.75rem;
 
-  --aui-thread-max-width: 48rem;
+  --aui-thread-max-width: 50rem;
 
   /* Extended Claude palette tokens */
   --claude-sidebar: 40 14% 90%;       /* #eae8e1 */
@@ -184,8 +184,11 @@
   color: var(--shiki-dark) !important;
 }
 
-.aui-md table { font-size: 0.8125rem; }
-.aui-md th, .aui-md td { padding: 0.25rem 0.75rem; }
+.aui-md table { font-size: 0.175rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; }
+.aui-md th, .aui-md td { padding: 0.5rem 0.5rem; }
+.aui-md th { font-weight: 600; }
+.aui-md tr { border-bottom: 1px solid hsl(var(--claude-border-subtle)); }
+.aui-md thead tr { border-bottom: 1px solid hsl(var(--claude-border)); }
 .aui-md strong { font-weight: 700; }
 
 /* User messages — right-aligned within the centered content column */

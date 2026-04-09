@@ -64,13 +64,28 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
         }
     )[] = [];
 
-    // Walk forward, merging consecutive assistant+tool messages into one turn.
+    // Walk forward, merging assistant+tool messages into turns.
+    // A single turn is: optional text + tool_calls + tool results + optional trailing text.
+    // When a new assistant message with text (and no tool_calls) appears after
+    // we've already accumulated parts, flush the current turn and start a new one.
     while (i < messages.length && messages[i].role !== "user") {
       const m = messages[i];
 
       if (m.role === "assistant") {
-        if (m.tool_calls && m.tool_calls.length > 0) {
-          for (const tc of m.tool_calls) {
+        const hasToolCalls = m.tool_calls && m.tool_calls.length > 0;
+        const hasText = !!m.content;
+
+        // If this assistant message has text but no tool calls, and we already
+        // have accumulated parts, it's a new standalone turn — flush first.
+        if (hasText && !hasToolCalls && parts.length > 0) {
+          result.push({
+            role: "assistant",
+            content: parts.splice(0) as ThreadMessageLike["content"],
+          });
+        }
+
+        if (hasToolCalls) {
+          for (const tc of m.tool_calls!) {
             parts.push({
               type: "tool-call",
               toolCallId: tc.id,
@@ -81,7 +96,7 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
             });
           }
         }
-        if (m.content) {
+        if (hasText) {
           parts.push({ type: "text", text: m.content as string });
         }
       }
