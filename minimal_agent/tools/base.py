@@ -69,6 +69,15 @@ class BaseTool(Generic[InputModel, Out], ABC):
         """
         return False
 
+    def permission_description(self, args: InputModel) -> str:
+        """Human-readable description of what the tool wants to do.
+
+        Shown to the user in the permission prompt. Default: generic
+        message using the tool name. Override for richer descriptions
+        (e.g. "Write 42 lines to /src/foo.py").
+        """
+        return f"Run tool '{self.name}'"
+
     def render_result_for_assistant(self, out: Out) -> str:
         """Serialize the result into the string that goes back to the model
         as a tool-result message. Default: `str(out)`.

@@ -67,6 +67,12 @@ class WriteFile(BaseTool[WriteFileInput, dict]):
     def needs_permission(self, args: WriteFileInput) -> bool:
         return True
 
+    def permission_description(self, args: WriteFileInput) -> str:
+        path = Path(args.file_path)
+        num_lines = args.content.count("\n") + 1
+        verb = "Overwrite" if path.exists() else "Create"
+        return f"{verb} {args.file_path} ({num_lines} lines)"
+
     def render_result_for_assistant(self, out: dict) -> str:
         verb = "Created" if out["type"] == "create" else "Updated"
         return f"{verb} {out['file_path']} ({out['num_lines']} lines)"

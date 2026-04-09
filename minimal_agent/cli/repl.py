@@ -60,21 +60,44 @@ async def run_loop(agent: Agent, session: Session) -> None:
         session.context.add(Message(role=Role.USER, content=user_input))
 
         try:
-            with Live(
+            live = Live(
                 Spinner("dots", text="[dim]Thinking…[/dim]"),
                 console=console,
                 transient=True,
-            ):
-                # Collect all messages first (no streaming yet)
-                messages: list[Message] = []
-                async for msg in agent.run(
-                    session.context, on_usage=session.update_usage
-                ):
-                    messages.append(msg)
+            )
+            live.start()
+            first = True
 
-            # Render after spinner clears
-            for msg in messages:
+            def _make_permission_callback(spinner: Live):
+                async def _ask(tool_name: str, description: str) -> bool:
+                    """Stop spinner, prompt user, restart spinner."""
+                    was_started = spinner.is_started
+                    if was_started:
+                        spinner.stop()
+                    allowed = render.prompt_permission(tool_name, description)
+                    if was_started:
+                        spinner.start()
+                    return allowed
+
+                return _ask
+
+            _ask_permission = _make_permission_callback(live)
+
+            async for msg in agent.run(
+                session.context,
+                on_usage=session.update_usage,
+                permission_callback=_ask_permission,
+            ):
+                if first:
+                    live.stop()
+                    first = False
                 render.print_message(msg)
+                # Show spinner again while waiting for next LLM call
+                if msg.role == Role.TOOL:
+                    live.start()
+
+            if live.is_started:
+                live.stop()
 
         except KeyboardInterrupt:
             render.print_info("\n[interrupted]")

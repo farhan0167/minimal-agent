@@ -92,3 +92,13 @@ def print_error(msg: str) -> None:
 
 def print_info(msg: str) -> None:
     console.print(f"[dim]{msg}[/dim]")
+
+
+def prompt_permission(tool_name: str, description: str) -> bool:
+    """Ask the user for permission to run a tool. Returns True if allowed."""
+    console.print(f"  [bold yellow]⚠ {description}[/bold yellow]")
+    try:
+        choice = console.input("  [bold]Allow? [y/N][/bold] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return choice in ("y", "yes")

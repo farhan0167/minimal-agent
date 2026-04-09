@@ -52,6 +52,10 @@ class RunShell(BaseTool[RunShellInput, ShellResult]):
     def needs_permission(self, args: RunShellInput) -> bool:
         return not is_command_safe(args.command)
 
+    def permission_description(self, args: RunShellInput) -> str:
+        cmd = args.command if len(args.command) <= 80 else args.command[:77] + "..."
+        return f"Run shell command: {cmd}"
+
     def render_result_for_assistant(self, out: ShellResult) -> str:
         parts: list[str] = []
         if out.stdout.strip():

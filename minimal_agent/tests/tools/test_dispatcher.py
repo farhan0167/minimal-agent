@@ -102,3 +102,100 @@ async def test_validation_ok_default_allows_invoke():
     """Default `validate` returns ValidationOk — happy path should reach invoke."""
     result = await EchoTool().validate(EchoInput(text="x"), ToolContext())
     assert isinstance(result, ValidationOk)
+
+
+# -- Permission tests --------------------------------------------------------
+
+
+class PermissionTool(BaseTool[EchoInput, str]):
+    """A tool that always requires permission."""
+
+    name: ClassVar[str] = "guarded"
+    input_schema: ClassVar[type[BaseModel]] = EchoInput
+
+    async def invoke(self, args: EchoInput, ctx: ToolContext) -> str:
+        return args.text
+
+    def needs_permission(self, args: EchoInput) -> bool:
+        return True
+
+    def permission_description(self, args: EchoInput) -> str:
+        return f"Echo '{args.text}'"
+
+
+async def test_permission_denied_blocks_invoke():
+    """When the callback returns False, the tool is not executed."""
+
+    async def deny(_name: str, _desc: str) -> bool:
+        return False
+
+    ctx = ToolContext(permission_callback=deny)
+    tools = {"guarded": PermissionTool()}
+    msg = await dispatch(_call("guarded", {"text": "secret"}), tools, ctx)
+    assert "permission denied" in msg.content
+    assert "guarded" in msg.content
+
+
+async def test_permission_allowed_executes():
+    """When the callback returns True, the tool runs normally."""
+
+    async def allow(_name: str, _desc: str) -> bool:
+        return True
+
+    ctx = ToolContext(permission_callback=allow)
+    tools = {"guarded": PermissionTool()}
+    msg = await dispatch(_call("guarded", {"text": "hello"}), tools, ctx)
+    assert msg.content == "hello"
+
+
+async def test_permission_not_checked_when_no_callback():
+    """When no callback is set, tools that need permission still execute."""
+    ctx = ToolContext()  # no callback
+    tools = {"guarded": PermissionTool()}
+    msg = await dispatch(_call("guarded", {"text": "hello"}), tools, ctx)
+    assert msg.content == "hello"
+
+
+async def test_permission_not_checked_when_tool_doesnt_need_it():
+    """Tools that return needs_permission=False skip the callback entirely."""
+    called = False
+
+    async def should_not_be_called(_name: str, _desc: str) -> bool:
+        nonlocal called
+        called = True
+        return True
+
+    ctx = ToolContext(permission_callback=should_not_be_called)
+    tools = {"echo": EchoTool()}
+    msg = await dispatch(_call("echo", {"text": "hi"}), tools, ctx)
+    assert msg.content == "hi"
+    assert not called
+
+
+async def test_permission_callback_receives_description():
+    """The callback receives the tool name and permission description."""
+    received: list[tuple[str, str]] = []
+
+    async def capture(name: str, desc: str) -> bool:
+        received.append((name, desc))
+        return True
+
+    ctx = ToolContext(permission_callback=capture)
+    tools = {"guarded": PermissionTool()}
+    await dispatch(_call("guarded", {"text": "yo"}), tools, ctx)
+    assert len(received) == 1
+    assert received[0][0] == "guarded"
+    assert "yo" in received[0][1]
+
+
+async def test_permission_callback_error_surfaces():
+    """If the callback itself raises, the error is captured gracefully."""
+
+    async def boom(_name: str, _desc: str) -> bool:
+        raise RuntimeError("prompt crashed")
+
+    ctx = ToolContext(permission_callback=boom)
+    tools = {"guarded": PermissionTool()}
+    msg = await dispatch(_call("guarded", {"text": "x"}), tools, ctx)
+    assert "permission error" in msg.content
+    assert "prompt crashed" in msg.content

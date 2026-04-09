@@ -20,6 +20,7 @@ from system_prompt import (
 )
 from tools import ToolContext, dispatch
 from tools.base import BaseTool
+from tools.context import PermissionCallback
 
 from .context import Context
 
@@ -74,6 +75,7 @@ class Agent:
         context: Context,
         *,
         on_usage: Optional[OnUsageCallback] = None,
+        permission_callback: Optional[PermissionCallback] = None,
     ) -> AsyncGenerator[Message, None]:
         """Run the agent loop, yielding each message as it's produced.
 
@@ -85,9 +87,10 @@ class Agent:
 
         Callbacks:
             on_usage: Called with the Usage from each LLM API call.
+            permission_callback: Called when a tool requires user confirmation.
         """
         for _turn in range(self._max_turns):
-            ctx = ToolContext()
+            ctx = ToolContext(permission_callback=permission_callback)
 
             resp = await self._llm.generate(
                 messages=context.get_messages(),

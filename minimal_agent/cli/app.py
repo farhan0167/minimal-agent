@@ -5,11 +5,15 @@ from pathlib import Path
 from agent import Agent, Session
 from config import settings
 from llm import LLM
+from tools.builtin.edit_file import EditFile
 from tools.builtin.get_weather import GetWeather
 from tools.builtin.glob import Glob
 from tools.builtin.grep import Grep
 from tools.builtin.read_file import ReadFile
 from tools.builtin.run_shell import RunShell
+from tools.builtin.spawn_agents import SpawnAgents
+from tools.builtin.web_extract import WebExtract
+from tools.builtin.web_search import WebSearch
 from tools.builtin.write_file import WriteFile
 
 from . import render
@@ -27,22 +31,39 @@ def _build_agent(workspace: Path) -> Agent:
 
     read_timestamps: dict[str, float] = {}
 
+    builtin_tools = [
+        GetWeather(),
+        ReadFile(
+            workspace_root=workspace,
+            read_timestamps=read_timestamps,
+        ),
+        EditFile(
+            workspace_root=workspace,
+            read_timestamps=read_timestamps,
+        ),
+        WriteFile(
+            workspace_root=workspace,
+            read_timestamps=read_timestamps,
+        ),
+        RunShell(workspace_root=workspace),
+        Grep(workspace_root=workspace),
+        Glob(workspace_root=workspace),
+        WebSearch(),
+        WebExtract(),
+    ]
+
+    # Build a name→tool map so SpawnAgents can resolve sub-agent tool sets.
+    tools_by_name = {t.name: t for t in builtin_tools}
+
+    spawn_agents = SpawnAgents(
+        llm=llm,
+        available_tools=tools_by_name,
+        workspace_root=workspace,
+    )
+
     return Agent(
         llm=llm,
-        tools=[
-            GetWeather(),
-            ReadFile(
-                workspace_root=workspace,
-                read_timestamps=read_timestamps,
-            ),
-            WriteFile(
-                workspace_root=workspace,
-                read_timestamps=read_timestamps,
-            ),
-            RunShell(workspace_root=workspace),
-            Grep(workspace_root=workspace),
-            Glob(workspace_root=workspace),
-        ],
+        tools=[*builtin_tools, spawn_agents],
     )
 
 
