@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from tools.builtin.read_file.helpers import read_text_content
+from minimal_agent.tools.builtin.read_file.helpers import read_text_content
 
 
 class TestReadTextContent:

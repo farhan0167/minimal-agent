@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from tools.builtin._filesystem import is_path_within
+from minimal_agent.tools.builtin._filesystem import is_path_within
 
 
 class TestIsPathWithin:

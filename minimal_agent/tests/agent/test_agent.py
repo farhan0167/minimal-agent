@@ -2,10 +2,10 @@ from unittest.mock import AsyncMock
 
 from pydantic import BaseModel
 
-from agent import Agent, Context
-from llm.types import GenerateResponse, Message, Role, ToolCall, Usage
-from tools.base import BaseTool
-from tools.context import ToolContext
+from minimal_agent.agent import Agent, Context
+from minimal_agent.llm.types import GenerateResponse, Message, Role, ToolCall, Usage
+from minimal_agent.tools.base import BaseTool
+from minimal_agent.tools.context import ToolContext
 
 
 class _EmptyInput(BaseModel):

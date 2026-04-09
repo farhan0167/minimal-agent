@@ -8,8 +8,8 @@ building small async generators of hand-crafted StreamChunks.
 
 from typing import AsyncIterator, List
 
-from llm.llm import accumulate_tool_calls
-from llm.types import StreamChunk, ToolCallDelta
+from minimal_agent.llm.llm import accumulate_tool_calls
+from minimal_agent.llm.types import StreamChunk, ToolCallDelta
 
 
 async def _gen(chunks: List[StreamChunk]) -> AsyncIterator[StreamChunk]:

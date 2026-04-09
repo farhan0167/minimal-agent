@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from tools.builtin._filesystem import MAX_FILE_SIZE_BYTES
-from tools.builtin.read_file import ReadFile, ReadFileInput
-from tools.context import ToolContext
+from minimal_agent.tools.builtin._filesystem import MAX_FILE_SIZE_BYTES
+from minimal_agent.tools.builtin.read_file import ReadFile, ReadFileInput
+from minimal_agent.tools.context import ToolContext
 
 
 def _make_tool(tmp_path: Path) -> tuple[ReadFile, dict[str, float]]:

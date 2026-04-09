@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from agent.session import Session, SessionConfigMismatchError
-from llm.types import Message, Role, Usage
+from minimal_agent.agent.session import Session, SessionConfigMismatchError
+from minimal_agent.llm.types import Message, Role, Usage
 
 _MODEL = "gpt-4o-mini"
 _BACKEND = "openai"

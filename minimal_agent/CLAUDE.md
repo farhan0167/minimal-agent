@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Dependency management uses `uv` (see [uv.lock](uv.lock) and [pyproject.toml](pyproject.toml)). Python >= 3.10.
 
 - Install deps: `uv sync`
-- Run the demo entrypoint: `uv run python main.py`
+- Run the CLI: `python ../cli_main.py` (from repo root, with `minimal_agent` installed)
 - Add a dependency: `uv add <pkg>`
 - Format: `make format` (runs `uv run ruff format .`)
 - Lint: `make lint` (runs `uv run ruff check .`)
@@ -32,48 +32,54 @@ Configuration is loaded via `pydantic-settings` from environment variables and a
 
 A minimal async agent framework: an **agent loop** drives an LLM that can call tools, with the LLM details abstracted behind a provider-agnostic facade. The four pillars are the agent loop, the system prompt module, the tool system, and the LLM facade.
 
-### Agent loop ([agent/](agent/))
+The installable package lives under `src/minimal_agent/` (src layout). The CLI (`cli/`, `main.py`) is a standalone consumer at the project root — not part of the installed package.
 
-`Agent` ([agent/agent.py](agent/agent.py)) owns the agent's identity and the decide-act-observe loop. Identity is defined by the behavior prompt (`prompt`), context sources (`context_sources`), and tools. `Agent.run()` is an iterative async generator: call `LLM.generate` with the current context and tools → yield the assistant message → if it contains tool calls, dispatch each via `tools/dispatcher.py`, yield the tool-result messages → repeat. Stops when the model produces no tool calls or `max_turns` (default 10) is exhausted. The agent is stateless per-run; conversation state lives in `Context`.
+### Agent loop ([src/minimal_agent/agent/](src/minimal_agent/agent/))
+
+`Agent` ([src/minimal_agent/agent/agent.py](src/minimal_agent/agent/agent.py)) owns the agent's identity and the decide-act-observe loop. Identity is defined by the behavior prompt (`prompt`), context sources (`context_sources`), and tools. `Agent.run()` is an iterative async generator: call `LLM.generate` with the current context and tools → yield the assistant message → if it contains tool calls, dispatch each via `src/minimal_agent/tools/dispatcher.py`, yield the tool-result messages → repeat. Stops when the model produces no tool calls or `max_turns` (default 10) is exhausted. The agent is stateless per-run; conversation state lives in `Context`.
 
 The Agent constructs the system prompt via `agent.build_system_prompt(workspace_root)`, which the caller passes to `Session.create()`. Default prompt (no `prompt` arg) uses the built-in software engineering agent and auto-includes `GitStatusSource` + `DirectoryTreeSource`. Custom prompts get no context sources by default (blank slate).
 
-**Context & storage.** `Context` ([agent/context.py](agent/context.py)) is the agent's interface to conversation state. It composes a `MessageStore` ([agent/message_store.py](agent/message_store.py)) with a system prompt and a projection strategy (default: return all messages). `MessageStore` is append-only; when constructed with a path, each append writes a JSONL line to disk.
+**Context & storage.** `Context` ([src/minimal_agent/agent/context.py](src/minimal_agent/agent/context.py)) is the agent's interface to conversation state. It composes a `MessageStore` ([src/minimal_agent/agent/message_store.py](src/minimal_agent/agent/message_store.py)) with a system prompt and a projection strategy (default: return all messages). `MessageStore` is append-only; when constructed with a path, each append writes a JSONL line to disk.
 
-**Sessions.** `Session` ([agent/session.py](agent/session.py)) is the user-facing unit of conversation. It owns a `Context` and a `SessionMeta` dataclass (identity, model, backend, timestamps, usage). Factory methods `Session.create()` and `Session.load()` handle disk persistence (JSONL messages + JSON metadata). `Session.load()` validates that model/backend match the original session.
+**Sessions.** `Session` ([src/minimal_agent/agent/session.py](src/minimal_agent/agent/session.py)) is the user-facing unit of conversation. It owns a `Context` and a `SessionMeta` dataclass (identity, model, backend, timestamps, usage). Factory methods `Session.create()` and `Session.load()` handle disk persistence (JSONL messages + JSON metadata). `Session.load()` validates that model/backend match the original session.
 
-### System prompt ([system_prompt/](system_prompt/))
+### System prompt ([src/minimal_agent/system_prompt/](src/minimal_agent/system_prompt/))
 
 Builds the agent's system prompt from three parts: a **behavior prompt** (static markdown), an **environment block** (dynamic `<env>` XML with workspace root, platform, date, git status), and **context blocks** (dynamic `<context>` XML from opt-in sources). See [.claude/specifications/system-prompt-module.md](.claude/specifications/system-prompt-module.md) for the full design spec.
 
-- **[builder.py](system_prompt/builder.py)** — `build_system_prompt()` assembles all parts into a single string. `load_prompt()` resolves `str | Path | None` to a prompt string.
-- **[env.py](system_prompt/env.py)** — `build_env_block()` produces the `<env>` block.
-- **[context_sources.py](system_prompt/context_sources.py)** — `ContextSource` protocol (structural typing, no inheritance required) plus built-in sources: `GitStatusSource`, `DirectoryTreeSource`. Context sources are gathered concurrently once per session, not per turn.
-- **[defaults/behavior.md](system_prompt/defaults/behavior.md)** — The default behavior prompt (software engineering agent).
+- **[builder.py](src/minimal_agent/system_prompt/builder.py)** — `build_system_prompt()` assembles all parts into a single string. `load_prompt()` resolves `str | Path | None` to a prompt string.
+- **[env.py](src/minimal_agent/system_prompt/env.py)** — `build_env_block()` produces the `<env>` block.
+- **[context_sources.py](src/minimal_agent/system_prompt/context_sources.py)** — `ContextSource` protocol (structural typing, no inheritance required) plus built-in sources: `GitStatusSource`, `DirectoryTreeSource`. Context sources are gathered concurrently once per session, not per turn.
+- **[defaults/behavior.md](src/minimal_agent/system_prompt/defaults/behavior.md)** — The default behavior prompt (software engineering agent).
 
 The module has no imports from `agent/`, `tools/`, or `llm/` — it's a pure utility that takes configuration and produces a string.
 
-### Tool system ([tools/](tools/))
+### Tool system ([src/minimal_agent/tools/](src/minimal_agent/tools/))
 
 Three layers:
 
-1. **Definition** — `BaseTool[InputT, OutputT]` ([tools/base.py](tools/base.py)) is the abstract class tool authors implement. Requires `name`, `input_schema` (a Pydantic model), and `invoke()`. Optional hooks: `validate()`, `needs_permission()`, `render_result_for_assistant()`. `as_llm_tool()` projects the Pydantic schema into an `LLMTool` for the wire format.
-2. **Dispatch** — `dispatch()` ([tools/dispatcher.py](tools/dispatcher.py)) runs the full pipeline: lookup → parse/validate args → semantic validation → permission check → invoke → serialize result. All errors are caught and returned as tool-result messages so the agent loop never crashes.
-3. **Context** — `ToolContext` ([tools/context.py](tools/context.py)) is a per-call bag passed to every tool invocation. Currently carries `permission_callback` for interactive user confirmation. New fields (cancellation tokens, loggers) land here as concrete tools need them.
+1. **Definition** — `BaseTool[InputT, OutputT]` ([src/minimal_agent/tools/base.py](src/minimal_agent/tools/base.py)) is the abstract class tool authors implement. Requires `name`, `input_schema` (a Pydantic model), and `invoke()`. Optional hooks: `validate()`, `needs_permission()`, `render_result_for_assistant()`. `as_llm_tool()` projects the Pydantic schema into an `LLMTool` for the wire format.
+2. **Dispatch** — `dispatch()` ([src/minimal_agent/tools/dispatcher.py](src/minimal_agent/tools/dispatcher.py)) runs the full pipeline: lookup → parse/validate args → semantic validation → permission check → invoke → serialize result. All errors are caught and returned as tool-result messages so the agent loop never crashes.
+3. **Context** — `ToolContext` ([src/minimal_agent/tools/context.py](src/minimal_agent/tools/context.py)) is a per-call bag passed to every tool invocation. Currently carries `permission_callback` for interactive user confirmation. New fields (cancellation tokens, loggers) land here as concrete tools need them.
 
-Concrete tools live under [tools/builtin/](tools/builtin/) (e.g. `get_weather`). See [.claude/specifications/tool-system.md](.claude/specifications/tool-system.md) for the full tool-authoring contract.
+Concrete tools live under [src/minimal_agent/tools/builtin/](src/minimal_agent/tools/builtin/) (e.g. `get_weather`). See [.claude/specifications/tool-system.md](.claude/specifications/tool-system.md) for the full tool-authoring contract.
 
-### LLM facade ([llm/](llm/))
+### LLM facade ([src/minimal_agent/llm/](src/minimal_agent/llm/))
 
-The rest of the codebase never imports `openai` directly. [llm/llm.py](llm/llm.py) wraps `AsyncOpenAI` with three public coroutines (`generate`, `generate_structured`, `stream`) and translates between the neutral Pydantic types in [llm/types.py](llm/types.py) and OpenAI's SDK shapes.
+The rest of the codebase never imports `openai` directly. [src/minimal_agent/llm/llm.py](src/minimal_agent/llm/llm.py) wraps `AsyncOpenAI` with three public coroutines (`generate`, `generate_structured`, `stream`) and translates between the neutral Pydantic types in [src/minimal_agent/llm/types.py](src/minimal_agent/llm/types.py) and OpenAI's SDK shapes.
 
 **Backends.** `Backend` enum selects provider: `OPENAI` (default), `OPENROUTER`, `ANTHROPIC`, `LOCALHOST`. Each sets an appropriate `base_url`; an explicit `base_url` still wins. Anthropic's OpenAI-compat layer silently ignores `response_format`, `seed`, and several other params — see docstrings for details.
 
-**Key types** in [llm/types.py](llm/types.py): `Message` (supports multimodal content and tool-result role), `ToolCall` (arguments stored as parsed dict), `LLMTool` (provider-neutral tool schema), `GenerateResponse`, `StreamChunk`.
+**Key types** in [src/minimal_agent/llm/types.py](src/minimal_agent/llm/types.py): `Message` (supports multimodal content and tool-result role), `ToolCall` (arguments stored as parsed dict), `LLMTool` (provider-neutral tool schema), `GenerateResponse`, `StreamChunk`.
 
-### Config ([config.py](config.py))
+### Config ([src/minimal_agent/config.py](src/minimal_agent/config.py))
 
 `Settings` (pydantic-settings) reads from env vars / `.env`. Env vars are prefixed `LLM_BACKEND_*` for backend/API key/base URL, plus `LLM_MODEL` (default `gpt-4o-mini`) and `SESSIONS_DIR` (default `.minimal_agent/sessions`). Filter out `None` values before forwarding to `LLM()` — the SDK has its own defaults worth preserving.
+
+### CLI ([../cli/](../cli/), [../cli_main.py](../cli_main.py))
+
+The CLI is a standalone consumer of the `minimal_agent` package — not part of the installed library. It lives at the repo root as a sibling project alongside `streamlit_client/`. Depends on `rich` and `prompt-toolkit` (dev dependencies). Run via `python ../cli_main.py` from the repo root.
 
 ## Adding Callbacks to the Agent Loop
 
@@ -99,7 +105,7 @@ agent.run(context, permission_callback=my_fn)
 
 ### Adding a new callback
 
-**1. Define the type in `tools/context.py`:**
+**1. Define the type in `src/minimal_agent/tools/context.py`:**
 
 ```python
 NewCallback = Callable[[SomeInput], Awaitable[SomeOutput]]

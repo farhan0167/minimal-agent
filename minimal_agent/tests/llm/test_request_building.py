@@ -9,8 +9,16 @@ import json
 
 import pytest
 
-from llm.llm import LLM
-from llm.types import ImagePart, ImageUrl, LLMTool, Message, Role, TextPart, ToolCall
+from minimal_agent.llm.llm import LLM
+from minimal_agent.llm.types import (
+    ImagePart,
+    ImageUrl,
+    LLMTool,
+    Message,
+    Role,
+    TextPart,
+    ToolCall,
+)
 
 
 @pytest.fixture

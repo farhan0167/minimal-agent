@@ -1,6 +1,10 @@
 """Tests for edit_file helpers."""
 
-from tools.builtin.edit_file.helpers import apply_edit, build_preview, find_match_count
+from minimal_agent.tools.builtin.edit_file.helpers import (
+    apply_edit,
+    build_preview,
+    find_match_count,
+)
 
 
 def test_find_match_count_zero():

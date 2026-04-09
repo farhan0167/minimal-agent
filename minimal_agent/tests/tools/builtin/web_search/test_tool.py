@@ -2,8 +2,10 @@
 
 from unittest.mock import AsyncMock, patch
 
-from tools import ToolContext
-from tools.builtin.web_search import WebSearch, WebSearchInput
+from minimal_agent.tools import ToolContext
+from minimal_agent.tools.builtin.web_search import WebSearch, WebSearchInput
+
+_TAVILY = "minimal_agent.tools.builtin.web_search.tool.tavily_request"
 
 
 def test_metadata():
@@ -42,7 +44,7 @@ def test_permission_description_long_query():
     assert desc.endswith("...")
 
 
-@patch("tools.builtin.web_search.tool.tavily_request", new_callable=AsyncMock)
+@patch(_TAVILY, new_callable=AsyncMock)
 async def test_invoke_sends_correct_payload(mock_request):
     mock_request.return_value = {"results": [], "answer": None}
 
@@ -60,7 +62,7 @@ async def test_invoke_sends_correct_payload(mock_request):
     assert "time_range" not in payload
 
 
-@patch("tools.builtin.web_search.tool.tavily_request", new_callable=AsyncMock)
+@patch(_TAVILY, new_callable=AsyncMock)
 async def test_invoke_includes_time_range_when_set(mock_request):
     mock_request.return_value = {"results": []}
 
@@ -72,7 +74,7 @@ async def test_invoke_includes_time_range_when_set(mock_request):
     assert payload["time_range"] == "day"
 
 
-@patch("tools.builtin.web_search.tool.tavily_request", new_callable=AsyncMock)
+@patch(_TAVILY, new_callable=AsyncMock)
 async def test_render_result_with_results(mock_request):
     response = {
         "results": [
@@ -112,11 +114,11 @@ def test_render_result_with_answer():
     assert "**Answer:**" in rendered
 
 
-@patch("tools.builtin.web_search.tool.tavily_request", new_callable=AsyncMock)
+@patch(_TAVILY, new_callable=AsyncMock)
 async def test_invoke_propagates_tavily_error(mock_request):
     import pytest
 
-    from tools.builtin._tavily.client import TavilyError
+    from minimal_agent.tools.builtin._tavily.client import TavilyError
 
     mock_request.side_effect = TavilyError("rate limited")
 

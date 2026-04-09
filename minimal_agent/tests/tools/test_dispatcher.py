@@ -9,8 +9,8 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from llm.types import Role, ToolCall
-from tools import (
+from minimal_agent.llm.types import Role, ToolCall
+from minimal_agent.tools import (
     BaseTool,
     ToolContext,
     ValidationErr,

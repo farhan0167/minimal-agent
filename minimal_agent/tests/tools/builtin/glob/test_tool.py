@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from tools.builtin.glob import Glob, GlobInput
-from tools.context import ToolContext
+from minimal_agent.tools.builtin.glob import Glob, GlobInput
+from minimal_agent.tools.context import ToolContext
 
 
 def _make_tool(tmp_path: Path) -> Glob:

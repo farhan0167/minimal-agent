@@ -3,7 +3,7 @@
 import asyncio
 from pathlib import Path
 
-from tools.builtin.run_shell.shell import PersistentShell
+from minimal_agent.tools.builtin.run_shell.shell import PersistentShell
 
 
 class TestBasicExecution:

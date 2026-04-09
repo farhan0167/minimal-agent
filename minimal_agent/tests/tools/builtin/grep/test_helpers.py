@@ -3,12 +3,12 @@
 import time
 from pathlib import Path
 
-from tools.builtin._filesystem import sort_by_mtime, truncate_text
-from tools.builtin.grep.helpers import (
+from minimal_agent.tools.builtin._filesystem import sort_by_mtime, truncate_text
+from minimal_agent.tools.builtin.grep.helpers import (
     MAX_RESULTS,
     build_ripgrep_args,
 )
-from tools.builtin.grep.schema import GrepInput
+from minimal_agent.tools.builtin.grep.schema import GrepInput
 
 
 class TestBuildRipgrepArgs:
