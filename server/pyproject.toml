@@ -1,0 +1,30 @@
+[project]
+name = "minimal-agent-server"
+version = "0.1.0"
+description = "FastAPI server for the minimal-agent framework"
+requires-python = ">=3.11"
+dependencies = [
+    "minimal-agent",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sse-starlette>=2.2.0",
+]
+
+[tool.uv.sources]
+minimal-agent = { path = "../minimal_agent", editable = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.9",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "W"]
+ignore = ["B008"]
+exclude = [".git", ".ruff_cache", "dist", "venv", ".venv"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

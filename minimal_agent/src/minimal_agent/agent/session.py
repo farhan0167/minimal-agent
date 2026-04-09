@@ -32,9 +32,10 @@ class SessionMeta:
     created_at: datetime
     updated_at: datetime
     usage: Usage | None = None
+    workspace_root: str | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "session_id": self.session_id,
             "model": self.model,
             "backend": self.backend,
@@ -42,6 +43,9 @@ class SessionMeta:
             "updated_at": self.updated_at.isoformat(),
             "usage": self.usage.model_dump() if self.usage else None,
         }
+        if self.workspace_root is not None:
+            d["workspace_root"] = self.workspace_root
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "SessionMeta":
@@ -52,6 +56,7 @@ class SessionMeta:
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
             usage=Usage(**data["usage"]) if data.get("usage") else None,
+            workspace_root=data.get("workspace_root"),
         )
 
 
@@ -128,6 +133,7 @@ class Session:
         backend: str,
         system_prompt: str | None = None,
         base_dir: Path = _DEFAULT_BASE_DIR,
+        workspace_root: str | None = None,
     ) -> "Session":
         """Start a new session. Creates the directory and files on disk."""
         now = datetime.now(tz=timezone.utc)
@@ -137,6 +143,7 @@ class Session:
             backend=backend,
             created_at=now,
             updated_at=now,
+            workspace_root=workspace_root,
         )
 
         session_dir = base_dir / meta.session_id
