@@ -5,6 +5,7 @@ from pathlib import Path
 from agent import Agent, Session
 from config import settings
 from llm import LLM
+from tools.builtin.edit_file import EditFile
 from tools.builtin.get_weather import GetWeather
 from tools.builtin.glob import Glob
 from tools.builtin.grep import Grep
@@ -33,6 +34,10 @@ def _build_agent(workspace: Path) -> Agent:
     builtin_tools = [
         GetWeather(),
         ReadFile(
+            workspace_root=workspace,
+            read_timestamps=read_timestamps,
+        ),
+        EditFile(
             workspace_root=workspace,
             read_timestamps=read_timestamps,
         ),
