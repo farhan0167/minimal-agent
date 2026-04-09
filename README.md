@@ -199,20 +199,6 @@ agent = Agent(
 )
 ```
 
-## Repo structure
-
-```
-minimal_agent/              # Core library (installable package, src layout)
-  src/minimal_agent/
-    agent/                  # Agent loop, context, sessions
-    llm/                    # Provider-agnostic LLM facade
-    system_prompt/          # System prompt builder + context sources
-    tools/                  # Tool system (base class, dispatcher, builtins)
-    config.py               # Settings via pydantic-settings
-cli/                        # Terminal client (Rich + prompt-toolkit)
-streamlit_client/           # Streamlit web client
-```
-
 ### Built-in tools
 
 `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell`, `spawn_agents`, `web_search`, `web_extract`, `get_weather` (stub)
