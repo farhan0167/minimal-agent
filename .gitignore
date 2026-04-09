@@ -2,3 +2,5 @@
 __pycache__
 .env
 */.minimal_agent/
+.pytest_cache
+.ruff_cache
