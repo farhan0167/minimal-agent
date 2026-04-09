@@ -12,8 +12,7 @@ from typing import ClassVar, Generic, TypeVar
 
 from pydantic import BaseModel
 
-from minimal_agent.llm.types import LLMTool
-
+from ..llm.types import LLMTool
 from .context import ToolContext
 from .results import ValidationOk, ValidationResult
 

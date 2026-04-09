@@ -10,8 +10,7 @@ from typing import Any, Dict
 
 from pydantic import ValidationError
 
-from minimal_agent.llm.types import Message, Role, ToolCall
-
+from ..llm.types import Message, Role, ToolCall
 from .base import BaseTool
 from .context import ToolContext
 

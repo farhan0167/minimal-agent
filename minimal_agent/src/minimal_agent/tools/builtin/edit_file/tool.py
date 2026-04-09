@@ -2,11 +2,10 @@
 
 from pathlib import Path
 
-from minimal_agent.tools.base import BaseTool
-from minimal_agent.tools.builtin._filesystem import is_path_within
-from minimal_agent.tools.context import ToolContext
-from minimal_agent.tools.results import ValidationErr, ValidationOk, ValidationResult
-
+from ...base import BaseTool
+from ...context import ToolContext
+from ...results import ValidationErr, ValidationOk, ValidationResult
+from .._filesystem import is_path_within
 from .helpers import apply_edit, build_preview, find_match_count
 from .schema import EditFileInput
 

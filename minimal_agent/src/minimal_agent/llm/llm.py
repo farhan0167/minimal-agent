@@ -42,8 +42,7 @@ from typing import (
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from minimal_agent.config import Backend, settings
-
+from ..config import Backend, settings
 from .types import (
     GenerateResponse,
     LLMTool,

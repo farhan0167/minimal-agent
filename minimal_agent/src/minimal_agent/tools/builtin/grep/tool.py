@@ -2,15 +2,14 @@
 
 from pathlib import Path
 
-from minimal_agent.tools.base import BaseTool
-from minimal_agent.tools.builtin._filesystem import (
+from ...base import BaseTool
+from ...context import ToolContext
+from ...results import ValidationErr, ValidationOk, ValidationResult
+from .._filesystem import (
     is_path_within,
     sort_by_mtime,
     truncate_text,
 )
-from minimal_agent.tools.context import ToolContext
-from minimal_agent.tools.results import ValidationErr, ValidationOk, ValidationResult
-
 from .helpers import (
     MAX_RESULTS,
     build_ripgrep_args,

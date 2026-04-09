@@ -9,19 +9,18 @@ from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from typing import Optional, Union
 
-from minimal_agent.llm import LLM, Message, Role
-from minimal_agent.llm.types import LLMTool, Usage
-from minimal_agent.system_prompt import (
+from ..llm import LLM, Message, Role
+from ..llm.types import LLMTool, Usage
+from ..system_prompt import (
     ContextSource,
     DirectoryTreeSource,
     GitStatusSource,
     build_system_prompt,
     load_prompt,
 )
-from minimal_agent.tools import ToolContext, dispatch
-from minimal_agent.tools.base import BaseTool
-from minimal_agent.tools.context import PermissionCallback
-
+from ..tools import ToolContext, dispatch
+from ..tools.base import BaseTool
+from ..tools.context import PermissionCallback
 from .context import Context
 
 OnUsageCallback = Callable[[Usage], None]

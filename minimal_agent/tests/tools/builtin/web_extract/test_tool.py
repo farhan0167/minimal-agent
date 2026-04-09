@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 from minimal_agent.tools import ToolContext
 from minimal_agent.tools.builtin.web_extract import WebExtract, WebExtractInput
 
+_TAVILY = "minimal_agent.tools.builtin.web_extract.tool.tavily_request"
+
 
 def test_metadata():
     assert WebExtract.name == "web_extract"
@@ -48,7 +50,7 @@ def test_permission_description_multiple_urls():
     assert "3 URLs" in desc
 
 
-@patch("minimal_agent.tools.builtin.web_extract.tool.tavily_request", new_callable=AsyncMock)
+@patch(_TAVILY, new_callable=AsyncMock)
 async def test_invoke_sends_correct_payload(mock_request):
     mock_request.return_value = {"results": [], "failed_results": []}
 
@@ -70,7 +72,7 @@ async def test_invoke_sends_correct_payload(mock_request):
     assert "query" not in payload
 
 
-@patch("minimal_agent.tools.builtin.web_extract.tool.tavily_request", new_callable=AsyncMock)
+@patch(_TAVILY, new_callable=AsyncMock)
 async def test_invoke_includes_query_when_set(mock_request):
     mock_request.return_value = {"results": []}
 
@@ -85,7 +87,7 @@ async def test_invoke_includes_query_when_set(mock_request):
     assert payload["query"] == "machine learning"
 
 
-@patch("minimal_agent.tools.builtin.web_extract.tool.tavily_request", new_callable=AsyncMock)
+@patch(_TAVILY, new_callable=AsyncMock)
 async def test_render_result_with_content(mock_request):
     response = {
         "results": [

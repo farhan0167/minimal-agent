@@ -3,7 +3,7 @@
 import shlex
 from pathlib import Path
 
-from minimal_agent.tools.results import ValidationErr, ValidationOk, ValidationResult
+from ...results import ValidationErr, ValidationOk, ValidationResult
 
 BANNED_COMMANDS: frozenset[str] = frozenset(
     {

@@ -4,9 +4,8 @@ Exists to exercise the tool system end-to-end; replace the `invoke` body
 with a real weather API call when one is wired in.
 """
 
-from minimal_agent.tools.base import BaseTool
-from minimal_agent.tools.context import ToolContext
-
+from ...base import BaseTool
+from ...context import ToolContext
 from .schema import GetWeatherInput
 
 

@@ -2,7 +2,7 @@
 
 import httpx
 
-from minimal_agent.config import settings
+from ....config import settings
 
 _TAVILY_BASE_URL = "https://api.tavily.com"
 _TIMEOUT = 30.0

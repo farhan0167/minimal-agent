@@ -10,7 +10,7 @@ to disk. When constructed without a path, behavior is pure in-memory.
 import logging
 from pathlib import Path
 
-from minimal_agent.llm.types import Message, Role
+from ..llm.types import Message, Role
 
 logger = logging.getLogger(__name__)
 

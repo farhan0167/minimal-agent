@@ -11,12 +11,11 @@ Sub-agents cannot spawn further sub-agents (no recursion).
 import asyncio
 from pathlib import Path
 
-from minimal_agent.agent import Agent, Context
-from minimal_agent.llm import LLM
-from minimal_agent.llm.types import Message, Role
-from minimal_agent.tools.base import BaseTool
-from minimal_agent.tools.context import ToolContext
-
+from ....agent import Agent, Context
+from ....llm import LLM
+from ....llm.types import Message, Role
+from ...base import BaseTool
+from ...context import ToolContext
 from .schema import SpawnAgentsInput, SubAgentSpec
 
 _SUB_AGENT_PROMPT_PATH = Path(__file__).resolve().parent / "sub_agent.md"

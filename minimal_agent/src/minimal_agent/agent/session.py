@@ -11,8 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from minimal_agent.llm.types import Usage
-
+from ..llm.types import Usage
 from .context import Context
 from .message_store import MessageStore
 

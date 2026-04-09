@@ -1,9 +1,8 @@
 """The ``web_search`` tool — search the web via Tavily Search API."""
 
-from minimal_agent.tools.base import BaseTool
-from minimal_agent.tools.builtin._tavily import tavily_request
-from minimal_agent.tools.context import ToolContext
-
+from ...base import BaseTool
+from ...context import ToolContext
+from .._tavily import tavily_request
 from .schema import WebSearchInput
 
 

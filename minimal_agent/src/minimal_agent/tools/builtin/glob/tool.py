@@ -3,11 +3,10 @@
 import glob as globlib
 from pathlib import Path
 
-from minimal_agent.tools.base import BaseTool
-from minimal_agent.tools.builtin._filesystem import is_path_within, sort_by_mtime
-from minimal_agent.tools.context import ToolContext
-from minimal_agent.tools.results import ValidationErr, ValidationOk, ValidationResult
-
+from ...base import BaseTool
+from ...context import ToolContext
+from ...results import ValidationErr, ValidationOk, ValidationResult
+from .._filesystem import is_path_within, sort_by_mtime
 from .schema import GlobInput
 
 MAX_RESULTS = 100

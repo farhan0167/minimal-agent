@@ -4,8 +4,7 @@ The Agent interacts with the conversation exclusively through this class.
 Storage is append-only; projection is where shaping lives.
 """
 
-from minimal_agent.llm.types import Message, Role
-
+from ..llm.types import Message, Role
 from .message_store import MessageStore
 
 
