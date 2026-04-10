@@ -10,7 +10,7 @@
 :root {
   /* Warm cream backgrounds */
   --aui-background: 40 20% 96%;       /* #F5F5F0 */
-  --aui-foreground: 60 6% 10%;        /* #1a1a18 */
+  --aui-foreground: 90 6% 10%;        /* #1a1a18 */
 
   --aui-card: 0 0% 100%;
   --aui-card-foreground: 60 6% 10%;
@@ -45,7 +45,7 @@
 
   /* Extended Claude palette tokens */
   --claude-sidebar: 40 14% 90%;       /* #eae8e1 */
-  --claude-user-bubble: 37 14% 83%;   /* #DDD9CE */
+  --claude-user-bubble: 37 14% 91%;   /* #E9E6DF */
   --claude-composer: 0 0% 100%;       /* white */
   --claude-code-bg: 40 14% 98%;       /* #e8e5db — subtly darker than page */
   --claude-code-header: 60 5% 16%;    /* #2d2d2a */
@@ -214,11 +214,20 @@
   align-items: flex-end;
 }
 
+/* Input takes full width — forces its own row above the buttons */
 .aui-composer-input {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1rem;
   padding: 1.25rem 1.5rem;
-  min-height: 6rem;
+  min-height: 2.5rem;
+  width: 100%;
+  order: -1;
+}
+
+/* Attachment button — bottom-left, mirrors send button spacing */
+.aui-composer-attach {
+  margin-bottom: 0.5rem;
+  margin-left: 0.75rem;
 }
 
 /* Send button — Claude's rounded orange, bottom-right */
@@ -226,10 +235,20 @@
   background-color: hsl(var(--aui-primary));
   border-radius: 0.75rem;
   margin-bottom: 0.5rem;
+  margin-left: auto;
   margin-right: 0.75rem;
 }
 .aui-composer-send:hover {
   background-color: hsl(var(--claude-primary-hover));
+}
+
+/* Cancel button — same position as send */
+.aui-composer-cancel {
+  background-color: hsl(var(--aui-primary));
+  border-radius: 0.75rem;
+  margin-bottom: 0.5rem;
+  margin-left: auto;
+  margin-right: 0.75rem;
 }
 
 /* Composer footer area */

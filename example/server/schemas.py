@@ -1,6 +1,7 @@
 """Request/response Pydantic models for the API."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -22,8 +23,24 @@ class CreateSessionRequest(BaseModel):
     )
 
 
+class ImageContent(BaseModel):
+    """A base64-encoded image attachment."""
+
+    data: str = Field(
+        description="Base64 data URI (e.g. 'data:image/png;base64,...')."
+    )
+    detail: Literal["auto", "low", "high"] | None = Field(
+        default=None,
+        description="Vision detail level hint.",
+    )
+
+
 class ChatRequest(BaseModel):
     message: str = Field(description="The user message to send to the agent.")
+    images: list[ImageContent] | None = Field(
+        default=None,
+        description="Optional image attachments as base64 data URIs.",
+    )
 
 
 # --- Responses ---

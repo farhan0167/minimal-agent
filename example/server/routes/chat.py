@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from app import build_agent, load_session, validate_workspace
-from minimal_agent.llm.types import Message, Role
+from minimal_agent.llm.types import ImagePart, ImageUrl, Message, Role, TextPart
 from schemas import ChatRequest
 
 router = APIRouter(prefix="/sessions", tags=["chat"])
@@ -16,7 +16,11 @@ router = APIRouter(prefix="/sessions", tags=["chat"])
 
 def _serialize_message(msg: Message) -> str:
     """Serialize a Message to JSON for SSE."""
-    data: dict = {"role": msg.role.value, "content": msg.content}
+    if isinstance(msg.content, list):
+        content = [part.model_dump(exclude_none=True) for part in msg.content]
+    else:
+        content = msg.content
+    data: dict = {"role": msg.role.value, "content": content}
     if msg.tool_calls:
         data["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
     if msg.tool_call_id:
@@ -26,7 +30,7 @@ def _serialize_message(msg: Message) -> str:
 
 async def _stream_agent(
     session_id: str,
-    user_message: str,
+    req: ChatRequest,
 ) -> AsyncGenerator[dict, None]:
     """Run the agent loop and yield SSE events."""
     try:
@@ -51,8 +55,14 @@ async def _stream_agent(
 
     agent = build_agent(workspace, model=session._meta.model, backend=session._meta.backend)
 
-    # Add user message to context.
-    session.context.add(Message(role=Role.USER, content=user_message))
+    # Build user message — multimodal when images are attached.
+    if req.images:
+        content: list[TextPart | ImagePart] = [TextPart(text=req.message)]
+        for img in req.images:
+            content.append(ImagePart(image_url=ImageUrl(url=img.data, detail=img.detail)))
+        session.context.add(Message(role=Role.USER, content=content))
+    else:
+        session.context.add(Message(role=Role.USER, content=req.message))
 
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -94,7 +104,7 @@ async def chat_route(session_id: str, req: ChatRequest):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    return EventSourceResponse(_stream_agent(session_id, req.message))
+    return EventSourceResponse(_stream_agent(session_id, req))
 
 
 @router.get("/{session_id}/messages")
@@ -109,7 +119,11 @@ async def messages_route(session_id: str):
         "messages": [
             {
                 "role": msg.role.value,
-                "content": msg.content,
+                "content": (
+                    [part.model_dump(exclude_none=True) for part in msg.content]
+                    if isinstance(msg.content, list)
+                    else msg.content
+                ),
                 "tool_call_id": msg.tool_call_id,
                 "tool_calls": (
                     [tc.model_dump() for tc in msg.tool_calls]

@@ -45,8 +45,17 @@ export function SessionItem({
         <div className="truncate font-medium text-xs font-serif">
           {session.session_id}
         </div>
-        <code className="flex items-center gap-1 text-[10px] text-[hsl(var(--aui-muted-foreground))] truncate mt-0.5
-          bg-[hsl(var(--claude-hover))] rounded px-1.5 py-0.5 font-mono">
+        <code
+          onClick={(e) => {
+            e.stopPropagation();
+            const range = document.createRange();
+            range.selectNodeContents(e.currentTarget.querySelector("span")!);
+            const sel = window.getSelection();
+            sel?.removeAllRanges();
+            sel?.addRange(range);
+          }}
+          className="flex items-center gap-1 text-[10px] text-[hsl(var(--aui-muted-foreground))] truncate mt-0.5
+          bg-[hsl(var(--claude-hover))] rounded px-1.5 py-0.5 font-mono cursor-text select-text">
           <FolderOpen className="w-3 h-3 shrink-0" />
           <span className="truncate">{session.workspace_root ?? "no workspace"}</span>
         </code>

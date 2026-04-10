@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   useLocalRuntime,
+  SimpleImageAttachmentAdapter,
   type ChatModelAdapter,
   type ChatModelRunResult,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import { sendMessage, getMessages } from "../api/chat";
+import type { ImageAttachment } from "../api/chat";
 import type { Message } from "../types/message";
 
 type ContentPart = NonNullable<ChatModelRunResult["content"]>[number];
@@ -41,10 +43,24 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
     }
 
     if (msg.role === "user") {
-      result.push({
-        role: "user",
-        content: (msg.content as string) ?? "",
-      });
+      if (Array.isArray(msg.content)) {
+        // Multimodal user message — convert server content parts.
+        const parts = msg.content.map((part) => {
+          if (part.type === "text") {
+            return { type: "text" as const, text: part.text };
+          }
+          if (part.type === "image_url") {
+            return { type: "image" as const, image: part.image_url.url };
+          }
+          return { type: "text" as const, text: "[unsupported content]" };
+        });
+        result.push({ role: "user", content: parts });
+      } else {
+        result.push({
+          role: "user",
+          content: (msg.content as string) ?? "",
+        });
+      }
       i++;
       continue;
     }
@@ -163,7 +179,17 @@ export function useChatRuntime(sessionId: string) {
         const userText = textParts
           .map((p) => ("text" in p ? p.text : ""))
           .join("\n");
-        if (!userText) return;
+
+        // Extract images from attachments (SimpleImageAttachmentAdapter puts
+        // them in attachment.content, not message.content).
+        const images: ImageAttachment[] = (
+          "attachments" in lastMessage ? lastMessage.attachments ?? [] : []
+        )
+          .flatMap((att) => att.content)
+          .filter((part) => part.type === "image")
+          .map((p) => ({ data: (p as { image: string }).image }));
+
+        if (!userText && images.length === 0) return;
 
         let currentText = "";
         const toolCalls: ContentPart[] = [];
@@ -173,6 +199,7 @@ export function useChatRuntime(sessionId: string) {
           sessionId,
           userText,
           abortSignal,
+          images.length > 0 ? images : undefined,
         )) {
           switch (event.type) {
             case "assistant": {
@@ -248,6 +275,9 @@ export function useChatRuntime(sessionId: string) {
 
   const runtime = useLocalRuntime(adapter, {
     initialMessages,
+    adapters: {
+      attachments: new SimpleImageAttachmentAdapter(),
+    },
   });
 
   return { runtime, isLoaded };
