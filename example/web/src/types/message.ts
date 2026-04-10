@@ -6,9 +6,23 @@ export interface ToolCall {
   arguments: Record<string, unknown>;
 }
 
+/** A text segment in a multimodal message. */
+export interface TextContentPart {
+  type: "text";
+  text: string;
+}
+
+/** An image segment in a multimodal message. */
+export interface ImageContentPart {
+  type: "image_url";
+  image_url: { url: string; detail?: "auto" | "low" | "high" };
+}
+
+export type ContentPart = TextContentPart | ImageContentPart;
+
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | ContentPart[] | null;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
 }
