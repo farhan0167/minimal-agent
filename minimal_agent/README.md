@@ -94,6 +94,8 @@ session = Session.load(
 
 ## Concepts
 
+![minimal-agent](../docs/images/minimal-agent-overview.png)
+
 ### Agent
 
 The `Agent` is the core loop. It takes an LLM, a list of tools, and a prompt that defines its personality. Each call to `agent.run(context)` drives a decide-act-observe cycle: ask the LLM what to do → execute tool calls → feed results back → repeat until the LLM is done or `max_turns` is hit.
