@@ -1,21 +1,12 @@
-"""Agent and session wiring — workspace validation, agent construction."""
+"""Session wiring and workspace validation — agent logic delegated to agents/."""
 
+import json
 import os
 from pathlib import Path
 
+from agents import get_agent_config
 from minimal_agent.agent import Agent, Session
-from minimal_agent.config import Backend, settings
-from minimal_agent.llm import LLM
-from minimal_agent.tools.builtin.edit_file import EditFile
-from minimal_agent.tools.builtin.get_weather import GetWeather
-from minimal_agent.tools.builtin.glob import Glob
-from minimal_agent.tools.builtin.grep import Grep
-from minimal_agent.tools.builtin.read_file import ReadFile
-from minimal_agent.tools.builtin.run_shell import RunShell
-from minimal_agent.tools.builtin.spawn_agents import SpawnAgents
-from minimal_agent.tools.builtin.web_extract import WebExtract
-from minimal_agent.tools.builtin.web_search import WebSearch
-from minimal_agent.tools.builtin.write_file import WriteFile
+from minimal_agent.config import settings
 
 
 def get_allowed_workspaces() -> list[str] | None:
@@ -54,87 +45,66 @@ def validate_workspace(workspace_root: str) -> Path:
     return path
 
 
-def get_tool_names() -> list[str]:
-    """Return the names of all tools the server registers, without instantiation."""
-    tool_classes = [
-        GetWeather,
-        ReadFile,
-        EditFile,
-        WriteFile,
-        RunShell,
-        Grep,
-        Glob,
-        WebSearch,
-        WebExtract,
-        SpawnAgents,
-    ]
-    return [cls.name for cls in tool_classes]
-
-
-def build_agent(
-    workspace: Path,
-    model: str | None = None,
-    backend: str | None = None,
-) -> Agent:
-    """Construct the default agent with all builtin tools for a workspace."""
-    llm = LLM(
-        model=model or settings.LLM_MODEL,
-        backend=Backend(backend) if backend else settings.LLM_BACKEND,
-        timeout=settings.OPENAI_TIMEOUT,
-        max_retries=settings.OPENAI_MAX_RETRIES,
-    )
-
-    read_timestamps: dict[str, float] = {}
-
-    builtin_tools = [
-        GetWeather(),
-        ReadFile(workspace_root=workspace, read_timestamps=read_timestamps),
-        EditFile(workspace_root=workspace, read_timestamps=read_timestamps),
-        WriteFile(workspace_root=workspace, read_timestamps=read_timestamps),
-        RunShell(workspace_root=workspace),
-        Grep(workspace_root=workspace),
-        Glob(workspace_root=workspace),
-        WebSearch(),
-        WebExtract(),
-    ]
-
-    tools_by_name = {t.name: t for t in builtin_tools}
-
-    spawn_agents = SpawnAgents(
-        llm=llm,
-        available_tools=tools_by_name,
-        workspace_root=workspace,
-    )
-
-    return Agent(
-        llm=llm,
-        tools=[*builtin_tools, spawn_agents],
-    )
-
-
 def get_sessions_dir() -> Path:
     return Path(settings.SESSIONS_DIR)
 
 
-async def create_session(
+# --- Agent type sidecar ---
+
+
+def save_agent_type(session_id: str, agent_type: str) -> None:
+    """Write agent_type.json sidecar next to session.json."""
+    sidecar = get_sessions_dir() / session_id / "agent_type.json"
+    sidecar.write_text(json.dumps({"agent_type": agent_type}))
+
+
+def load_agent_type(session_id: str) -> str:
+    """Read agent type from sidecar file."""
+    sidecar = get_sessions_dir() / session_id / "agent_type.json"
+    if not sidecar.exists():
+        raise FileNotFoundError(f"agent_type.json not found for session {session_id}")
+    data = json.loads(sidecar.read_text())
+    return data["agent_type"]
+
+
+# --- Session lifecycle ---
+
+
+def build_agent(
+    agent_type: str,
     workspace: Path,
     model: str | None = None,
     backend: str | None = None,
+) -> Agent:
+    """Build an agent by delegating to the appropriate agent module."""
+    agent_config = get_agent_config(agent_type)
+    return agent_config.build_agent(workspace, model=model, backend=backend)
+
+
+async def create_session(
+    workspace: Path,
+    agent_type: str,
+    model: str | None = None,
+    backend: str | None = None,
 ) -> Session:
-    """Create a new session bound to a workspace."""
+    """Create a new session bound to a workspace and agent type."""
     model = model or settings.LLM_MODEL
     backend = backend or settings.LLM_BACKEND
 
-    agent = build_agent(workspace, model=model, backend=backend)
+    agent = build_agent(agent_type, workspace, model=model, backend=backend)
     system_prompt = await agent.build_system_prompt(workspace_root=workspace)
 
-    return Session.create(
+    session = Session.create(
         model=model,
         backend=backend,
         system_prompt=system_prompt,
         base_dir=get_sessions_dir(),
         workspace_root=str(workspace),
     )
+
+    save_agent_type(session.session_id, agent_type)
+
+    return session
 
 
 def load_session(session_id: str) -> Session:

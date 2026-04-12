@@ -13,6 +13,9 @@ class CreateSessionRequest(BaseModel):
     workspace_root: str = Field(
         description="Absolute path to the project directory the agent works in."
     )
+    agent_type: str = Field(
+        description="Agent type to use for this session (e.g. 'swe', 'research')."
+    )
     model: str | None = Field(
         default=None,
         description="LLM model name. Falls back to server default.",
@@ -49,6 +52,7 @@ class ChatRequest(BaseModel):
 class SessionResponse(BaseModel):
     session_id: str
     workspace_root: str | None = None
+    agent_type: str
     model: str
     backend: str
     created_at: datetime

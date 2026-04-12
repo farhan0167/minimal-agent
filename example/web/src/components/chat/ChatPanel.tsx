@@ -16,17 +16,18 @@ const MarkdownText = makeMarkdownText({
 
 interface ChatPanelProps {
   sessionId: string;
+  agentType: string;
 }
 
-export function ChatPanel({ sessionId }: ChatPanelProps) {
+export function ChatPanel({ sessionId, agentType }: ChatPanelProps) {
   const { runtime, isLoaded } = useChatRuntime(sessionId);
   const [toolUIs, setToolUIs] = useState<ReturnType<typeof buildToolUIs>>([]);
 
   useEffect(() => {
-    getTools().then((tools) => {
+    getTools(agentType).then((tools) => {
       setToolUIs(buildToolUIs(tools.map((t) => t.name)));
     });
-  }, []);
+  }, [agentType]);
 
   if (!isLoaded) {
     return (

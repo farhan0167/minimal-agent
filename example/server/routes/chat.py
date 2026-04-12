@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
-from app import build_agent, load_session, validate_workspace
+from app import build_agent, load_agent_type, load_session, validate_workspace
 from minimal_agent.llm.types import ImagePart, ImageUrl, Message, Role, TextPart
 from schemas import ChatRequest
 
@@ -53,7 +53,8 @@ async def _stream_agent(
         yield {"event": "error", "data": json.dumps({"detail": str(e)})}
         return
 
-    agent = build_agent(workspace, model=session._meta.model, backend=session._meta.backend)
+    agent_type = load_agent_type(session_id)
+    agent = build_agent(agent_type, workspace, model=session._meta.model, backend=session._meta.backend)
 
     # Build user message — multimodal when images are attached.
     if req.images:

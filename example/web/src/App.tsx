@@ -28,7 +28,7 @@ export default function App() {
 
         <div className="flex-1 overflow-hidden">
           {activeSession ? (
-            <ChatPanel sessionId={activeSession.session_id} />
+            <ChatPanel sessionId={activeSession.session_id} agentType={activeSession.agent_type} />
           ) : (
             <WelcomeScreen />
           )}

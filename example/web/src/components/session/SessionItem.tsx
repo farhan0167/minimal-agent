@@ -60,8 +60,12 @@ export function SessionItem({
           <span className="truncate">{session.workspace_root ?? "no workspace"}</span>
         </code>
 
-        {/* Model & backend tags */}
+        {/* Agent type, model & backend tags */}
         <div className="flex flex-wrap gap-1 mt-1.5">
+          <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium
+            rounded-full bg-[hsl(var(--aui-primary)/0.12)] text-[hsl(var(--aui-primary))] border border-[hsl(var(--aui-primary)/0.25)]">
+            {session.agent_type}
+          </span>
           <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium
             rounded-full bg-[hsl(var(--claude-hover))] text-[hsl(var(--aui-muted-foreground))] border border-[hsl(var(--claude-border))]">
             {session.model}
