@@ -5,23 +5,43 @@ A full-stack chat application built on top of `minimal-agent`. It pairs a **Fast
 ## Architecture
 
 ```
-server/          FastAPI backend — sessions, streaming chat via SSE
-web/             React + Vite + TypeScript frontend
+server/
+├── agents/          Agent modules — each subdirectory is a self-contained agent
+│   ├── swe/         Software engineering agent (file ops, shell, search, etc.)
+│   ├── research/    Research agent (read-only file access, web search)
+│   └── ...          Drop a new folder here to add an agent
+├── routes/          FastAPI route handlers
+├── app.py           Session wiring, workspace validation, agent dispatch
+├── schemas.py       Request/response models
+└── main.py          Server entrypoint
+
+web/                 React + Vite + TypeScript frontend
 ```
 
-The frontend sends messages to the server, which runs the agent loop and streams responses back as Server-Sent Events. Sessions are persisted to disk as JSON so conversations survive restarts.
+### Multi-agent design
+
+The server supports multiple agent types. Each agent is a Python module under `server/agents/` that implements the `AgentConfig` protocol:
+
+- `name` / `display_name` — identifier and human-readable label
+- `build_agent()` — constructs an `Agent` with its own tools, system prompt, and configuration
+- `get_tool_names()` — returns the list of tools this agent uses
+
+Agent discovery is automatic — the server scans `agents/` subdirectories for modules containing an `agent.py` file. Adding a new agent requires no server code changes, just a new directory.
+
+Agent type is selected at session creation time and persisted in a sidecar file (`agent_type.json`) alongside the library-owned `session.json`. This keeps the `minimal_agent` library untouched while allowing the server to track which agent a session belongs to.
 
 ### API endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/sessions` | Create a new session (requires `workspace_root`) |
+| `GET` | `/agents` | List available agent types |
+| `POST` | `/sessions` | Create a new session (requires `workspace_root` and `agent_type`) |
 | `GET` | `/sessions` | List all sessions |
 | `GET` | `/sessions/{id}` | Get a single session |
 | `DELETE` | `/sessions/{id}` | Delete a session |
 | `POST` | `/sessions/{id}/chat` | Send a message and stream the response (SSE) |
 | `GET` | `/sessions/{id}/messages` | Get message history |
-| `GET` | `/tools` | List available tools |
+| `GET` | `/tools?agent_type=swe` | List tools for a given agent type |
 | `GET` | `/health` | Health check |
 
 ### SSE event types
@@ -38,6 +58,9 @@ The `/sessions/{id}/chat` endpoint streams events with these types:
 - Python 3.11+ with [uv](https://docs.astral.sh/uv/)
 - Node.js 18+
 - An API key for your chosen LLM backend
+- [Poppler](https://poppler.freedesktop.org/) — required for PDF attachment support (`pdf2image` uses it to render pages)
+  - **Debian/Ubuntu:** `sudo apt-get install poppler-utils`
+  - **macOS:** `brew install poppler`
 
 ## Setup
 
@@ -63,7 +86,7 @@ Create a `.env` file (use the existing one as a template) and configure:
 Start the server:
 
 ```bash
-python main.py   # runs on http://localhost:8000 with hot reload
+uv run python main.py   # runs on http://localhost:8000 with hot reload
 ```
 
 ### 2. Frontend
@@ -88,7 +111,15 @@ Set `VITE_API_BASE_URL` to point at your server when deploying separately.
 ## Usage
 
 1. Open `http://localhost:5173`
-2. Create a new session — provide an absolute path to the workspace directory the agent should operate in
+2. Create a new session — select an agent type and provide an absolute path to the workspace directory the agent should operate in
 3. Chat with the agent
 
-The agent has access to all built-in tools: file read/write/edit, shell commands, glob, grep, web search, and more. Tool calls and their results are displayed inline in the chat UI.
+Each agent has access to a different set of tools depending on its purpose. The SWE agent includes file read/write/edit, shell commands, glob, grep, web search, and sub-agent spawning. The research agent is read-only with web search capabilities. Tool calls and their results are displayed inline in the chat UI.
+
+## Adding a new agent
+
+1. Create a new directory under `server/agents/` (e.g. `server/agents/my_agent/`)
+2. Add an `__init__.py` and an `agent.py` that exports a `config` object implementing `AgentConfig`
+3. Restart the server — the new agent appears in the frontend dropdown automatically
+
+See `server/agents/swe/agent.py` for a full example.

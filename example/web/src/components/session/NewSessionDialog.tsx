@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CreateSessionRequest, Session } from "../../types/session";
+import { type AgentInfo, listAgents } from "../../api/agents";
 import { Plus, X } from "lucide-react";
 
 interface NewSessionDialogProps {
@@ -8,12 +9,23 @@ interface NewSessionDialogProps {
 
 export function NewSessionDialog({ onCreate }: NewSessionDialogProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [workspacePath, setWorkspacePath] = useState("");
+  const [agentType, setAgentType] = useState("");
   const [model, setModel] = useState("");
   const [backend, setBackend] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    listAgents().then((list) => {
+      setAgents(list);
+      if (list.length > 0 && !agentType) {
+        setAgentType(list[0].name);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -38,6 +50,7 @@ export function NewSessionDialog({ onCreate }: NewSessionDialogProps) {
     try {
       const req: CreateSessionRequest = {
         workspace_root: workspacePath.trim(),
+        agent_type: agentType,
       };
       if (model.trim()) req.model = model.trim();
       if (backend.trim()) req.backend = backend.trim();
@@ -104,6 +117,27 @@ export function NewSessionDialog({ onCreate }: NewSessionDialogProps) {
             />
           </div>
 
+          {/* Agent Type */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-[hsl(var(--aui-muted-foreground))]">
+              Agent Type
+            </label>
+            <select
+              value={agentType}
+              onChange={(e) => setAgentType(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-[hsl(var(--aui-border))] rounded-lg
+                bg-[hsl(var(--claude-composer))] text-[hsl(var(--aui-foreground))]
+                focus:outline-none focus:ring-2 focus:ring-[hsl(var(--aui-ring))]"
+              disabled={isCreating}
+            >
+              {agents.map((a) => (
+                <option key={a.name} value={a.name}>
+                  {a.display_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Model */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-[hsl(var(--aui-muted-foreground))]">
@@ -166,7 +200,7 @@ export function NewSessionDialog({ onCreate }: NewSessionDialogProps) {
             </button>
             <button
               type="submit"
-              disabled={isCreating || !workspacePath.trim()}
+              disabled={isCreating || !workspacePath.trim() || !agentType}
               className="px-4 py-2 text-sm font-medium text-[hsl(var(--aui-primary-foreground))] bg-[hsl(var(--aui-primary))]
                 rounded-lg hover:bg-[hsl(var(--claude-primary-hover))] disabled:opacity-50 transition-colors"
             >

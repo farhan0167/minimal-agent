@@ -5,6 +5,7 @@ import os
 import uvicorn
 from fastapi import FastAPI
 
+from routes.agents import router as agents_router
 from routes.chat import router as chat_router
 from routes.sessions import router as sessions_router
 from routes.tools import router as tools_router
@@ -15,6 +16,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.include_router(agents_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
 app.include_router(tools_router)

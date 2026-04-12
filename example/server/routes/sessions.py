@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from app import (
     create_session,
     get_sessions_dir,
+    load_agent_type,
     load_session,
     validate_workspace,
 )
@@ -20,10 +21,11 @@ from schemas import (
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
-def _session_response(session: Session) -> SessionResponse:
+def _session_response(session: Session, agent_type: str) -> SessionResponse:
     return SessionResponse(
         session_id=session.session_id,
         workspace_root=session._meta.workspace_root,
+        agent_type=agent_type,
         model=session.model,
         backend=session.backend,
         created_at=session.created_at,
@@ -41,10 +43,11 @@ async def create_session_route(req: CreateSessionRequest):
 
     session = await create_session(
         workspace=workspace,
+        agent_type=req.agent_type,
         model=req.model,
         backend=req.backend,
     )
-    return _session_response(session)
+    return _session_response(session, agent_type=req.agent_type)
 
 
 @router.get("", response_model=SessionListResponse)
@@ -55,6 +58,7 @@ async def list_sessions_route():
             SessionResponse(
                 session_id=s.session_id,
                 workspace_root=s.workspace_root,
+                agent_type=load_agent_type(s.session_id),
                 model=s.model,
                 backend=s.backend,
                 created_at=s.created_at,
@@ -70,9 +74,10 @@ async def list_sessions_route():
 async def get_session_route(session_id: str):
     try:
         session = load_session(session_id)
+        agent_type = load_agent_type(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
-    return _session_response(session)
+    return _session_response(session, agent_type=agent_type)
 
 
 @router.delete("/{session_id}", status_code=204)

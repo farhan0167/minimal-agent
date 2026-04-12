@@ -7,6 +7,7 @@ export interface Usage {
 export interface Session {
   session_id: string;
   workspace_root: string | null;
+  agent_type: string;
   model: string;
   backend: string;
   created_at: string;
@@ -16,6 +17,7 @@ export interface Session {
 
 export interface CreateSessionRequest {
   workspace_root: string;
+  agent_type: string;
   model?: string;
   backend?: string;
 }
