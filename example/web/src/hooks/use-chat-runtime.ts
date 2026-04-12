@@ -2,15 +2,64 @@ import { useEffect, useMemo, useState } from "react";
 import {
   useLocalRuntime,
   SimpleImageAttachmentAdapter,
+  CompositeAttachmentAdapter,
   type ChatModelAdapter,
   type ChatModelRunResult,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
+import type { AttachmentAdapter } from "@assistant-ui/react";
 import { sendMessage, getMessages } from "../api/chat";
-import type { ImageAttachment } from "../api/chat";
+import type { FileAttachment } from "../api/chat";
 import type { Message } from "../types/message";
 
 type ContentPart = NonNullable<ChatModelRunResult["content"]>[number];
+
+const getFileDataURL = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = (error) => reject(error);
+    reader.readAsDataURL(file);
+  });
+
+/**
+ * Attachment adapter for PDF files.
+ * Reads the PDF as a base64 data URI so the server can convert pages to images.
+ */
+class PdfAttachmentAdapter implements AttachmentAdapter {
+  accept = "application/pdf";
+
+  async add(state: { file: File }) {
+    return {
+      id: state.file.name,
+      type: "document" as const,
+      name: state.file.name,
+      contentType: state.file.type,
+      file: state.file,
+      status: { type: "requires-action" as const, reason: "composer-send" as const },
+    };
+  }
+
+  async send(attachment: { file: File; [key: string]: unknown }) {
+    return {
+      ...attachment,
+      status: { type: "complete" as const },
+      content: [
+        {
+          type: "file" as const,
+          file: {
+            data: await getFileDataURL(attachment.file),
+            mimeType: "application/pdf",
+          },
+        },
+      ],
+    };
+  }
+
+  async remove() {
+    // noop
+  }
+}
 
 /**
  * Convert server messages to assistant-ui ThreadMessageLike format.
@@ -180,16 +229,37 @@ export function useChatRuntime(sessionId: string) {
           .map((p) => ("text" in p ? p.text : ""))
           .join("\n");
 
-        // Extract images from attachments (SimpleImageAttachmentAdapter puts
-        // them in attachment.content, not message.content).
-        const images: ImageAttachment[] = (
-          "attachments" in lastMessage ? lastMessage.attachments ?? [] : []
-        )
-          .flatMap((att) => att.content)
-          .filter((part) => part.type === "image")
-          .map((p) => ({ data: (p as { image: string }).image }));
+        // Extract attachments (images and PDFs) from the message.
+        const rawAttachments =
+          "attachments" in lastMessage ? lastMessage.attachments ?? [] : [];
+        const attachments: FileAttachment[] = rawAttachments.flatMap((att) =>
+          (att.content ?? []).flatMap((part): FileAttachment[] => {
+            if (part.type === "image") {
+              return [
+                {
+                  data: (part as { image: string }).image,
+                  mime_type: att.contentType ?? "image/png",
+                },
+              ];
+            }
+            if (
+              part.type === "file" &&
+              "file" in part &&
+              (part as { file: { mimeType: string } }).file.mimeType ===
+                "application/pdf"
+            ) {
+              return [
+                {
+                  data: (part as { file: { data: string } }).file.data,
+                  mime_type: "application/pdf",
+                },
+              ];
+            }
+            return [];
+          }),
+        );
 
-        if (!userText && images.length === 0) return;
+        if (!userText && attachments.length === 0) return;
 
         let currentText = "";
         const toolCalls: ContentPart[] = [];
@@ -199,7 +269,7 @@ export function useChatRuntime(sessionId: string) {
           sessionId,
           userText,
           abortSignal,
-          images.length > 0 ? images : undefined,
+          attachments.length > 0 ? attachments : undefined,
         )) {
           switch (event.type) {
             case "assistant": {
@@ -276,7 +346,10 @@ export function useChatRuntime(sessionId: string) {
   const runtime = useLocalRuntime(adapter, {
     initialMessages,
     adapters: {
-      attachments: new SimpleImageAttachmentAdapter(),
+      attachments: new CompositeAttachmentAdapter([
+        new SimpleImageAttachmentAdapter(),
+        new PdfAttachmentAdapter(),
+      ]),
     },
   });
 

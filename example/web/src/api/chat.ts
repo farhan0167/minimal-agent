@@ -3,8 +3,9 @@ import type { SSEEvent } from "../types/message";
 import type { MessageHistoryResponse } from "../types/message";
 import { apiFetch } from "./client";
 
-export interface ImageAttachment {
+export interface FileAttachment {
   data: string; // base64 data URI
+  mime_type: string; // e.g. "image/png", "application/pdf"
   detail?: "auto" | "low" | "high";
 }
 
@@ -15,11 +16,11 @@ export async function* sendMessage(
   sessionId: string,
   message: string,
   signal: AbortSignal,
-  images?: ImageAttachment[],
+  attachments?: FileAttachment[],
 ): AsyncGenerator<SSEEvent> {
   const body: Record<string, unknown> = { message };
-  if (images && images.length > 0) {
-    body.images = images;
+  if (attachments && attachments.length > 0) {
+    body.attachments = attachments;
   }
 
   const response = await apiFetch(`/sessions/${sessionId}/chat`, {

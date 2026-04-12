@@ -58,6 +58,9 @@ The `/sessions/{id}/chat` endpoint streams events with these types:
 - Python 3.11+ with [uv](https://docs.astral.sh/uv/)
 - Node.js 18+
 - An API key for your chosen LLM backend
+- [Poppler](https://poppler.freedesktop.org/) — required for PDF attachment support (`pdf2image` uses it to render pages)
+  - **Debian/Ubuntu:** `sudo apt-get install poppler-utils`
+  - **macOS:** `brew install poppler`
 
 ## Setup
 

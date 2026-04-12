@@ -5,7 +5,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 # --- Requests ---
 
 
@@ -26,23 +25,26 @@ class CreateSessionRequest(BaseModel):
     )
 
 
-class ImageContent(BaseModel):
-    """A base64-encoded image attachment."""
+class AttachmentContent(BaseModel):
+    """A base64-encoded file attachment (image or PDF)."""
 
     data: str = Field(
         description="Base64 data URI (e.g. 'data:image/png;base64,...')."
     )
+    mime_type: str = Field(
+        description="MIME type of the attachment (e.g. 'image/png', 'application/pdf')."
+    )
     detail: Literal["auto", "low", "high"] | None = Field(
         default=None,
-        description="Vision detail level hint.",
+        description="Vision detail level hint (applicable to images).",
     )
 
 
 class ChatRequest(BaseModel):
     message: str = Field(description="The user message to send to the agent.")
-    images: list[ImageContent] | None = Field(
+    attachments: list[AttachmentContent] | None = Field(
         default=None,
-        description="Optional image attachments as base64 data URIs.",
+        description="Optional file attachments (images, PDFs) as base64 data URIs.",
     )
 
 

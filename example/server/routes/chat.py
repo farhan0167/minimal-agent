@@ -1,17 +1,46 @@
 """Chat endpoint — streams agent responses via SSE."""
 
+import base64
+import io
 import json
 import traceback
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
+from minimal_agent.llm.types import ImagePart, ImageUrl, Message, Role, TextPart
+from pdf2image import convert_from_bytes
 from sse_starlette.sse import EventSourceResponse
 
 from app import build_agent, load_agent_type, load_session, validate_workspace
-from minimal_agent.llm.types import ImagePart, ImageUrl, Message, Role, TextPart
-from schemas import ChatRequest
+from schemas import AttachmentContent, ChatRequest
 
 router = APIRouter(prefix="/sessions", tags=["chat"])
+
+
+def _pdf_to_image_parts(data_uri: str) -> list[ImagePart]:
+    """Convert a base64 PDF data URI into ImageParts (one per page)."""
+    # Strip the data URI prefix to get raw base64
+    header, b64data = data_uri.split(",", 1)
+    pdf_bytes = base64.b64decode(b64data)
+
+    images = convert_from_bytes(pdf_bytes)
+    parts: list[ImagePart] = []
+    for page_img in images:
+        buf = io.BytesIO()
+        page_img.save(buf, format="PNG")
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+        parts.append(
+            ImagePart(image_url=ImageUrl(url=f"data:image/png;base64,{img_b64}"))
+        )
+    return parts
+
+
+def _attachment_to_image_parts(att: AttachmentContent) -> list[ImagePart]:
+    """Convert an attachment to ImagePart(s), handling PDF conversion."""
+    if att.mime_type == "application/pdf":
+        return _pdf_to_image_parts(att.data)
+    # Regular image — pass through as-is.
+    return [ImagePart(image_url=ImageUrl(url=att.data, detail=att.detail))]
 
 
 def _serialize_message(msg: Message) -> str:
@@ -56,11 +85,11 @@ async def _stream_agent(
     agent_type = load_agent_type(session_id)
     agent = build_agent(agent_type, workspace, model=session._meta.model, backend=session._meta.backend)
 
-    # Build user message — multimodal when images are attached.
-    if req.images:
+    # Build user message — multimodal when attachments are present.
+    if req.attachments:
         content: list[TextPart | ImagePart] = [TextPart(text=req.message)]
-        for img in req.images:
-            content.append(ImagePart(image_url=ImageUrl(url=img.data, detail=img.detail)))
+        for att in req.attachments:
+            content.extend(_attachment_to_image_parts(att))
         session.context.add(Message(role=Role.USER, content=content))
     else:
         session.context.add(Message(role=Role.USER, content=req.message))
