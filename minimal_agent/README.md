@@ -128,6 +128,14 @@ Tools are how the agent interacts with the world. Each tool is a class that inhe
 
 The system prompt is built from three parts: a **behavior prompt** (markdown that defines the agent's personality), an **environment block** (workspace metadata), and **context blocks** (dynamic info like git status). The `system_prompt` module handles assembly — you just pass a markdown file or string.
 
+### Skills
+
+Skills are reusable prompt templates stored as markdown files on disk. Instead of baking every specialized instruction into the system prompt, you write a `SKILL.md` per task (e.g. "create a git commit", "review a PR") and the agent loads it on demand.
+
+The model sees a lightweight list of available skills (just names + descriptions) in its system prompt. When one is relevant, it calls the built-in `skill` tool to load the full instructions. This is the same two-phase pattern Anthropic's own agents use — cheap metadata always, expensive prompt only when needed. See the official [Agent Skills Specification](https://agentskills.io/specification) for the file format.
+
+Skills are auto-discovered when you pass `workspace_root` to the `Agent`. Drop a skill at `.minimal_agent/skills/<name>/SKILL.md` in your project (or `~/.minimal_agent/skills/` for user-level skills), and it shows up in the agent's skill list. Project-level skills shadow user-level skills with the same name.
+
 ## Building a Custom Agent
 
 The default agent is a software engineer, but you can build anything. Here's a code review agent with a custom prompt and no shell access:
@@ -253,3 +261,58 @@ agent = Agent(
 ```
 
 The gathered content shows up in the system prompt as `<context name="packageJson">...</context>`.
+
+### 5. Write a skill
+
+Skills are markdown files with YAML frontmatter. The frontmatter gives the skill a name and a one-line description (this is what the model reads to decide when to use it); the body is the full prompt the model follows once the skill is invoked.
+
+```markdown
+<!-- .minimal_agent/skills/commit/SKILL.md -->
+---
+name: commit
+description: Create a well-structured git commit with a conventional message. Use when the user asks to commit staged changes.
+---
+
+# Creating a commit
+
+1. Run `git status` and `git diff --staged` to see what's being committed.
+2. Write a commit message in conventional-commits style (`feat:`, `fix:`, `refactor:`, etc.).
+3. Keep the subject under 72 characters. Add a body if the change needs context.
+4. Run `git commit -m "<message>"` and report the resulting commit hash.
+```
+
+Two frontmatter fields are required:
+
+- `name` — 1–64 chars, lowercase letters, numbers, and hyphens only. **Must match the parent directory name.**
+- `description` — 1–1024 chars. This is what the model sees in the skill list, so make it specific enough that the model knows when to invoke the skill.
+
+Optional fields (`license`, `compatibility`, `metadata`, `allowed-tools`) are described in the [official specification](https://agentskills.io/specification).
+
+Skills are discovered from two roots, in priority order:
+
+1. **Project-local:** `.minimal_agent/skills/<name>/SKILL.md` in the workspace root or any ancestor directory. A skill defined at the repo root is found from any subdirectory.
+2. **User-level:** `~/.minimal_agent/skills/<name>/SKILL.md`. Available across every project.
+
+Project-level skills shadow user-level skills with the same name (case-insensitive). Shadowed skills are still tracked so you can see what's being overridden.
+
+#### Enabling skills
+
+Skills are enabled automatically when you pass `workspace_root` to the `Agent`:
+
+```python
+agent = Agent(
+    llm=llm,
+    tools=[...],
+    workspace_root=Path.cwd(),
+)
+```
+
+The agent scans for skills once at construction, registers the built-in `skill` tool, and injects the skill list into the system prompt as a `<context name="availableSkills">` block. Pass `enable_skills=False` to opt out.
+
+#### How the model uses a skill
+
+The model reads the skill list in its system prompt, decides a skill matches the user's request, and calls the `skill` tool with the skill name. The tool reads the full `SKILL.md` from disk and returns its contents as the tool result. The model then follows those instructions for the rest of the turn.
+
+This is progressive disclosure: the skill list costs ~100 tokens, but the full prompt is only loaded when it's actually needed. You can have dozens of skills available without paying the token cost of any specific one until the model decides to use it.
+
+Skills can reference additional files (`scripts/`, `references/`, `assets/`) alongside the `SKILL.md` — the skill prompt just tells the model to read them with its existing tools. See the [official specification](https://agentskills.io/specification) for the full directory layout and progressive-disclosure pattern.

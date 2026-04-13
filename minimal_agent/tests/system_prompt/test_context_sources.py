@@ -2,9 +2,11 @@
 
 from pathlib import Path
 
+from minimal_agent.skills import SkillMeta, SkillSource
 from minimal_agent.system_prompt.context_sources import (
     DirectoryTreeSource,
     GitStatusSource,
+    SkillsContextSource,
 )
 
 
@@ -94,6 +96,54 @@ class TestDirectoryTreeSource:
     async def test_name_property(self):
         source = DirectoryTreeSource()
         assert source.name == "directoryStructure"
+
+
+class TestSkillsContextSource:
+    def _make(
+        self, name: str, desc: str = "Does things.", shadowed: bool = False
+    ) -> SkillMeta:
+        return SkillMeta(
+            name=name,
+            description=desc,
+            path=Path(f"/fake/{name}/SKILL.md"),
+            source=SkillSource.PROJECT,
+            shadowed_by=SkillSource.USER if shadowed else None,
+        )
+
+    async def test_empty_list_returns_none(self, tmp_path: Path):
+        source = SkillsContextSource(skills=[])
+        assert await source.gather(tmp_path) is None
+
+    async def test_all_shadowed_returns_none(self, tmp_path: Path):
+        source = SkillsContextSource(skills=[self._make("c", shadowed=True)])
+        assert await source.gather(tmp_path) is None
+
+    async def test_lists_active_skills(self, tmp_path: Path):
+        source = SkillsContextSource(
+            skills=[
+                self._make("commit", "Create commits."),
+                self._make("review-pr", "Review PRs."),
+            ]
+        )
+        result = await source.gather(tmp_path)
+        assert result is not None
+        assert "- commit: Create commits." in result
+        assert "- review-pr: Review PRs." in result
+
+    async def test_excludes_shadowed(self, tmp_path: Path):
+        source = SkillsContextSource(
+            skills=[
+                self._make("commit", "Project commit."),
+                self._make("commit", "User commit.", shadowed=True),
+            ]
+        )
+        result = await source.gather(tmp_path)
+        assert result is not None
+        assert "Project commit." in result
+        assert "User commit." not in result
+
+    async def test_name_property(self):
+        assert SkillsContextSource(skills=[]).name == "availableSkills"
 
 
 class TestCustomContextSource:
