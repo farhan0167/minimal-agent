@@ -203,6 +203,12 @@ agent = Agent(
 
 `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell`, `spawn_agents`, `web_search`, `web_extract`, `get_weather` (stub)
 
+### Skills
+
+Skills are reusable prompt templates stored as markdown files. Drop a `SKILL.md` at `.minimal_agent/skills/<name>/SKILL.md` (project-level) or `~/.minimal_agent/skills/<name>/SKILL.md` (user-level), and the agent sees it in its skill list. When the model decides a skill is relevant, it loads the full instructions on demand via the built-in `skill` tool — cheap metadata always, expensive prompt only when needed.
+
+Skills are auto-discovered when you pass `workspace_root` to the `Agent`. Format follows the official [Agent Skills Specification](https://agentskills.io/specification). See [minimal_agent/README.md](minimal_agent/README.md#5-write-a-skill) for authoring details.
+
 ## Example: Full-stack web app
 
 The `example/` directory contains a ready-to-run chat application with a **FastAPI backend** and a **React frontend** that demonstrates the agent in action.

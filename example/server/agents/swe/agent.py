@@ -71,6 +71,7 @@ class SWEAgentConfig:
         return Agent(
             llm=llm,
             tools=[*builtin_tools, spawn_agents],
+            workspace_root=workspace,
         )
 
 

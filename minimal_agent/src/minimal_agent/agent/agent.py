@@ -11,15 +11,18 @@ from typing import Optional, Union
 
 from ..llm import LLM, Message, Role
 from ..llm.types import LLMTool, Usage
+from ..skills import discover_skills
 from ..system_prompt import (
     ContextSource,
     DirectoryTreeSource,
     GitStatusSource,
+    SkillsContextSource,
     build_system_prompt,
     load_prompt,
 )
 from ..tools import ToolContext, dispatch
 from ..tools.base import BaseTool
+from ..tools.builtin.skill import SkillTool
 from ..tools.context import PermissionCallback
 from .context import Context
 
@@ -41,6 +44,8 @@ class Agent:
         prompt: Union[str, Path, None] = None,
         context_sources: list[ContextSource] | None = None,
         max_turns: int = 10,
+        workspace_root: Path | None = None,
+        enable_skills: bool = True,
     ) -> None:
         self._llm = llm
         self._tools_by_name: dict[str, BaseTool] = {t.name: t for t in tools}
@@ -51,11 +56,24 @@ class Agent:
         # Default prompt → default context sources.
         # Custom prompt → blank slate (user opts in).
         if context_sources is not None:
-            self._context_sources = context_sources
+            resolved_sources = list(context_sources)
         elif prompt is None:
-            self._context_sources = _DEFAULT_CONTEXT_SOURCES
+            resolved_sources = list(_DEFAULT_CONTEXT_SOURCES)
         else:
-            self._context_sources = []
+            resolved_sources = []
+
+        # Skill discovery: scan the filesystem once at construction, register
+        # the SkillTool and inject the metadata list into the system prompt.
+        if enable_skills and workspace_root is not None:
+            skills = discover_skills(workspace_root)
+            active = [s for s in skills if s.shadowed_by is None]
+            if active:
+                skill_tool = SkillTool(skills)
+                self._tools_by_name[skill_tool.name] = skill_tool
+                self._llm_tools.append(skill_tool.as_llm_tool())
+                resolved_sources.append(SkillsContextSource(skills))
+
+        self._context_sources = resolved_sources
 
     async def build_system_prompt(self, workspace_root: Path) -> str:
         """Build the full system prompt for a new session.

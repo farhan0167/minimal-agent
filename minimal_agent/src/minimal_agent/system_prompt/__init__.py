@@ -5,6 +5,7 @@ from .context_sources import (
     ContextSource,
     DirectoryTreeSource,
     GitStatusSource,
+    SkillsContextSource,
 )
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "ContextSource",
     "DirectoryTreeSource",
     "GitStatusSource",
+    "SkillsContextSource",
 ]

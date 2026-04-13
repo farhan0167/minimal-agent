@@ -46,7 +46,7 @@ class ResearchAgentConfig:
             WebExtract(),
         ]
 
-        return Agent(llm=llm, tools=tools)
+        return Agent(llm=llm, tools=tools, workspace_root=workspace)
 
 
 config = ResearchAgentConfig()
