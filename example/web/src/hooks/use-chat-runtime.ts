@@ -272,9 +272,23 @@ export function useChatRuntime(sessionId: string) {
           attachments.length > 0 ? attachments : undefined,
         )) {
           switch (event.type) {
+            case "delta": {
+              // Live token — append and yield a cumulative snapshot.
+              currentText += event.data.text;
+              yield {
+                content: [
+                  ...toolCalls,
+                  { type: "text" as const, text: currentText },
+                ],
+              };
+              break;
+            }
+
             case "assistant": {
               const msg = event.data;
 
+              // The committed message is authoritative: replace the streamed
+              // text rather than append (deltas already built it up).
               if (msg.content) {
                 currentText = msg.content as string;
               }

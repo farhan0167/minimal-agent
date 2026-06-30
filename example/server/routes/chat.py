@@ -1,5 +1,6 @@
 """Chat endpoint — streams agent responses via SSE."""
 
+import asyncio
 import base64
 import io
 import json
@@ -7,7 +8,15 @@ import traceback
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
-from minimal_agent.llm.types import ImagePart, ImageUrl, Message, Role, TextPart
+from minimal_agent.agent import INTERRUPTED_RESPONSE_MARKER, Session
+from minimal_agent.llm.types import (
+    ImagePart,
+    ImageUrl,
+    Message,
+    Role,
+    StreamChunk,
+    TextPart,
+)
 from pdf2image import convert_from_bytes
 from sse_starlette.sse import EventSourceResponse
 
@@ -41,6 +50,33 @@ def _attachment_to_image_parts(att: AttachmentContent) -> list[ImagePart]:
         return _pdf_to_image_parts(att.data)
     # Regular image — pass through as-is.
     return [ImagePart(image_url=ImageUrl(url=att.data, detail=att.detail))]
+
+
+def _last_role_is_user(session: Session) -> bool:
+    """True if the session's last stored message is an unanswered user turn.
+
+    Guards the interrupt commit: if agent.run() already committed this turn's
+    assistant message before the disconnect (e.g. interrupted during tool
+    dispatch), the last role is assistant/tool and we must not append a
+    second, spurious marker.
+    """
+    messages = session.context.store.messages
+    return bool(messages) and messages[-1].role == Role.USER
+
+
+def _commit_interrupted(session: Session, pending_text: str) -> None:
+    """Persist an assistant message for a turn cut off mid-stream.
+
+    Records whatever text streamed before the disconnect, tagged with the
+    interrupted marker, so the conversation stays role-alternating and the
+    model sees on its next turn that the previous reply never completed. When
+    nothing streamed yet, the marker alone is committed.
+    """
+    if pending_text:
+        content = f"{pending_text}\n\n{INTERRUPTED_RESPONSE_MARKER}"
+    else:
+        content = INTERRUPTED_RESPONSE_MARKER
+    session.context.add(Message(role=Role.ASSISTANT, content=content))
 
 
 def _serialize_message(msg: Message) -> str:
@@ -105,16 +141,49 @@ async def _stream_agent(
     async def auto_approve(tool_name: str, description: str) -> bool:
         return True
 
+    # Tracks assistant text streamed for the *current* turn but not yet
+    # committed to the session by agent.run(). agent.run() only commits the
+    # assistant Message after the full turn streams; if the client disconnects
+    # mid-stream the generator is cancelled before that, leaving the user
+    # message unanswered. We commit a partial assistant message on the way out
+    # so the conversation stays role-alternating and the model sees that its
+    # previous reply was interrupted.
+    pending_text = ""
     try:
-        async for msg in agent.run(
+        async for item in agent.run(
             session.context,
+            stream=True,
             on_usage=on_usage,
             permission_callback=auto_approve,
         ):
-            if msg.role == Role.ASSISTANT:
-                yield {"event": "assistant", "data": _serialize_message(msg)}
-            elif msg.role == Role.TOOL:
-                yield {"event": "tool_result", "data": _serialize_message(msg)}
+            # Token deltas arrive first; the committed assistant Message
+            # follows and carries the full text (clients should treat it as
+            # authoritative and replace, not append).
+            if isinstance(item, StreamChunk):
+                if item.text:
+                    pending_text += item.text
+                    yield {"event": "delta", "data": json.dumps({"text": item.text})}
+            elif item.role == Role.ASSISTANT:
+                # This turn's assistant message is now committed by agent.run();
+                # reset the pending buffer so we don't double-commit it.
+                pending_text = ""
+                yield {"event": "assistant", "data": _serialize_message(item)}
+            elif item.role == Role.TOOL:
+                yield {"event": "tool_result", "data": _serialize_message(item)}
+    except (asyncio.CancelledError, GeneratorExit):
+        # Stream was torn down before the turn finished. On a client
+        # disconnect sse-starlette calls aclose() on this generator, which
+        # raises GeneratorExit at the suspended yield; a server shutdown / task
+        # cancel raises CancelledError. Either way agent.run() never committed
+        # this turn's assistant message. Persist whatever streamed (plus an
+        # interrupted marker) so history stays role-alternating and the
+        # interruption is on the record for the next turn, then re-raise.
+        #
+        # context.add() persists synchronously (no await), which is required
+        # here: awaiting during GeneratorExit handling is illegal.
+        if pending_text or _last_role_is_user(session):
+            _commit_interrupted(session, pending_text)
+        raise
     except Exception as e:
         yield {
             "event": "error",

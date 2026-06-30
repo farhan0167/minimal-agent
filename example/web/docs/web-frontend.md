@@ -100,6 +100,12 @@ This is the most important part of the API layer. When the user sends a message,
 `lib/sse.ts` contains `parseSSEStream`, another async generator. SSE is a simple text protocol: events are separated by double newlines, and each event has an `event:` line and a `data:` line. For example:
 
 ```
+event: delta
+data: {"text":"Hel"}
+
+event: delta
+data: {"text":"lo"}
+
 event: assistant
 data: {"role":"assistant","content":"Hello","tool_calls":null}
 
@@ -110,12 +116,15 @@ event: done
 data: {"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
 ```
 
-The parser reads chunks from the response body stream, buffers them, splits on `\n\n`, parses each block's event type and JSON data, and yields typed `SSEEvent` objects. The four event types are:
+The parser reads chunks from the response body stream, buffers them, splits on `\n\n`, parses each block's event type and JSON data, and yields typed `SSEEvent` objects. The five event types are:
 
-- `assistant` — the agent produced text or is about to call tools
+- `delta` — a chunk of assistant text as it streams, token by token
+- `assistant` — the committed assistant message: the full text (authoritative — replace, don't append) plus any tool calls
 - `tool_result` — a tool finished and returned its result
 - `error` — something went wrong
 - `done` — the agent finished its turn
+
+The server emits `delta` events while the model streams, then a final `assistant` event carrying the complete text. The runtime appends deltas as they arrive and treats the `assistant` event's content as authoritative, so a turn renders live but always settles on the committed text.
 
 ### If you want to extend this
 
@@ -146,10 +155,10 @@ When the user types a message and hits send, assistant-ui calls `adapter.run()`.
 2. It calls `sendMessage(sessionId, userText, abortSignal)` to start the SSE stream.
 3. It iterates over the SSE events and **yields cumulative snapshots** of the assistant's response.
 
-That last point is important: each `yield` must contain the **full content so far**, not just the new delta. So if the agent first calls a tool and then writes text, the yielded content grows from `[tool-call]` to `[tool-call, text]`.
+That last point is important: each `yield` must contain the **full content so far**, not just the latest fragment. On every `delta` event the adapter appends the new text to `currentText` and yields the whole thing again; assistant-ui diffs snapshots and renders the growing text. So as the agent calls a tool and then writes streaming text, the yielded content grows from `[tool-call]` to `[tool-call, text]` and the text part itself lengthens token by token.
 
 The adapter tracks:
-- `currentText` — the assistant's accumulated text output
+- `currentText` — the assistant's accumulated text output (grown by `delta` events, then replaced by the committed `assistant` message)
 - `toolCalls` — an array of tool-call content parts, each with an id, name, args, and eventually a result
 - `toolCallIndex` — a map from tool_call_id to its position in the array, so when a `tool_result` event arrives, the adapter can patch the result into the right tool-call part
 
