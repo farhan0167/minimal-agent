@@ -14,6 +14,12 @@ from ..llm.types import Message, Role
 
 logger = logging.getLogger(__name__)
 
+# Marker text committed in place of (or alongside) an assistant reply that was
+# cut off mid-stream — e.g. the client disconnected while tokens were still
+# arriving. Recorded truthfully so the model sees on the next turn that its
+# previous response was interrupted and can react (resume, restate, etc.).
+INTERRUPTED_RESPONSE_MARKER = "[response interrupted before completion]"
+
 
 class MessageStore:
     def __init__(self, *, path: Path | None = None) -> None:
@@ -58,6 +64,7 @@ class MessageStore:
                         ) from e
 
         store._validate_tool_pairs()
+        store._heal_trailing_user_message()
         return store
 
     def _validate_tool_pairs(self) -> None:
@@ -126,6 +133,34 @@ class MessageStore:
                 "Appended synthetic interrupt result for tool_call_id=%s",
                 orphan_id,
             )
+
+    def _heal_trailing_user_message(self) -> None:
+        """Close a conversation that ends on an unanswered user message.
+
+        A trailing user message with no following assistant reply is an
+        interrupt/crash artifact: the request was persisted, but the response
+        was cut off before any assistant message was committed (e.g. the
+        client disconnected mid-stream). Left as-is, the next user message
+        produces two user turns in a row, which many chat templates reject
+        ("roles must alternate").
+
+        We append a synthetic assistant message marking the interruption —
+        the same truthful-record approach `_validate_tool_pairs` uses for
+        orphaned tool calls. The model sees on its next turn that the prior
+        response never completed.
+        """
+        if not self._messages:
+            return
+        if self._messages[-1].role != Role.USER:
+            return
+
+        self.append(
+            Message(role=Role.ASSISTANT, content=INTERRUPTED_RESPONSE_MARKER)
+        )
+        logger.info(
+            "Healed trailing unanswered user message with an interrupted-"
+            "response marker (likely mid-stream interrupt artifact)."
+        )
 
     @property
     def messages(self) -> list[Message]:
