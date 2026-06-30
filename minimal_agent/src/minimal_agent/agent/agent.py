@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from typing import Optional, Union
 
-from ..llm import LLM, Message, Role
+from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
 from ..llm.types import LLMTool, Usage
 from ..skills import discover_skills
 from ..system_prompt import (
@@ -91,9 +91,10 @@ class Agent:
         self,
         context: Context,
         *,
+        stream: bool = False,
         on_usage: Optional[OnUsageCallback] = None,
         permission_callback: Optional[PermissionCallback] = None,
-    ) -> AsyncGenerator[Message, None]:
+    ) -> AsyncGenerator[Union[Message, StreamChunk], None]:
         """Run the agent loop, yielding each message as it's produced.
 
         The loop:
@@ -102,6 +103,14 @@ class Agent:
         3. If tool calls present, dispatch each one, yield results.
         4. Repeat until no tool calls or max_turns exhausted.
 
+        Yield contract:
+            Non-streaming (default), each yield is a `Message`.
+            Streaming (`stream=True`), each assistant turn first yields the
+            incremental `StreamChunk`s as tokens arrive, then the committed
+            assistant `Message` (the one added to context). Tool-result yields
+            are always `Message`. Callers should `isinstance`-check to tell a
+            live delta from a committed message.
+
         Callbacks:
             on_usage: Called with the Usage from each LLM API call.
             permission_callback: Called when a tool requires user confirmation.
@@ -109,27 +118,44 @@ class Agent:
         for _turn in range(self._max_turns):
             ctx = ToolContext(permission_callback=permission_callback)
 
-            resp = await self._llm.generate(
-                messages=context.get_messages(),
-                tools=self._llm_tools,
-                tool_choice="auto",
-            )
-
-            if on_usage and resp.usage:
-                on_usage(resp.usage)
+            if stream:
+                acc = StreamAccumulator()
+                async for chunk in self._llm.stream(
+                    messages=context.get_messages(),
+                    tools=self._llm_tools,
+                    tool_choice="auto",
+                ):
+                    acc.add(chunk)
+                    yield chunk
+                    # Usage rides the final chunk (include_usage is on by
+                    # default in the facade), not a separate response object.
+                    if on_usage and chunk.usage:
+                        on_usage(chunk.usage)
+                text = acc.text
+                tool_calls = acc.tool_calls()
+            else:
+                resp = await self._llm.generate(
+                    messages=context.get_messages(),
+                    tools=self._llm_tools,
+                    tool_choice="auto",
+                )
+                if on_usage and resp.usage:
+                    on_usage(resp.usage)
+                text = resp.text
+                tool_calls = resp.tool_calls
 
             assistant_msg = Message(
                 role=Role.ASSISTANT,
-                content=resp.text,
-                tool_calls=resp.tool_calls,
+                content=text,
+                tool_calls=tool_calls,
             )
             context.add(assistant_msg)
             yield assistant_msg
 
-            if not resp.tool_calls:
+            if not tool_calls:
                 return
 
-            for tc in resp.tool_calls:
+            for tc in tool_calls:
                 result_msg = await dispatch(tc, self._tools_by_name, ctx)
                 context.add(result_msg)
                 yield result_msg

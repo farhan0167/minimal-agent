@@ -1,9 +1,18 @@
+from typing import AsyncIterator, List
 from unittest.mock import AsyncMock
 
 from pydantic import BaseModel
 
 from minimal_agent.agent import Agent, Context
-from minimal_agent.llm.types import GenerateResponse, Message, Role, ToolCall, Usage
+from minimal_agent.llm.types import (
+    GenerateResponse,
+    Message,
+    Role,
+    StreamChunk,
+    ToolCall,
+    ToolCallDelta,
+    Usage,
+)
 from minimal_agent.tools.base import BaseTool
 from minimal_agent.tools.context import ToolContext
 
@@ -170,3 +179,96 @@ async def test_on_usage_not_called_when_none():
         pass
 
     assert len(collected) == 0
+
+
+# ---- streaming (run(stream=True)) -----------------------------------------
+
+
+def _make_streaming_llm(turns: List[List[StreamChunk]]):
+    """Mock LLM whose `stream` yields one list of chunks per turn.
+
+    Each call to `llm.stream(...)` returns an async iterator over the next
+    turn's chunk list, mirroring how the real facade yields a fresh stream
+    per API call.
+    """
+
+    async def _gen(chunks: List[StreamChunk]) -> AsyncIterator[StreamChunk]:
+        for c in chunks:
+            yield c
+
+    calls = iter(turns)
+
+    def _stream(**_kwargs) -> AsyncIterator[StreamChunk]:
+        return _gen(next(calls))
+
+    llm = AsyncMock()
+    llm.stream = _stream
+    return llm
+
+
+async def test_stream_yields_chunks_then_committed_message():
+    """A streaming turn yields each StreamChunk, then the committed Message."""
+    llm = _make_streaming_llm(
+        [[StreamChunk(text="Hel"), StreamChunk(text="lo!")]]
+    )
+    agent = Agent(llm=llm, tools=[])
+    context = Context(system_prompt="sys")
+    context.add(Message(role=Role.USER, content="hi"))
+
+    items = [item async for item in agent.run(context, stream=True)]
+
+    # Two deltas, then one committed assistant Message.
+    assert [type(i) for i in items] == [StreamChunk, StreamChunk, Message]
+    assert items[-1].role == Role.ASSISTANT
+    assert items[-1].content == "Hello!"
+    # The committed message — not the deltas — is what lands in the store.
+    assert context.store.messages[-1] == items[-1]
+
+
+async def test_stream_dispatches_accumulated_tool_calls():
+    """Tool-call fragments streamed across chunks are reassembled, dispatched,
+    and the loop continues to a second (text-only) turn."""
+    turn1 = [
+        StreamChunk(text="checking"),
+        StreamChunk(
+            tool_calls=[ToolCallDelta(index=0, id="tc_1", name="test_tool")]
+        ),
+        StreamChunk(tool_calls=[ToolCallDelta(index=0, arguments="{}")]),
+    ]
+    turn2 = [StreamChunk(text="done")]
+    llm = _make_streaming_llm([turn1, turn2])
+    agent = Agent(llm=llm, tools=[_make_tool("test_tool")])
+
+    context = Context()
+    context.add(Message(role=Role.USER, content="go"))
+
+    items = [item async for item in agent.run(context, stream=True)]
+
+    messages = [i for i in items if isinstance(i, Message)]
+    # Turn 1: assistant + tool result. Turn 2: assistant. Total 3 messages.
+    assert [m.role for m in messages] == [
+        Role.ASSISTANT,
+        Role.TOOL,
+        Role.ASSISTANT,
+    ]
+    assert messages[0].tool_calls[0].name == "test_tool"
+    assert messages[-1].content == "done"
+
+
+async def test_stream_on_usage_called_from_final_chunk():
+    """Usage rides the final chunk; on_usage fires once per streamed turn."""
+    u = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+    llm = _make_streaming_llm(
+        [[StreamChunk(text="hi"), StreamChunk(usage=u)]]
+    )
+    agent = Agent(llm=llm, tools=[])
+    context = Context()
+    context.add(Message(role=Role.USER, content="hi"))
+
+    collected: list[Usage] = []
+    async for _item in agent.run(
+        context, stream=True, on_usage=collected.append
+    ):
+        pass
+
+    assert collected == [u]

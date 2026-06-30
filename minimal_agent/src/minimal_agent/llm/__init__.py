@@ -1,4 +1,4 @@
-from .llm import LLM, ToolChoice, accumulate_tool_calls
+from .llm import LLM, StreamAccumulator, ToolChoice, accumulate_tool_calls
 from .types import (
     ContentPart,
     GenerateResponse,
@@ -29,6 +29,7 @@ __all__ = [
     "ContentPart",
     "GenerateResponse",
     "StreamChunk",
+    "StreamAccumulator",
     "StructuredResponse",
     "Usage",
     "accumulate_tool_calls",

@@ -99,7 +99,9 @@ def test_in_memory_store_no_files(tmp_path):
 
 def test_from_file_corrupt_last_line(tmp_path):
     path = tmp_path / "messages.jsonl"
-    msg = Message(role=Role.USER, content="good")
+    # Use an assistant message so the trailing-user heal doesn't fire — this
+    # test is specifically about skipping a corrupt last line, not healing.
+    msg = Message(role=Role.ASSISTANT, content="good")
     path.write_text(msg.model_dump_json() + "\n" + "this is not json\n")
 
     store = MessageStore.from_file(path)
@@ -250,3 +252,54 @@ def test_from_file_valid_tool_pairs(tmp_path):
 
     store = MessageStore.from_file(path)
     assert len(store) == 2
+
+
+def test_from_file_heals_trailing_user_message(tmp_path):
+    """A session ending on an unanswered user message (mid-stream interrupt
+    artifact) gets a synthetic assistant marker appended so roles alternate."""
+    from minimal_agent.agent.message_store import INTERRUPTED_RESPONSE_MARKER
+
+    path = tmp_path / "messages.jsonl"
+    user = Message(role=Role.USER, content="hello")
+    assistant = Message(role=Role.ASSISTANT, content="hi")
+    user2 = Message(role=Role.USER, content="follow up")  # unanswered
+    path.write_text(
+        user.model_dump_json()
+        + "\n"
+        + assistant.model_dump_json()
+        + "\n"
+        + user2.model_dump_json()
+        + "\n"
+    )
+
+    store = MessageStore.from_file(path)
+
+    assert len(store) == 4
+    assert store.messages[-1].role == Role.ASSISTANT
+    assert store.messages[-1].content == INTERRUPTED_RESPONSE_MARKER
+    # The heal is persisted, not just in-memory.
+    reloaded = MessageStore.from_file(path)
+    assert len(reloaded) == 4
+
+
+def test_from_file_does_not_heal_when_assistant_is_last(tmp_path):
+    """A normally-terminated conversation (ends on assistant) is untouched."""
+    path = tmp_path / "messages.jsonl"
+    user = Message(role=Role.USER, content="hello")
+    assistant = Message(role=Role.ASSISTANT, content="hi")
+    path.write_text(
+        user.model_dump_json() + "\n" + assistant.model_dump_json() + "\n"
+    )
+
+    store = MessageStore.from_file(path)
+    assert len(store) == 2
+    assert store.messages[-1].role == Role.ASSISTANT
+
+
+def test_from_file_empty_is_not_healed(tmp_path):
+    """An empty session stays empty — nothing to heal."""
+    path = tmp_path / "messages.jsonl"
+    path.write_text("")
+
+    store = MessageStore.from_file(path)
+    assert len(store) == 0

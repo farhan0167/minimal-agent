@@ -77,6 +77,8 @@ function parseSSEBlock(block: string): SSEEvent | null {
     const data: unknown = JSON.parse(dataStr);
 
     switch (eventType) {
+      case "delta":
+        return { type: "delta", data: data as { text: string } };
       case "assistant":
         return { type: "assistant", data: data as Message };
       case "tool_result":

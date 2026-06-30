@@ -33,6 +33,7 @@ export interface MessageHistoryResponse {
 
 /** SSE event types emitted by POST /sessions/{id}/chat */
 export type SSEEvent =
+  | { type: "delta"; data: { text: string } }
   | { type: "assistant"; data: Message }
   | { type: "tool_result"; data: Message }
   | { type: "error"; data: { detail: string; traceback?: string } }

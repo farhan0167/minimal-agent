@@ -67,7 +67,7 @@ async def main():
         system_prompt=system_prompt,
     )
 
-    # Send a message and stream the agent's responses
+    # Send a message and consume the agent's responses
     session.context.add(Message(role=Role.USER, content="What files are in this project?"))
 
     async for msg in agent.run(session.context):
@@ -78,6 +78,22 @@ asyncio.run(main())
 ```
 
 The agent decides which tools to call, calls them, reads the results, and keeps going until it has an answer. You don't need to manage the loop yourself.
+
+### Streaming responses
+
+By default `agent.run()` yields one complete `Message` per step. Pass `stream=True` to also receive incremental `StreamChunk`s as tokens arrive — useful for live-printing the assistant's reply. Each assistant turn yields its chunks first, then the committed `Message` (the one added to the conversation); tool-result steps are always plain `Message`s. Switch on the type to tell a live delta from a committed message:
+
+```python
+from llm import Message, StreamChunk
+
+async for item in agent.run(session.context, stream=True):
+    if isinstance(item, StreamChunk):
+        print(item.text, end="", flush=True)  # live token
+    elif item.role == Role.ASSISTANT and item.content:
+        print()  # assistant turn committed — finish the line
+```
+
+Token usage rides the final chunk of each turn, so `on_usage` works the same in both modes.
 
 ### Resuming a session
 

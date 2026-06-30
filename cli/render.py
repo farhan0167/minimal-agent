@@ -1,8 +1,10 @@
 """Rich-based rendering for the terminal UI."""
 
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.rule import Rule
+from rich.text import Text
 
 from minimal_agent.llm.types import Message, Role, Usage
 
@@ -46,7 +48,7 @@ def print_tool_result(content: str | None) -> None:
 
 
 def print_message(msg: Message) -> None:
-    """Render a single message from agent.run()."""
+    """Render a single (non-streamed) message from agent.run()."""
     if msg.role == Role.ASSISTANT:
         if msg.tool_calls:
             for tc in msg.tool_calls:
@@ -55,6 +57,54 @@ def print_message(msg: Message) -> None:
             print_assistant(msg.content)
     elif msg.role == Role.TOOL:
         print_tool_result(msg.content if isinstance(msg.content, str) else None)
+
+
+class AssistantStream:
+    """Renders streamed assistant text live, then re-renders it as Markdown.
+
+    Tokens are shown raw (no Markdown parsing) inside a `rich.Live` region as
+    they arrive — no per-chunk re-parse, so no flicker. On `finish()` the Live
+    region is cleared and the full text is re-printed once as formatted
+    Markdown, so the final block "snaps" into rendered form.
+
+    Usage:
+        stream = AssistantStream()
+        stream.add(chunk_text)   # called per StreamChunk
+        stream.finish()          # called when the assistant Message commits
+    """
+
+    def __init__(self) -> None:
+        self._text = ""
+        # transient=True so stopping the Live clears the raw lines, leaving the
+        # terminal ready for the formatted re-print.
+        self._live = Live(console=console, transient=True, auto_refresh=False)
+        self._started = False
+
+    @property
+    def started(self) -> bool:
+        return self._started
+
+    def add(self, delta: str) -> None:
+        if not delta:
+            return
+        if not self._started:
+            self._live.start()
+            self._started = True
+        self._text += delta
+        self._live.update(Text(self._text), refresh=True)
+
+    def finish(self) -> None:
+        """Tear down the live region and re-print the text as Markdown.
+
+        Idempotent: the buffer is cleared after printing, so a second call
+        (e.g. a defensive finish after the loop) prints nothing.
+        """
+        if self._started:
+            self._live.stop()
+            self._started = False
+        if self._text:
+            print_assistant(self._text)
+            self._text = ""
 
 
 def print_usage(usage: Usage | None) -> None:
