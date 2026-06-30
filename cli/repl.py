@@ -8,7 +8,7 @@ from rich.live import Live
 from rich.spinner import Spinner
 
 from minimal_agent.agent import Agent, Session
-from minimal_agent.llm.types import Message, Role
+from minimal_agent.llm.types import Message, Role, StreamChunk
 
 import render
 
@@ -60,47 +60,65 @@ async def run_loop(agent: Agent, session: Session) -> None:
         session.context.add(Message(role=Role.USER, content=user_input))
 
         try:
-            live = Live(
+            spinner = Live(
                 Spinner("dots", text="[dim]Thinking…[/dim]"),
                 console=console,
                 transient=True,
             )
-            live.start()
-            first = True
+            spinner.start()
+            stream = render.AssistantStream()
 
-            def _make_permission_callback(spinner: Live):
+            def _make_permission_callback():
                 async def _ask(tool_name: str, description: str) -> bool:
-                    """Stop spinner, prompt user, restart spinner."""
-                    was_started = spinner.is_started
-                    if was_started:
+                    """Pause whichever live region is active, prompt, resume."""
+                    was_spinning = spinner.is_started
+                    if was_spinning:
                         spinner.stop()
                     allowed = render.prompt_permission(tool_name, description)
-                    if was_started:
+                    if was_spinning:
                         spinner.start()
                     return allowed
 
                 return _ask
 
-            _ask_permission = _make_permission_callback(live)
+            _ask_permission = _make_permission_callback()
 
-            async for msg in agent.run(
+            async for item in agent.run(
                 session.context,
+                stream=True,
                 on_usage=session.update_usage,
                 permission_callback=_ask_permission,
             ):
-                if first:
-                    live.stop()
-                    first = False
-                render.print_message(msg)
-                # Show spinner again while waiting for next LLM call
-                if msg.role == Role.TOOL:
-                    live.start()
+                if isinstance(item, StreamChunk):
+                    # First token of the turn: hand the terminal off from the
+                    # thinking spinner to the live text region.
+                    if item.text and spinner.is_started:
+                        spinner.stop()
+                    stream.add(item.text)
+                    continue
 
-            if live.is_started:
-                live.stop()
+                # item is a committed Message.
+                if item.role == Role.ASSISTANT:
+                    # Snap the streamed raw text into formatted Markdown, then
+                    # render any tool-call lines (only known at commit time).
+                    stream.finish()
+                    if item.tool_calls:
+                        for tc in item.tool_calls:
+                            render.print_tool_call(tc.name, tc.arguments)
+                elif item.role == Role.TOOL:
+                    render.print_message(item)
+                    # Wait on the next LLM call with the spinner up again.
+                    spinner.start()
+
+            if spinner.is_started:
+                spinner.stop()
+            stream.finish()
 
         except KeyboardInterrupt:
             render.print_info("\n[interrupted]")
+            if spinner.is_started:
+                spinner.stop()
+            stream.finish()
             continue
 
 
