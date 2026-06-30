@@ -514,26 +514,29 @@ class LLM:
             )
 
 
-async def accumulate_tool_calls(
-    chunks: AsyncIterator[StreamChunk],
-) -> Tuple[str, List[ToolCall]]:
-    """Consume a stream and reassemble text + completed tool calls.
+class StreamAccumulator:
+    """Folds streamed `StreamChunk`s back into text + completed tool calls.
 
     OpenAI streams tool call arguments as incremental JSON string fragments
     keyed by `index`; the first fragment for an index carries id and name,
-    subsequent fragments carry argument chunks that must be concatenated.
-    This helper does that bookkeeping so call sites that don't need live
-    deltas can treat streaming as "generate, but yielding text as it arrives."
+    subsequent fragments carry argument chunks that must be concatenated. This
+    object owns that bookkeeping so callers can either fully consume a stream
+    in one shot (`accumulate_tool_calls`) or feed chunks one at a time while
+    still emitting live deltas (the agent loop's streaming path).
     """
-    text_parts: List[str] = []
-    # index -> {id, name, arguments_str}
-    acc: Dict[int, Dict[str, Any]] = {}
-    async for chunk in chunks:
+
+    def __init__(self) -> None:
+        self._text_parts: List[str] = []
+        # index -> {id, name, arguments_str}
+        self._acc: Dict[int, Dict[str, Any]] = {}
+
+    def add(self, chunk: StreamChunk) -> None:
+        """Fold a single chunk into the running state."""
         if chunk.text:
-            text_parts.append(chunk.text)
+            self._text_parts.append(chunk.text)
         if chunk.tool_calls:
             for tcd in chunk.tool_calls:
-                slot = acc.setdefault(
+                slot = self._acc.setdefault(
                     tcd.index, {"id": None, "name": None, "arguments": ""}
                 )
                 if tcd.id:
@@ -543,14 +546,42 @@ async def accumulate_tool_calls(
                 if tcd.arguments:
                     slot["arguments"] += tcd.arguments
 
-    tool_calls: List[ToolCall] = []
-    for index in sorted(acc):
-        slot = acc[index]
-        if slot["id"] is None or slot["name"] is None:
-            continue
-        try:
-            args = json.loads(slot["arguments"] or "{}")
-        except json.JSONDecodeError:
-            args = {"__raw__": slot["arguments"]}
-        tool_calls.append(ToolCall(id=slot["id"], name=slot["name"], arguments=args))
-    return "".join(text_parts), tool_calls
+    @property
+    def text(self) -> str:
+        return "".join(self._text_parts)
+
+    def tool_calls(self) -> List[ToolCall]:
+        """Build the completed tool calls from accumulated fragments.
+
+        Slots missing an id or name never received their opening fragment and
+        are dropped. Malformed argument JSON is wrapped rather than raised,
+        since models occasionally emit bad JSON under pressure.
+        """
+        calls: List[ToolCall] = []
+        for index in sorted(self._acc):
+            slot = self._acc[index]
+            if slot["id"] is None or slot["name"] is None:
+                continue
+            try:
+                args = json.loads(slot["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {"__raw__": slot["arguments"]}
+            calls.append(
+                ToolCall(id=slot["id"], name=slot["name"], arguments=args)
+            )
+        return calls
+
+
+async def accumulate_tool_calls(
+    chunks: AsyncIterator[StreamChunk],
+) -> Tuple[str, List[ToolCall]]:
+    """Consume a stream and reassemble text + completed tool calls.
+
+    A convenience wrapper over `StreamAccumulator` for call sites that don't
+    need live deltas and can treat streaming as "generate, but yielding text
+    as it arrives."
+    """
+    acc = StreamAccumulator()
+    async for chunk in chunks:
+        acc.add(chunk)
+    return acc.text, acc.tool_calls()
