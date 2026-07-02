@@ -1,9 +1,11 @@
 from typing import AsyncIterator, List
 from unittest.mock import AsyncMock
 
+import pytest
 from pydantic import BaseModel
 
 from minimal_agent.agent import Agent, Context
+from minimal_agent.agent.session import Session, SessionConfigMismatchError
 from minimal_agent.llm.types import (
     GenerateResponse,
     Message,
@@ -272,3 +274,170 @@ async def test_stream_on_usage_called_from_final_chunk():
         pass
 
     assert collected == [u]
+
+
+# ---- session factories (create_session / load_session) ---------------------
+
+
+class _CountingSource:
+    """Context source whose output changes on every gather — lets tests
+    distinguish a fresh rebuild from a restored snapshot."""
+
+    def __init__(self):
+        self.calls = 0
+
+    @property
+    def name(self) -> str:
+        return "counter"
+
+    async def gather(self, workspace_root) -> str:
+        self.calls += 1
+        return f"gathered {self.calls}"
+
+
+def _make_factory_agent(workspace_root=None, model="test-model", **kwargs):
+    llm = _make_llm(return_value=GenerateResponse(text="hi", tool_calls=None))
+    llm.model = model
+    llm.backend = "openai"
+    return Agent(
+        llm=llm,
+        tools=[],
+        prompt="you are a test agent",
+        workspace_root=workspace_root,
+        **kwargs,
+    )
+
+
+async def test_create_session_bakes_prompt_and_settings(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    agent = _make_factory_agent(workspace_root=ws)
+
+    session = await agent.create_session(base_dir=tmp_path / "sessions")
+
+    msgs = session.context.get_messages()
+    assert msgs[0].role == Role.SYSTEM
+    assert "you are a test agent" in msgs[0].content
+    assert session.model == "test-model"
+    assert session.backend == "openai"
+    assert session.workspace_root == str(ws)
+
+
+async def test_create_session_explicit_root_overrides(tmp_path):
+    constructor_ws = tmp_path / "a"
+    other_ws = tmp_path / "b"
+    constructor_ws.mkdir()
+    other_ws.mkdir()
+    agent = _make_factory_agent(workspace_root=constructor_ws)
+
+    session = await agent.create_session(
+        other_ws, base_dir=tmp_path / "sessions"
+    )
+    assert session.workspace_root == str(other_ws)
+
+
+async def test_create_session_without_any_root_raises(tmp_path):
+    agent = _make_factory_agent(workspace_root=None)
+
+    with pytest.raises(ValueError, match="workspace_root"):
+        await agent.create_session(base_dir=tmp_path / "sessions")
+
+
+async def test_load_session_reattaches_system_prompt(tmp_path):
+    """Regression: resumed sessions must never run promptless."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    base = tmp_path / "sessions"
+    agent = _make_factory_agent(workspace_root=ws)
+    created = await agent.create_session(base_dir=base)
+
+    loaded = await agent.load_session(created.session_id, base_dir=base)
+
+    msgs = loaded.context.get_messages()
+    assert msgs[0].role == Role.SYSTEM
+    assert "you are a test agent" in msgs[0].content
+
+
+async def test_load_session_rebuilds_prompt_fresh(tmp_path):
+    """load_session rebuilds the prompt (rebuild, don't restore)."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    base = tmp_path / "sessions"
+    source = _CountingSource()
+    agent = _make_factory_agent(
+        workspace_root=ws, context_sources=[source]
+    )
+
+    created = await agent.create_session(base_dir=base)
+    assert "gathered 1" in created.context.get_messages()[0].content
+
+    loaded = await agent.load_session(created.session_id, base_dir=base)
+    assert "gathered 2" in loaded.context.get_messages()[0].content
+
+
+async def test_load_session_rejects_different_model(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    base = tmp_path / "sessions"
+    created = await _make_factory_agent(workspace_root=ws).create_session(
+        base_dir=base
+    )
+
+    other = _make_factory_agent(workspace_root=ws, model="other-model")
+    with pytest.raises(SessionConfigMismatchError, match="model"):
+        await other.load_session(created.session_id, base_dir=base)
+
+
+async def test_load_session_rejects_different_workspace(tmp_path):
+    ws = tmp_path / "ws"
+    other_ws = tmp_path / "other"
+    ws.mkdir()
+    other_ws.mkdir()
+    base = tmp_path / "sessions"
+    created = await _make_factory_agent(workspace_root=ws).create_session(
+        base_dir=base
+    )
+
+    other = _make_factory_agent(workspace_root=other_ws)
+    with pytest.raises(SessionConfigMismatchError, match="workspace"):
+        await other.load_session(created.session_id, base_dir=base)
+
+
+async def test_load_session_equal_roots_after_resolve_ok(tmp_path):
+    """Different spellings of the same directory are not a mismatch."""
+    ws = tmp_path / "ws"
+    (ws / "sub").mkdir(parents=True)
+    base = tmp_path / "sessions"
+    created = await _make_factory_agent(workspace_root=ws).create_session(
+        base_dir=base
+    )
+
+    same_ws_spelled_differently = ws / "sub" / ".."
+    agent = _make_factory_agent(workspace_root=same_ws_spelled_differently)
+    loaded = await agent.load_session(created.session_id, base_dir=base)
+    assert loaded.session_id == created.session_id
+
+
+async def test_load_session_legacy_meta_falls_back_to_agent_root(tmp_path):
+    """Sessions persisted before workspace_root use the agent's root."""
+    base = tmp_path / "sessions"
+    legacy = Session.create(
+        model="test-model", backend="openai", base_dir=base
+    )  # no workspace_root persisted
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    agent = _make_factory_agent(workspace_root=ws)
+    loaded = await agent.load_session(legacy.session_id, base_dir=base)
+    assert loaded.context.get_messages()[0].role == Role.SYSTEM
+
+
+async def test_load_session_no_root_anywhere_raises(tmp_path):
+    base = tmp_path / "sessions"
+    legacy = Session.create(
+        model="test-model", backend="openai", base_dir=base
+    )
+
+    agent = _make_factory_agent(workspace_root=None)
+    with pytest.raises(ValueError, match="workspace_root"):
+        await agent.load_session(legacy.session_id, base_dir=base)

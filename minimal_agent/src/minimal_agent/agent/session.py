@@ -104,6 +104,10 @@ class Session:
     def usage(self) -> Usage | None:
         return self._meta.usage
 
+    @property
+    def workspace_root(self) -> str | None:
+        return self._meta.workspace_root
+
     def update_usage(self, usage: Usage) -> None:
         """Accumulate usage from an API call and persist metadata."""
         if self._meta.usage is None:
@@ -157,6 +161,24 @@ class Session:
         return session
 
     @classmethod
+    def read_meta(
+        cls,
+        session_id: str,
+        *,
+        base_dir: Path = _DEFAULT_BASE_DIR,
+    ) -> SessionMeta:
+        """Read a session's metadata without loading its messages.
+
+        The cheap peek for hosts that need e.g. the workspace root or
+        model before deciding how to resume a session. Reads only
+        session.json, never the JSONL. Raises FileNotFoundError if the
+        session doesn't exist.
+        """
+        meta_path = base_dir / session_id / "session.json"
+        with open(meta_path) as f:
+            return SessionMeta.from_dict(json.load(f))
+
+    @classmethod
     def load(
         cls,
         session_id: str,
@@ -173,12 +195,7 @@ class Session:
         if they differ.
         """
         session_dir = base_dir / session_id
-        meta_path = session_dir / "session.json"
-
-        with open(meta_path) as f:
-            data = json.load(f)
-
-        meta = SessionMeta.from_dict(data)
+        meta = cls.read_meta(session_id, base_dir=base_dir)
 
         mismatches = []
         if meta.model and meta.model != model:

@@ -178,6 +178,41 @@ def test_list_sessions_sorted_by_updated_at(tmp_path):
     assert sessions[1].session_id == s1.session_id
 
 
+def test_read_meta_returns_metadata(tmp_path):
+    session = _create(tmp_path, workspace_root="/some/workspace")
+    sid = session.session_id
+
+    meta = Session.read_meta(sid, base_dir=tmp_path)
+
+    assert meta.session_id == sid
+    assert meta.model == _MODEL
+    assert meta.backend == _BACKEND
+    assert meta.workspace_root == "/some/workspace"
+
+
+def test_read_meta_does_not_touch_messages(tmp_path):
+    """read_meta reads only session.json — a corrupt JSONL is irrelevant."""
+    session = _create(tmp_path)
+    sid = session.session_id
+    (tmp_path / sid / "messages.jsonl").write_text("not json at all\n")
+
+    meta = Session.read_meta(sid, base_dir=tmp_path)
+    assert meta.session_id == sid
+
+
+def test_read_meta_missing_session_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        Session.read_meta("no-such-session", base_dir=tmp_path)
+
+
+def test_workspace_root_property(tmp_path):
+    session = _create(tmp_path, workspace_root="/some/workspace")
+    assert session.workspace_root == "/some/workspace"
+
+    bare = _create(tmp_path)
+    assert bare.workspace_root is None
+
+
 def test_list_sessions_empty_dir(tmp_path):
     sessions = Session.list_sessions(base_dir=tmp_path)
     assert sessions == []

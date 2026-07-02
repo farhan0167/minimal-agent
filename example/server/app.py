@@ -92,38 +92,46 @@ async def create_session(
     backend = backend or settings.LLM_BACKEND
 
     agent = build_agent(agent_type, workspace, model=model, backend=backend)
-    system_prompt = await agent.build_system_prompt(workspace_root=workspace)
-
-    session = Session.create(
-        model=model,
-        backend=backend,
-        system_prompt=system_prompt,
-        base_dir=get_sessions_dir(),
-        workspace_root=str(workspace),
-    )
+    session = await agent.create_session(base_dir=get_sessions_dir())
 
     save_agent_type(session.session_id, agent_type)
 
     return session
 
 
-def load_session(session_id: str) -> Session:
-    """Load an existing session from disk."""
-    sessions_dir = get_sessions_dir()
-    meta_path = sessions_dir / session_id / "session.json"
+async def resume_session(session_id: str) -> tuple[Agent, Session]:
+    """Rebuild a session's agent and resume it with identity re-attached.
 
-    if not meta_path.exists():
-        raise FileNotFoundError(f"Session not found: {session_id}")
+    The agent is constructed to match the session's persisted
+    model/backend/workspace; agent.load_session() then rebuilds the
+    system prompt fresh and validates that everything agrees. This is
+    the path for running the agent against an existing session.
+    """
+    meta = Session.read_meta(session_id, base_dir=get_sessions_dir())
+    if meta.workspace_root is None:
+        raise ValueError(f"Session {session_id} has no workspace_root")
+    workspace = validate_workspace(meta.workspace_root)
 
-    import json
+    agent_type = load_agent_type(session_id)
+    agent = build_agent(
+        agent_type, workspace, model=meta.model, backend=meta.backend
+    )
+    session = await agent.load_session(session_id, base_dir=get_sessions_dir())
+    return agent, session
 
-    with open(meta_path) as f:
-        data = json.load(f)
 
+def open_session_readonly(session_id: str) -> Session:
+    """Load a session for inspection only (metadata + stored messages).
+
+    Deliberately promptless: read-only consumers serialize the stored
+    conversation and never run the agent, so get_messages() should not
+    contain a system message. To run the agent, use resume_session().
+    """
+    meta = Session.read_meta(session_id, base_dir=get_sessions_dir())
     return Session.load(
-        session_id=session_id,
-        model=data["model"],
-        backend=data["backend"],
+        session_id,
+        model=meta.model,
+        backend=meta.backend,
         system_prompt=None,
-        base_dir=sessions_dir,
+        base_dir=get_sessions_dir(),
     )
