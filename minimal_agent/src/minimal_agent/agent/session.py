@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from ..context_sources import ContextSource
 from ..llm.types import Usage
 from .context import Context
 from .message_store import MessageStore
@@ -138,8 +139,14 @@ class Session:
         system_prompt: str | None = None,
         base_dir: Path = _DEFAULT_BASE_DIR,
         workspace_root: str | None = None,
+        live_sources: list[ContextSource] | None = None,
     ) -> "Session":
-        """Start a new session. Creates the directory and files on disk."""
+        """Start a new session. Creates the directory and files on disk.
+
+        live_sources (RUN/CALL-placed context sources) are forwarded to
+        the Context together with the workspace root; they are runtime
+        wiring, not persisted state.
+        """
         now = datetime.now(tz=timezone.utc)
         meta = SessionMeta(
             session_id=now.strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:4],
@@ -154,7 +161,12 @@ class Session:
         session_dir.mkdir(parents=True, exist_ok=True)
 
         store = MessageStore(path=session_dir / "messages.jsonl")
-        context = Context(system_prompt=system_prompt, store=store)
+        context = Context(
+            system_prompt=system_prompt,
+            store=store,
+            live_sources=live_sources,
+            workspace_root=Path(workspace_root) if workspace_root else None,
+        )
 
         session = cls(meta=meta, context=context, base_dir=base_dir)
         session._save_metadata()
@@ -187,12 +199,18 @@ class Session:
         backend: str,
         system_prompt: str | None = None,
         base_dir: Path = _DEFAULT_BASE_DIR,
+        live_sources: list[ContextSource] | None = None,
     ) -> "Session":
         """Resume an existing session from disk.
 
         Validates that the current model and backend match what the
         session was created with. Raises SessionConfigMismatchError
         if they differ.
+
+        live_sources are re-attached to the Context with the persisted
+        workspace_root — live content is regenerated, never restored, so
+        sessions predating workspace_root persistence degrade to no live
+        gathering.
         """
         session_dir = base_dir / session_id
         meta = cls.read_meta(session_id, base_dir=base_dir)
@@ -216,7 +234,14 @@ class Session:
 
         messages_path = session_dir / "messages.jsonl"
         store = MessageStore.from_file(messages_path)
-        context = Context(system_prompt=system_prompt, store=store)
+        context = Context(
+            system_prompt=system_prompt,
+            store=store,
+            live_sources=live_sources,
+            workspace_root=(
+                Path(meta.workspace_root) if meta.workspace_root else None
+            ),
+        )
 
         return cls(meta=meta, context=context, base_dir=base_dir)
 

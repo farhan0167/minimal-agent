@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from minimal_agent.context_sources import Placement
 from minimal_agent.system_prompt.builder import (
     build_context_blocks,
     build_system_prompt,
@@ -80,6 +81,32 @@ class TestBuildContextBlocks:
         assert result is not None
         assert "you can use the following context" in result
 
+    async def test_default_preamble_has_snapshot_caveat(self, tmp_path: Path):
+        sources = [_FakeSource("x", "content")]
+        result = await build_context_blocks(sources, tmp_path)
+        assert result is not None
+        assert "snapshot taken at session start" in result
+
+    async def test_preamble_none_emits_bare_blocks(self, tmp_path: Path):
+        sources = [_FakeSource("x", "content")]
+        result = await build_context_blocks(sources, tmp_path, preamble=None)
+        assert result == '<context name="x">\ncontent\n</context>'
+
+    async def test_custom_preamble(self, tmp_path: Path):
+        sources = [_FakeSource("x", "content")]
+        result = await build_context_blocks(sources, tmp_path, preamble="Heads up:")
+        assert result is not None
+        assert result.startswith("Heads up:")
+
+    async def test_custom_tag_wraps_block(self, tmp_path: Path):
+        class _TaggedSource(_FakeSource):
+            tag = "system-reminder"
+
+        result = await build_context_blocks(
+            [_TaggedSource("x", "content")], tmp_path, preamble=None
+        )
+        assert result == ('<system-reminder name="x">\ncontent\n</system-reminder>')
+
 
 class TestBuildSystemPrompt:
     async def test_behavior_plus_env(self, tmp_path: Path):
@@ -119,3 +146,25 @@ class TestBuildSystemPrompt:
             workspace_root=tmp_path,
         )
         assert "tool" in result.lower()
+
+    async def test_excludes_run_and_call_sources(self, tmp_path: Path):
+        class _RunSource(_FakeSource):
+            placement = Placement.RUN
+
+        class _CallSource(_FakeSource):
+            placement = Placement.CALL
+
+        result = await build_system_prompt(
+            behavior_prompt="Test.",
+            workspace_root=tmp_path,
+            context_sources=[
+                _FakeSource("baked", "session data"),
+                _RunSource("volatile", "run data"),
+                _CallSource("percall", "call data"),
+            ],
+        )
+        assert '<context name="baked">' in result
+        assert '<context name="volatile">' not in result
+        assert '<context name="percall">' not in result
+        assert "run data" not in result
+        assert "call data" not in result

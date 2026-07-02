@@ -9,11 +9,26 @@ Parts:
 import asyncio
 from pathlib import Path
 
-from .context_sources import ContextSource
+from ..context_sources import (
+    ContextSource,
+    Placement,
+    source_placement,
+    source_tag,
+)
 from .env import build_env_block
 
 _DEFAULTS_DIR = Path(__file__).parent / "defaults"
 _DEFAULT_BEHAVIOR_PATH = _DEFAULTS_DIR / "behavior.md"
+
+# Prompt-baked context blocks are gathered once, at session creation — the
+# preamble says so, so the model re-checks state instead of trusting a
+# stale snapshot.
+SNAPSHOT_PREAMBLE = (
+    "As you answer the user's questions, "
+    "you can use the following context.\n"
+    "Note: these blocks are a snapshot taken at session start and do not\n"
+    "update — use your tools to check current state when it matters:"
+)
 
 
 def load_prompt(prompt: str | Path | None) -> str:
@@ -33,11 +48,17 @@ def load_prompt(prompt: str | Path | None) -> str:
 async def build_context_blocks(
     sources: list[ContextSource],
     workspace_root: Path,
+    *,
+    preamble: str | None = SNAPSHOT_PREAMBLE,
 ) -> str | None:
     """Gather and format context blocks.
 
     Calls each source's gather() concurrently. Sources that return None
     are skipped. Returns None if no sources produce content.
+
+    preamble defaults to the snapshot caveat (right for prompt-baked
+    blocks); pass None for bare blocks — Context.assemble() frames its
+    injected blocks itself.
     """
     if not sources:
         return None
@@ -49,16 +70,16 @@ async def build_context_blocks(
     blocks: list[str] = []
     for src, content in zip(sources, results, strict=True):
         if content is not None:
-            blocks.append(f'<context name="{src.name}">\n{content}\n</context>')
+            tag = source_tag(src)
+            blocks.append(f'<{tag} name="{src.name}">\n{content}\n</{tag}>')
 
     if not blocks:
         return None
 
-    preamble = (
-        "As you answer the user's questions, "
-        "you can use the following context:"
-    )
-    return preamble + "\n\n" + "\n\n".join(blocks)
+    joined = "\n\n".join(blocks)
+    if preamble is None:
+        return joined
+    return preamble + "\n\n" + joined
 
 
 async def build_system_prompt(
@@ -70,14 +91,24 @@ async def build_system_prompt(
 
     Returns a single string. All parts are concatenated with
     double-newline separators.
+
+    Only SESSION-placed sources are gathered — RUN/CALL sources belong to
+    the message channel (Context.assemble()), never the prompt. The Agent
+    already partitions by placement; the filter here keeps direct callers
+    correct too.
     """
     parts: list[str] = [behavior_prompt]
 
     parts.append(build_env_block(workspace_root))
 
     if context_sources:
+        session_sources = [
+            s
+            for s in context_sources
+            if source_placement(s) is Placement.SESSION
+        ]
         context_block = await build_context_blocks(
-            context_sources, workspace_root
+            session_sources, workspace_root
         )
         if context_block:
             parts.append(context_block)

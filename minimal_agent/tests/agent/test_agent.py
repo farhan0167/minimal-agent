@@ -6,6 +6,11 @@ from pydantic import BaseModel
 
 from minimal_agent.agent import Agent, Context
 from minimal_agent.agent.session import Session, SessionConfigMismatchError
+from minimal_agent.context_sources import (
+    DirectoryTreeSource,
+    GitStatusSource,
+    Placement,
+)
 from minimal_agent.llm.types import (
     GenerateResponse,
     Message,
@@ -441,3 +446,261 @@ async def test_load_session_no_root_anywhere_raises(tmp_path):
     agent = _make_factory_agent(workspace_root=None)
     with pytest.raises(ValueError, match="workspace_root"):
         await agent.load_session(legacy.session_id, base_dir=base)
+
+
+# ---- live sources through the loop (Placement.RUN / Placement.CALL) --------
+
+
+class _CountingLiveSource:
+    """Live source whose content carries the gather count."""
+
+    def __init__(self, name: str, placement: Placement):
+        self.name = name
+        self.placement = placement
+        self.calls = 0
+
+    async def gather(self, workspace_root) -> str:
+        self.calls += 1
+        return f"live gather {self.calls}"
+
+
+def _sent_messages(llm) -> list[list[Message]]:
+    """The messages= list of every llm.generate() call, in order."""
+    return [c.kwargs["messages"] for c in llm.generate.call_args_list]
+
+
+def _user_texts(msgs: list[Message]) -> list[str]:
+    return [m.content for m in msgs if m.role is Role.USER]
+
+
+async def _session_with_source(tmp_path, source, llm_responses):
+    ws = tmp_path / "ws"
+    ws.mkdir(exist_ok=True)
+    llm = _make_llm(side_effect=llm_responses)
+    llm.model = "test-model"
+    llm.backend = "openai"
+    agent = Agent(
+        llm=llm,
+        tools=[_make_tool("test_tool")],
+        prompt="you are a test agent",
+        context_sources=[source],
+        workspace_root=ws,
+    )
+    session = await agent.create_session(base_dir=tmp_path / "sessions")
+    return agent, session, llm
+
+
+async def test_run_source_merged_into_user_message_and_stable(tmp_path):
+    source = _CountingLiveSource("probe", Placement.RUN)
+    agent, session, llm = await _session_with_source(
+        tmp_path,
+        source,
+        [
+            GenerateResponse(
+                text="checking",
+                tool_calls=[
+                    ToolCall(id="tc_1", name="test_tool", arguments={})
+                ],
+            ),
+            GenerateResponse(text="done", tool_calls=None),
+        ],
+    )
+    session.context.add(Message(role=Role.USER, content="what changed?"))
+
+    async for _ in agent.run(session.context):
+        pass
+
+    sent = _sent_messages(llm)
+    assert len(sent) == 2
+    first_user = _user_texts(sent[0])[-1]
+    assert first_user.startswith("what changed?")
+    assert '<context name="probe">' in first_user
+    assert "live gather 1" in first_user
+    # Gathered once for the run, byte-identical on the second call.
+    assert source.calls == 1
+    assert _user_texts(sent[1])[-1] == first_user
+    # The system prompt never carries a RUN source.
+    assert "probe" not in sent[0][0].content
+    # The store keeps the clean user message.
+    assert session.context.store.messages[0].content == "what changed?"
+
+
+async def test_second_run_regathers_run_source(tmp_path):
+    source = _CountingLiveSource("probe", Placement.RUN)
+    agent, session, llm = await _session_with_source(
+        tmp_path,
+        source,
+        [
+            GenerateResponse(text="hi", tool_calls=None),
+            GenerateResponse(text="hi again", tool_calls=None),
+        ],
+    )
+
+    session.context.add(Message(role=Role.USER, content="run one"))
+    async for _ in agent.run(session.context):
+        pass
+    session.context.add(Message(role=Role.USER, content="run two"))
+    async for _ in agent.run(session.context):
+        pass
+
+    assert source.calls == 2
+    second_user = _user_texts(_sent_messages(llm)[1])[-1]
+    assert second_user.startswith("run two")
+    assert "live gather 2" in second_user
+
+
+async def test_call_source_gathered_every_llm_call(tmp_path):
+    source = _CountingLiveSource("watcher", Placement.CALL)
+    agent, session, llm = await _session_with_source(
+        tmp_path,
+        source,
+        [
+            GenerateResponse(
+                text="checking",
+                tool_calls=[
+                    ToolCall(id="tc_1", name="test_tool", arguments={})
+                ],
+            ),
+            GenerateResponse(text="done", tool_calls=None),
+        ],
+    )
+    session.context.add(Message(role=Role.USER, content="go"))
+
+    async for _ in agent.run(session.context):
+        pass
+
+    assert source.calls == 2
+    sent = _sent_messages(llm)
+    # Call 1: merged into the trailing user message.
+    assert "live gather 1" in _user_texts(sent[0])[-1]
+    # Call 2: standalone carrier after the tool result.
+    assert sent[1][-1].role is Role.USER
+    assert "live gather 2" in sent[1][-1].content
+    assert sent[1][-2].role is Role.TOOL
+
+
+async def test_streaming_run_assembles_like_nonstreaming(tmp_path):
+    source = _CountingLiveSource("probe", Placement.RUN)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    captured: list[list[Message]] = []
+
+    async def _gen():
+        yield StreamChunk(text="hi")
+
+    def _stream(**kwargs):
+        captured.append(kwargs["messages"])
+        return _gen()
+
+    llm = AsyncMock()
+    llm.stream = _stream
+    llm.model = "test-model"
+    llm.backend = "openai"
+    agent = Agent(
+        llm=llm,
+        tools=[],
+        prompt="you are a test agent",
+        context_sources=[source],
+        workspace_root=ws,
+    )
+    session = await agent.create_session(base_dir=tmp_path / "sessions")
+    session.context.add(Message(role=Role.USER, content="hello"))
+
+    async for _ in agent.run(session.context, stream=True):
+        pass
+
+    assert len(captured) == 1
+    user = _user_texts(captured[0])[-1]
+    assert user.startswith("hello")
+    assert "live gather 1" in user
+
+
+async def test_factories_partition_session_and_live_sources(tmp_path):
+    run_src = _CountingLiveSource("liveProbe", Placement.RUN)
+    session_src = _CountingSource()  # bare → SESSION
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    base = tmp_path / "sessions"
+    agent = _make_factory_agent(
+        workspace_root=ws, context_sources=[session_src, run_src]
+    )
+
+    created = await agent.create_session(base_dir=base)
+    prompt = created.context.get_messages()[0].content
+    assert "gathered 1" in prompt  # SESSION source baked in
+    assert "liveProbe" not in prompt  # RUN source stays out
+
+    created.context.add(Message(role=Role.USER, content="hi"))
+    msgs = await created.context.assemble()
+    assert '<context name="liveProbe">' in msgs[-1].content
+
+    # load_session re-attaches the live sources too.
+    loaded = await agent.load_session(created.session_id, base_dir=base)
+    loaded.context.add(Message(role=Role.USER, content="again"))
+    msgs = await loaded.context.assemble()
+    assert '<context name="liveProbe">' in msgs[-1].content
+
+
+def test_default_prompt_puts_git_status_on_message_channel():
+    agent = _make_factory_agent()  # custom prompt → no default sources
+    assert agent._live_sources == []
+
+    llm = _make_llm(return_value=GenerateResponse(text="hi", tool_calls=None))
+    llm.model = "test-model"
+    llm.backend = "openai"
+    default_agent = Agent(llm=llm, tools=[])  # default prompt
+    assert any(
+        isinstance(s, GitStatusSource) for s in default_agent._live_sources
+    )
+    assert all(
+        not isinstance(s, GitStatusSource)
+        for s in default_agent._prompt_sources
+    )
+    assert any(
+        isinstance(s, DirectoryTreeSource)
+        for s in default_agent._prompt_sources
+    )
+
+
+async def test_default_agent_injects_git_status_into_user_message(tmp_path):
+    """End to end in a real git repo: git status rides the merged user
+    message, not the system prompt."""
+    import asyncio
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    async def _git(*args):
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            *args,
+            cwd=str(ws),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+
+    await _git("init")
+    await _git("config", "user.email", "t@t.com")
+    await _git("config", "user.name", "T")
+    (ws / "f.txt").write_text("x")
+    await _git("add", ".")
+    await _git("commit", "-m", "init")
+
+    llm = _make_llm(return_value=GenerateResponse(text="hi", tool_calls=None))
+    llm.model = "test-model"
+    llm.backend = "openai"
+    agent = Agent(llm=llm, tools=[], workspace_root=ws)
+    session = await agent.create_session(base_dir=tmp_path / "sessions")
+
+    system_prompt = session.context.get_messages()[0].content
+    assert '<context name="gitStatus">' not in system_prompt
+
+    session.context.add(Message(role=Role.USER, content="status?"))
+    async for _ in agent.run(session.context):
+        pass
+
+    sent_user = _user_texts(_sent_messages(llm)[0])[-1]
+    assert '<context name="gitStatus">' in sent_user
+    assert "Branch:" in sent_user

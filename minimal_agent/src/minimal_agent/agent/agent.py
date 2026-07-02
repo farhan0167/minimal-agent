@@ -9,17 +9,18 @@ from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from typing import Optional, Union
 
-from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
-from ..llm.types import LLMTool, Usage
-from ..skills import discover_skills
-from ..system_prompt import (
+from ..context_sources import (
     ContextSource,
     DirectoryTreeSource,
     GitStatusSource,
+    Placement,
     SkillsContextSource,
-    build_system_prompt,
-    load_prompt,
+    source_placement,
 )
+from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
+from ..llm.types import LLMTool, Usage
+from ..skills import discover_skills
+from ..system_prompt import build_system_prompt, load_prompt
 from ..tools import ToolContext, dispatch
 from ..tools.base import BaseTool
 from ..tools.builtin.skill import SkillTool
@@ -80,18 +81,26 @@ class Agent:
                 self._llm_tools.append(skill_tool.as_llm_tool())
                 resolved_sources.append(SkillsContextSource(skills))
 
-        self._context_sources = resolved_sources
+        # Partition by placement: SESSION sources feed the system prompt;
+        # live (RUN/CALL) sources feed the message channel via the Context
+        # of every session this agent creates.
+        self._prompt_sources = [
+            s for s in resolved_sources if source_placement(s) is Placement.SESSION
+        ]
+        self._live_sources = [
+            s for s in resolved_sources if source_placement(s) is not Placement.SESSION
+        ]
 
     async def build_system_prompt(self, workspace_root: Path) -> str:
         """Build the full system prompt for a new session.
 
         Combines the behavior prompt, environment block, and context
-        blocks from this agent's configured sources.
+        blocks from this agent's SESSION-placed sources.
         """
         return await build_system_prompt(
             behavior_prompt=self._behavior_prompt,
             workspace_root=workspace_root,
-            context_sources=self._context_sources,
+            context_sources=self._prompt_sources,
         )
 
     async def create_session(
@@ -120,6 +129,7 @@ class Agent:
             system_prompt=system_prompt,
             workspace_root=str(root),
             base_dir=base_dir,
+            live_sources=self._live_sources,
         )
 
     async def load_session(
@@ -144,6 +154,7 @@ class Agent:
             backend=self._llm.backend,
             system_prompt=system_prompt,
             base_dir=base_dir,
+            live_sources=self._live_sources,
         )
 
     def _resolve_load_root(self, meta: SessionMeta) -> Path:
@@ -185,7 +196,10 @@ class Agent:
         """Run the agent loop, yielding each message as it's produced.
 
         The loop:
-        1. Call LLM with context.get_messages() + tool schemas.
+        1. Call LLM with context.assemble() + tool schemas. assemble()
+           gathers RUN sources on the run's first call (begin_run() marks
+           the boundary), CALL sources every call, and injects the blocks
+           per the merge rule — the loop sends its output verbatim.
         2. Yield the assistant message.
         3. If tool calls present, dispatch each one, yield results.
         4. Repeat until no tool calls or max_turns exhausted.
@@ -202,13 +216,16 @@ class Agent:
             on_usage: Called with the Usage from each LLM API call.
             permission_callback: Called when a tool requires user confirmation.
         """
+        context.begin_run()
+
         for _turn in range(self._max_turns):
             ctx = ToolContext(permission_callback=permission_callback)
+            messages = await context.assemble()
 
             if stream:
                 acc = StreamAccumulator()
                 async for chunk in self._llm.stream(
-                    messages=context.get_messages(),
+                    messages=messages,
                     tools=self._llm_tools,
                     tool_choice="auto",
                 ):
@@ -222,7 +239,7 @@ class Agent:
                 tool_calls = acc.tool_calls()
             else:
                 resp = await self._llm.generate(
-                    messages=context.get_messages(),
+                    messages=messages,
                     tools=self._llm_tools,
                     tool_choice="auto",
                 )

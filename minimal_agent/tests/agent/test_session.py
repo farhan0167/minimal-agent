@@ -213,6 +213,59 @@ def test_workspace_root_property(tmp_path):
     assert bare.workspace_root is None
 
 
+class _RunSource:
+    """Minimal RUN-placed live source for passthrough tests."""
+
+    name = "liveProbe"
+    placement = "run"
+
+    async def gather(self, workspace_root) -> str:
+        return f"root={workspace_root}"
+
+
+async def test_create_forwards_live_sources_to_context(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    session = _create(
+        tmp_path,
+        workspace_root=str(ws),
+        live_sources=[_RunSource()],
+    )
+    session.context.add(Message(role=Role.USER, content="hi"))
+
+    msgs = await session.context.assemble()
+
+    assert '<context name="liveProbe">' in msgs[-1].content
+    assert f"root={ws}" in msgs[-1].content
+
+
+async def test_load_reattaches_live_sources_with_persisted_root(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    session = _create(tmp_path, workspace_root=str(ws))
+    session.context.add(Message(role=Role.USER, content="hi"))
+    sid = session.session_id
+
+    loaded = _load(sid, tmp_path, live_sources=[_RunSource()])
+    msgs = await loaded.context.assemble()
+
+    # load() appends an interrupted-response marker after the unanswered
+    # user message, so the anchor is the last *user* message, not the tail.
+    merged = next(m for m in reversed(msgs) if m.role is Role.USER)
+    assert f"root={ws}" in merged.content
+
+
+async def test_load_without_persisted_root_degrades_silently(tmp_path):
+    session = _create(tmp_path)  # legacy: no workspace_root
+    session.context.add(Message(role=Role.USER, content="hi"))
+    sid = session.session_id
+
+    loaded = _load(sid, tmp_path, live_sources=[_RunSource()])
+    msgs = await loaded.context.assemble()
+
+    assert msgs == loaded.context.get_messages()
+
+
 def test_list_sessions_empty_dir(tmp_path):
     sessions = Session.list_sessions(base_dir=tmp_path)
     assert sessions == []

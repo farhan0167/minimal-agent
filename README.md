@@ -60,8 +60,8 @@ minimal-agent = { path = "../minimal_agent" }
 import asyncio
 from pathlib import Path
 
-from minimal_agent import Agent, Session, Settings
-from minimal_agent.llm import LLM
+from minimal_agent import Agent, Settings
+from minimal_agent.llm import LLM, Message, Role
 from minimal_agent.tools.builtin.read_file import ReadFile
 from minimal_agent.tools.builtin.run_shell import RunShell
 
@@ -76,22 +76,19 @@ llm = LLM(
 agent = Agent(
     llm=llm,
     tools=[
-        ReadFile(workspace_root=workspace),
+        ReadFile(workspace_root=workspace, read_timestamps={}),
         RunShell(workspace_root=workspace),
     ],
+    workspace_root=workspace,
 )
 
 
 async def main():
-    system_prompt = await agent.build_system_prompt(workspace_root=workspace)
-    session = Session.create(
-        model=settings.LLM_MODEL,
-        backend=settings.LLM_BACKEND,
-        system_prompt=system_prompt,
-    )
+    # The agent builds the system prompt and stamps its identity
+    # (model, backend, workspace) onto the session.
+    session = await agent.create_session()
 
     # Add a user message
-    from minimal_agent.llm import Message, Role
     session.context.add(Message(role=Role.USER, content="List the files in this directory"))
 
     # Run the agent loop
@@ -103,6 +100,8 @@ asyncio.run(main())
 ```
 
 That's a working agent. It reads the user message, calls the LLM, uses tools if needed, and prints the response.
+
+Sessions are persisted to disk. To resume one later, use `session = await agent.load_session(session_id)` — the agent rebuilds the system prompt fresh and validates that the session's model, backend, and workspace match its own.
 
 ### 3. Add your own tools
 
@@ -179,11 +178,9 @@ agent = Agent(
 
 ### 5. Context sources
 
-Context sources inject dynamic information into the system prompt (git status, directory trees, or anything you define). Implement the `ContextSource` protocol:
+Context sources gather dynamic information about the environment (git status, directory trees, or anything you define) and inject it into what the model sees. Implement the `ContextSource` protocol — any object with a `name` and an async `gather()`:
 
 ```python
-from minimal_agent.system_prompt import ContextSource
-
 class DatabaseSchemaSource:
     name = "db_schema"
 
@@ -196,8 +193,19 @@ agent = Agent(
     tools=[...],
     prompt="You are a database assistant.",
     context_sources=[DatabaseSchemaSource()],
+    workspace_root=workspace,
 )
 ```
+
+An optional class-level `placement` (from `minimal_agent.context_sources`) declares when a source is gathered and where its output lands:
+
+| `placement` | Gathered | Lands |
+|---|---|---|
+| `Placement.SESSION` (default) | Once, at session creation | System prompt, labeled as a snapshot |
+| `Placement.RUN` | Once per `agent.run()` | Merged into that run's user message |
+| `Placement.CALL` | Before every LLM call | Trailing message, refreshed each call |
+
+Use `SESSION` for stable facts, and `RUN` for volatile state that changes between user turns — the built-in `GitStatusSource` is RUN-placed, so the model sees the working tree as of the current turn, not session start. Reserve `CALL` for state that must track the agent's own mid-run side effects; its content is re-sent (uncached) on every call. RUN/CALL content is never written to the transcript, and it reaches the conversation only for sessions created through `agent.create_session()` / `agent.load_session()`.
 
 ### Built-in tools
 
