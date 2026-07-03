@@ -1,6 +1,16 @@
-from minimal_agent.agent.context import Context
+from pathlib import Path
+
+import pytest
+
+from minimal_agent.agent.context import Context, _merge_into_user
 from minimal_agent.agent.message_store import MessageStore
 from minimal_agent.context_sources import Placement
+from minimal_agent.events import (
+    CallRequest,
+    EventEmitter,
+    SourceFailed,
+    hash_messages,
+)
 from minimal_agent.llm.types import Message, Role, TextPart
 
 
@@ -87,8 +97,6 @@ class _LiveSource:
 
 
 def _live_context(*sources, workspace_root="ws", store=None) -> Context:
-    from pathlib import Path
-
     return Context(
         system_prompt="sys",
         store=store,
@@ -315,3 +323,162 @@ async def test_get_messages_never_gathers_or_injects():
 
     assert src.calls == 1
     assert clean[-1].content == "hi"
+
+
+# ---- observability (call.request emission + audit round-trip) ---------------
+
+
+class _Recorder:
+    def __init__(self):
+        self.envelopes = []
+
+    def handle(self, env) -> None:
+        self.envelopes.append(env)
+
+
+def _recorded_context(
+    *sources, system_prompt="sys", workspace_root="ws"
+) -> tuple[Context, "_Recorder"]:
+    rec = _Recorder()
+    ctx = Context(
+        system_prompt=system_prompt,
+        live_sources=list(sources),
+        workspace_root=Path(workspace_root) if workspace_root else None,
+        events=EventEmitter(sinks=[rec]),
+    )
+    return ctx, rec
+
+
+def _call_requests(rec: "_Recorder") -> list[CallRequest]:
+    return [e.event for e in rec.envelopes if isinstance(e.event, CallRequest)]
+
+
+async def test_assemble_emits_one_call_request_per_call_even_without_sources():
+    """The no-live-sources fast path is still an audited call."""
+    ctx, rec = _recorded_context()  # zero live sources
+    ctx.add(Message(role=Role.USER, content="hi"))
+
+    await ctx.assemble()
+    await ctx.assemble()
+
+    reqs = _call_requests(rec)
+    assert len(reqs) == 2
+    assert reqs[0].projected == [(0, 1)]
+    assert reqs[0].store_len == 1
+    assert reqs[0].system_prompt == "sys"
+    assert reqs[0].injected_run is None and reqs[0].injected_call is None
+
+
+async def test_assemble_without_emitter_is_byte_identical():
+    recorded, _rec = _recorded_context(_LiveSource(placement=Placement.RUN))
+    bare = _live_context(_LiveSource(placement=Placement.RUN))
+    recorded.add(Message(role=Role.USER, content="hi"))
+    bare.add(Message(role=Role.USER, content="hi"))
+
+    assert await recorded.assemble() == await bare.assemble()
+
+
+async def test_injected_run_records_exact_appended_string_and_store_anchor():
+    src = _LiveSource(name="gitStatus", placement=Placement.RUN)
+    ctx, rec = _recorded_context(src)
+    ctx.add(Message(role=Role.ASSISTANT, content="earlier"))
+    ctx.add(Message(role=Role.USER, content="fix it"))
+
+    msgs = await ctx.assemble()
+
+    (req,) = _call_requests(rec)
+    block = req.injected_run
+    # anchor is a store index (the system message shifts assembled
+    # positions by one, and the store holds two messages here).
+    assert block.anchor == 1
+    # text is exactly the string _merge_into_user appended, framing included.
+    assert msgs[block.anchor + 1].content == f"fix it\n\n{block.text}"
+    assert "<system-reminder>" in block.text
+    assert req.injected_call is None
+
+
+async def test_standalone_call_carrier_records_anchor_none():
+    src = _LiveSource(name="watcher", placement=Placement.CALL)
+    ctx, rec = _recorded_context(src)
+    ctx.add(Message(role=Role.USER, content="go"))
+    ctx.add(Message(role=Role.ASSISTANT, content="working"))
+    ctx.add(Message(role=Role.TOOL, content="ok", tool_call_id="tc_1"))
+
+    msgs = await ctx.assemble()
+
+    (req,) = _call_requests(rec)
+    assert req.injected_call.anchor is None
+    # The carrier's full content, verbatim.
+    assert msgs[-1].content == req.injected_call.text
+
+
+async def test_failing_source_emits_source_failed_and_call_proceeds():
+    bad = _LiveSource(name="bad", placement=Placement.RUN, raises=True)
+    ctx, rec = _recorded_context(bad)
+    ctx.add(Message(role=Role.USER, content="hi"))
+
+    msgs = await ctx.assemble()
+
+    failures = [e.event for e in rec.envelopes if isinstance(e.event, SourceFailed)]
+    assert failures == [SourceFailed(source="bad", error="RuntimeError")]
+    assert len(_call_requests(rec)) == 1
+    assert msgs[-1].content == "hi"  # nothing injected, call proceeds
+
+
+def _reconstruct(stored: list[Message], req: CallRequest) -> list[Message]:
+    """The audit recipe from the spec, applied to an in-memory store."""
+    msgs: list[Message] = []
+    if req.system_prompt is not None:
+        msgs.append(Message(role=Role.SYSTEM, content=req.system_prompt))
+    for start, end in req.projected:
+        msgs.extend(stored[start:end])
+
+    offset = 1 if req.system_prompt is not None else 0
+    if req.injected_run:
+        i = req.injected_run.anchor + offset
+        msgs[i] = _merge_into_user(msgs[i], req.injected_run.text)
+    if req.injected_call:
+        if req.injected_call.anchor is not None:
+            i = req.injected_call.anchor + offset
+            msgs[i] = _merge_into_user(msgs[i], req.injected_call.text)
+        else:
+            msgs.append(Message(role=Role.USER, content=req.injected_call.text))
+    return msgs
+
+
+_USER = Message(role=Role.USER, content="go")
+_MULTIMODAL_USER = Message(role=Role.USER, content=[TextPart(text="look at this")])
+_TOOL_ROUND = [
+    Message(role=Role.ASSISTANT, content="working"),
+    Message(role=Role.TOOL, content="ok", tool_call_id="tc_1"),
+]
+
+
+@pytest.mark.parametrize(
+    ("placements", "stored"),
+    [
+        pytest.param([Placement.RUN], [_USER], id="run_only"),
+        pytest.param([Placement.CALL], [_USER], id="call_only_first_call"),
+        pytest.param([Placement.CALL], [_USER, *_TOOL_ROUND], id="call_only_carrier"),
+        pytest.param([Placement.RUN, Placement.CALL], [_USER], id="run_and_call"),
+        pytest.param([Placement.RUN], [_MULTIMODAL_USER], id="multimodal_anchor"),
+        pytest.param([], [_USER], id="no_injection"),
+    ],
+)
+async def test_round_trip_reconstruction_matches_hash(placements, stored):
+    """Reconstruct per the audit recipe and verify against the recorded
+    hash — for every injection shape."""
+    sources = [
+        _LiveSource(name=f"src{i}", placement=p) for i, p in enumerate(placements)
+    ]
+    ctx, rec = _recorded_context(*sources)
+    for msg in stored:
+        ctx.add(msg)
+    ctx.begin_run()
+
+    assembled = await ctx.assemble()
+
+    (req,) = _call_requests(rec)
+    rebuilt = _reconstruct(ctx.store.messages, req)
+    assert hash_messages(rebuilt) == req.assembled_sha256
+    assert rebuilt == assembled

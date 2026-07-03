@@ -12,11 +12,22 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..context_sources import ContextSource
+from ..events import EventEmitter, SessionCreated, SessionLoaded
 from ..llm.types import Usage
 from .context import Context
 from .message_store import MessageStore
+from .sinks import CallLogSink, TraceSink
 
 _DEFAULT_BASE_DIR = Path(".minimal_agent/sessions")
+
+
+def _make_emitter(session_dir: Path) -> EventEmitter:
+    """The default event seam for a session-backed context.
+
+    Recording is default-on exactly where persistence is: both built-in
+    sinks write session artifacts next to messages.jsonl.
+    """
+    return EventEmitter(sinks=[TraceSink(session_dir), CallLogSink(session_dir)])
 
 
 class SessionConfigMismatchError(Exception):
@@ -115,12 +126,10 @@ class Session:
             self._meta.usage = usage
         else:
             self._meta.usage = Usage(
-                prompt_tokens=self._meta.usage.prompt_tokens
-                + usage.prompt_tokens,
+                prompt_tokens=self._meta.usage.prompt_tokens + usage.prompt_tokens,
                 completion_tokens=self._meta.usage.completion_tokens
                 + usage.completion_tokens,
-                total_tokens=self._meta.usage.total_tokens
-                + usage.total_tokens,
+                total_tokens=self._meta.usage.total_tokens + usage.total_tokens,
             )
         self._meta.updated_at = datetime.now(tz=timezone.utc)
         self._save_metadata()
@@ -160,16 +169,19 @@ class Session:
         session_dir = base_dir / meta.session_id
         session_dir.mkdir(parents=True, exist_ok=True)
 
+        emitter = _make_emitter(session_dir)
         store = MessageStore(path=session_dir / "messages.jsonl")
         context = Context(
             system_prompt=system_prompt,
             store=store,
             live_sources=live_sources,
             workspace_root=Path(workspace_root) if workspace_root else None,
+            events=emitter,
         )
 
         session = cls(meta=meta, context=context, base_dir=base_dir)
         session._save_metadata()
+        emitter.emit(SessionCreated())
         return session
 
     @classmethod
@@ -217,15 +229,9 @@ class Session:
 
         mismatches = []
         if meta.model and meta.model != model:
-            mismatches.append(
-                f"model: session={meta.model!r}, "
-                f"current={model!r}"
-            )
+            mismatches.append(f"model: session={meta.model!r}, current={model!r}")
         if meta.backend and meta.backend != backend:
-            mismatches.append(
-                f"backend: session={meta.backend!r}, "
-                f"current={backend!r}"
-            )
+            mismatches.append(f"backend: session={meta.backend!r}, current={backend!r}")
         if mismatches:
             raise SessionConfigMismatchError(
                 "Cannot resume session with different LLM config: "
@@ -234,13 +240,19 @@ class Session:
 
         messages_path = session_dir / "messages.jsonl"
         store = MessageStore.from_file(messages_path)
+        emitter = _make_emitter(session_dir)
         context = Context(
             system_prompt=system_prompt,
             store=store,
             live_sources=live_sources,
-            workspace_root=(
-                Path(meta.workspace_root) if meta.workspace_root else None
-            ),
+            workspace_root=(Path(meta.workspace_root) if meta.workspace_root else None),
+            events=emitter,
+        )
+        emitter.emit(
+            SessionLoaded(
+                message_count=len(store),
+                healed=list(store.healing_actions),
+            )
         )
 
         return cls(meta=meta, context=context, base_dir=base_dir)

@@ -175,6 +175,12 @@ def test_from_file_orphaned_tool_call_at_tail_healed(tmp_path):
     lines = path.read_text().strip().splitlines()
     assert len(lines) == 4
 
+    # Each synthetic append is recorded as a healing action.
+    assert sorted(store.healing_actions) == [
+        "synthetic_tool_result:tc_2",
+        "synthetic_tool_result:tc_3",
+    ]
+
 
 def test_from_file_orphaned_tool_call_mid_conversation(tmp_path):
     """Orphaned tool calls mid-conversation (not at tail) are corruption."""
@@ -230,9 +236,7 @@ def test_from_file_all_tool_calls_orphaned_at_tail(tmp_path):
     store = MessageStore.from_file(path)
 
     assert len(store) == 3  # 1 assistant + 2 synthetic
-    synthetic_ids = {
-        m.tool_call_id for m in store.messages if m.role == Role.TOOL
-    }
+    synthetic_ids = {m.tool_call_id for m in store.messages if m.role == Role.TOOL}
     assert synthetic_ids == {"tc_1", "tc_2"}
 
 
@@ -287,9 +291,7 @@ def test_from_file_does_not_heal_when_assistant_is_last(tmp_path):
     path = tmp_path / "messages.jsonl"
     user = Message(role=Role.USER, content="hello")
     assistant = Message(role=Role.ASSISTANT, content="hi")
-    path.write_text(
-        user.model_dump_json() + "\n" + assistant.model_dump_json() + "\n"
-    )
+    path.write_text(user.model_dump_json() + "\n" + assistant.model_dump_json() + "\n")
 
     store = MessageStore.from_file(path)
     assert len(store) == 2

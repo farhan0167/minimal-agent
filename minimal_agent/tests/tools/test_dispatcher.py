@@ -7,8 +7,10 @@ happy path. Tools are built inline — no agent loop required.
 
 from typing import ClassVar
 
+import pytest
 from pydantic import BaseModel
 
+from minimal_agent.events import EventEmitter, ToolEnd, ToolStart, ToolStatus
 from minimal_agent.llm.types import Role, ToolCall
 from minimal_agent.tools import (
     BaseTool,
@@ -199,3 +201,107 @@ async def test_permission_callback_error_surfaces():
     msg = await dispatch(_call("guarded", {"text": "x"}), tools, ctx)
     assert "permission error" in msg.content
     assert "prompt crashed" in msg.content
+
+
+# -- Event emission (tool.start / tool.end) -----------------------------------
+
+
+class _Recorder:
+    def __init__(self):
+        self.envelopes = []
+
+    def handle(self, env) -> None:
+        self.envelopes.append(env)
+
+
+def _recorded_ctx(**kwargs) -> tuple[ToolContext, "_Recorder"]:
+    rec = _Recorder()
+    ctx = ToolContext(events=EventEmitter(sinks=[rec]), **kwargs)
+    return ctx, rec
+
+
+async def _deny(_name: str, _desc: str) -> bool:
+    return False
+
+
+async def _crashing_callback(_name: str, _desc: str) -> bool:
+    raise RuntimeError("prompt crashed")
+
+
+@pytest.mark.parametrize(
+    ("tools", "call", "ctx_kwargs", "expected"),
+    [
+        pytest.param(
+            {"echo": EchoTool()},
+            ("echo", {"text": "hi"}),
+            {},
+            ToolStatus.OK,
+            id="ok",
+        ),
+        pytest.param(
+            {}, ("missing", {}), {}, ToolStatus.UNKNOWN_TOOL, id="unknown_tool"
+        ),
+        pytest.param(
+            {"echo": EchoTool()},
+            ("echo", {}),
+            {},
+            ToolStatus.INVALID_ARGS,
+            id="invalid_args",
+        ),
+        pytest.param(
+            {"rejecting": RejectingTool()},
+            ("rejecting", {"text": "x"}),
+            {},
+            ToolStatus.VALIDATION_FAILED,
+            id="validation_failed",
+        ),
+        pytest.param(
+            {"guarded": PermissionTool()},
+            ("guarded", {"text": "x"}),
+            {"permission_callback": _crashing_callback},
+            ToolStatus.PERMISSION_ERROR,
+            id="permission_error",
+        ),
+        pytest.param(
+            {"guarded": PermissionTool()},
+            ("guarded", {"text": "x"}),
+            {"permission_callback": _deny},
+            ToolStatus.DENIED,
+            id="denied",
+        ),
+        pytest.param(
+            {"boom": BoomTool()},
+            ("boom", {"text": "x"}),
+            {},
+            ToolStatus.ERROR,
+            id="error",
+        ),
+    ],
+)
+async def test_each_pipeline_exit_maps_to_its_status(tools, call, ctx_kwargs, expected):
+    ctx, rec = _recorded_ctx(**ctx_kwargs)
+
+    await dispatch(_call(*call), tools, ctx)
+
+    end = next(e.event for e in rec.envelopes if isinstance(e.event, ToolEnd))
+    assert end.status is expected
+
+
+async def test_dispatch_emits_matched_start_end_pair():
+    ctx, rec = _recorded_ctx()
+
+    await dispatch(_call("echo", {"text": "hi"}), {"echo": EchoTool()}, ctx)
+
+    start, end = (e.event for e in rec.envelopes)
+    assert isinstance(start, ToolStart) and isinstance(end, ToolEnd)
+    assert start.tool_call_id == end.tool_call_id == "call_1"
+    assert start.name == end.name == "echo"
+    assert end.duration_ms >= 0
+
+
+async def test_dispatch_without_emitter_emits_nothing():
+    # No events field set — the plain path all other tests exercise.
+    msg = await dispatch(
+        _call("echo", {"text": "hi"}), {"echo": EchoTool()}, ToolContext()
+    )
+    assert msg.content == "hi"

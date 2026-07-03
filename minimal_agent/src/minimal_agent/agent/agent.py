@@ -5,6 +5,8 @@ LLM configuration. Sessions are instances of that identity — every session
 created by an agent inherits its prompt.
 """
 
+import json
+import time
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from typing import Optional, Union
@@ -17,6 +19,7 @@ from ..context_sources import (
     SkillsContextSource,
     source_placement,
 )
+from ..events import CallResponse, RunEnd, RunEndStatus, RunStart
 from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
 from ..llm.types import LLMTool, Usage
 from ..skills import discover_skills
@@ -34,6 +37,17 @@ from .session import (
 )
 
 OnUsageCallback = Callable[[Usage], None]
+
+
+def _canonical_tools_json(tools: list[LLMTool]) -> str:
+    """Canonical JSON of the tool schemas: sorted by name, sorted keys,
+    compact separators — same schemas ⇒ same bytes ⇒ same blob."""
+    return json.dumps(
+        sorted((t.model_dump() for t in tools), key=lambda t: t["name"]),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
 
 # Default context sources for the built-in software engineering agent.
 _DEFAULT_CONTEXT_SOURCES: list[ContextSource] = [
@@ -90,6 +104,12 @@ class Agent:
         self._live_sources = [
             s for s in resolved_sources if source_placement(s) is not Placement.SESSION
         ]
+
+        # Canonical fingerprint of the tool schemas — computed once, after
+        # skill discovery has registered its tool. Carried on run.start so
+        # "when did a tool description change?" is answerable from the
+        # session directory alone.
+        self._tools_json = _canonical_tools_json(self._llm_tools)
 
     async def build_system_prompt(self, workspace_root: Path) -> str:
         """Build the full system prompt for a new session.
@@ -215,51 +235,109 @@ class Agent:
         Callbacks:
             on_usage: Called with the Usage from each LLM API call.
             permission_callback: Called when a tool requires user confirmation.
+
+        When the context carries an event emitter, the run is traced:
+        run.start/run.end frame it (run.end fires from a finally, so even
+        an abandoned or crashed run leaves a truthful record), and each
+        LLM call emits a call.response with latency and usage.
         """
         context.begin_run()
-
-        for _turn in range(self._max_turns):
-            ctx = ToolContext(permission_callback=permission_callback)
-            messages = await context.assemble()
-
-            if stream:
-                acc = StreamAccumulator()
-                async for chunk in self._llm.stream(
-                    messages=messages,
-                    tools=self._llm_tools,
-                    tool_choice="auto",
-                ):
-                    acc.add(chunk)
-                    yield chunk
-                    # Usage rides the final chunk (include_usage is on by
-                    # default in the facade), not a separate response object.
-                    if on_usage and chunk.usage:
-                        on_usage(chunk.usage)
-                text = acc.text
-                tool_calls = acc.tool_calls()
-            else:
-                resp = await self._llm.generate(
-                    messages=messages,
-                    tools=self._llm_tools,
-                    tool_choice="auto",
+        events = context.events
+        if events is not None:
+            events.emit(
+                RunStart(
+                    model=self._llm.model,
+                    backend=str(self._llm.backend),
+                    tools_json=self._tools_json,
+                    store_len=len(context.store),
                 )
-                if on_usage and resp.usage:
-                    on_usage(resp.usage)
-                text = resp.text
-                tool_calls = resp.tool_calls
-
-            assistant_msg = Message(
-                role=Role.ASSISTANT,
-                content=text,
-                tool_calls=tool_calls,
             )
-            context.add(assistant_msg)
-            yield assistant_msg
+        run_t0 = time.monotonic()
+        calls = 0
+        status = RunEndStatus.MAX_TURNS
 
-            if not tool_calls:
-                return
+        try:
+            for _turn in range(self._max_turns):
+                ctx = ToolContext(
+                    permission_callback=permission_callback,
+                    events=events,
+                )
+                messages = await context.assemble()
+                calls += 1
+                call_t0 = time.monotonic()
 
-            for tc in tool_calls:
-                result_msg = await dispatch(tc, self._tools_by_name, ctx)
-                context.add(result_msg)
-                yield result_msg
+                if stream:
+                    acc = StreamAccumulator()
+                    usage: Optional[Usage] = None
+                    async for chunk in self._llm.stream(
+                        messages=messages,
+                        tools=self._llm_tools,
+                        tool_choice="auto",
+                    ):
+                        acc.add(chunk)
+                        yield chunk
+                        # Usage rides the final chunk (include_usage is on by
+                        # default in the facade), not a separate response
+                        # object.
+                        if chunk.usage:
+                            usage = chunk.usage
+                            if on_usage:
+                                on_usage(chunk.usage)
+                    text = acc.text
+                    tool_calls = acc.tool_calls()
+                else:
+                    resp = await self._llm.generate(
+                        messages=messages,
+                        tools=self._llm_tools,
+                        tool_choice="auto",
+                    )
+                    usage = resp.usage
+                    if on_usage and resp.usage:
+                        on_usage(resp.usage)
+                    text = resp.text
+                    tool_calls = resp.tool_calls
+
+                if events is not None:
+                    events.emit(
+                        CallResponse(
+                            latency_ms=int((time.monotonic() - call_t0) * 1000),
+                            usage=usage.model_dump() if usage else None,
+                            tool_calls=len(tool_calls or []),
+                        )
+                    )
+
+                assistant_msg = Message(
+                    role=Role.ASSISTANT,
+                    content=text,
+                    tool_calls=tool_calls,
+                )
+                context.add(assistant_msg)
+                yield assistant_msg
+
+                if not tool_calls:
+                    status = RunEndStatus.COMPLETED
+                    return
+
+                for tc in tool_calls:
+                    result_msg = await dispatch(tc, self._tools_by_name, ctx)
+                    context.add(result_msg)
+                    yield result_msg
+        except GeneratorExit:
+            # Consumer closed the generator (e.g. client disconnect
+            # mid-stream) — record it truthfully rather than silently.
+            status = RunEndStatus.ABANDONED
+            raise
+        except BaseException:
+            status = RunEndStatus.ERROR
+            raise
+        finally:
+            # Sync emit — fires even on GeneratorExit, where an await
+            # would be illegal.
+            if events is not None:
+                events.emit(
+                    RunEnd(
+                        status=status,
+                        calls=calls,
+                        duration_ms=int((time.monotonic() - run_t0) * 1000),
+                    )
+                )

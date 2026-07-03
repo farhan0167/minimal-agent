@@ -4,12 +4,18 @@ tool-result `Message`, running the full pipeline.
 Errors never raise out of `dispatch`: a failing tool becomes a tool-result
 message so the model can observe and recover. The agent loop must not crash
 because a tool threw.
+
+Every dispatch is bracketed by tool.start/tool.end events (when the context
+carries an emitter) — how permission denials, validation failures, and tool
+exceptions enter the timeline, with durations.
 """
 
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Tuple
 
 from pydantic import ValidationError
 
+from ..events import ToolEnd, ToolStart, ToolStatus
 from ..llm.types import Message, Role, ToolCall
 from .base import BaseTool
 from .context import ToolContext
@@ -21,9 +27,31 @@ async def dispatch(
     ctx: ToolContext,
 ) -> Message:
     """Execute one tool call and return the resulting tool-role Message."""
+    if ctx.events is not None:
+        ctx.events.emit(ToolStart(tool_call_id=tool_call.id, name=tool_call.name))
+    t0 = time.monotonic()
+    status, msg = await _dispatch_inner(tool_call, tools_by_name, ctx)
+    if ctx.events is not None:
+        ctx.events.emit(
+            ToolEnd(
+                tool_call_id=tool_call.id,
+                name=tool_call.name,
+                status=status,
+                duration_ms=int((time.monotonic() - t0) * 1000),
+            )
+        )
+    return msg
+
+
+async def _dispatch_inner(
+    tool_call: ToolCall,
+    tools_by_name: Dict[str, BaseTool[Any, Any]],
+    ctx: ToolContext,
+) -> Tuple[ToolStatus, Message]:
+    """The pipeline. Each exit maps to exactly one ToolStatus."""
     tool = tools_by_name.get(tool_call.name)
     if tool is None:
-        return Message(
+        return ToolStatus.UNKNOWN_TOOL, Message(
             role=Role.TOOL,
             tool_call_id=tool_call.id,
             content=f"error: unknown tool {tool_call.name!r}",
@@ -33,7 +61,7 @@ async def dispatch(
     try:
         args = tool.input_schema.model_validate(tool_call.arguments)
     except ValidationError as e:
-        return Message(
+        return ToolStatus.INVALID_ARGS, Message(
             role=Role.TOOL,
             tool_call_id=tool_call.id,
             content=f"invalid arguments: {e}",
@@ -42,7 +70,7 @@ async def dispatch(
     # 2. Semantic validation (path escape, allowlists, etc.)
     validation = await tool.validate(args, ctx)
     if not validation.ok:
-        return Message(
+        return ToolStatus.VALIDATION_FAILED, Message(
             role=Role.TOOL,
             tool_call_id=tool_call.id,
             content=f"validation failed: {validation.message}",
@@ -54,13 +82,13 @@ async def dispatch(
         try:
             allowed = await ctx.permission_callback(tool_call.name, description)
         except Exception as e:
-            return Message(
+            return ToolStatus.PERMISSION_ERROR, Message(
                 role=Role.TOOL,
                 tool_call_id=tool_call.id,
                 content=f"permission error: {type(e).__name__}: {e}",
             )
         if not allowed:
-            return Message(
+            return ToolStatus.DENIED, Message(
                 role=Role.TOOL,
                 tool_call_id=tool_call.id,
                 content=f"permission denied: user rejected {tool_call.name}",
@@ -70,14 +98,14 @@ async def dispatch(
     try:
         out = await tool.invoke(args, ctx)
     except Exception as e:
-        return Message(
+        return ToolStatus.ERROR, Message(
             role=Role.TOOL,
             tool_call_id=tool_call.id,
             content=f"tool error: {type(e).__name__}: {e}",
         )
 
     # 5. Serialize for the assistant.
-    return Message(
+    return ToolStatus.OK, Message(
         role=Role.TOOL,
         tool_call_id=tool_call.id,
         content=tool.render_result_for_assistant(out),

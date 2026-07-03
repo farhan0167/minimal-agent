@@ -19,6 +19,13 @@ from ..context_sources import (
     source_placement,
     source_tag,
 )
+from ..events import (
+    CallRequest,
+    EventEmitter,
+    InjectedBlock,
+    SourceFailed,
+    hash_messages,
+)
 from ..llm.types import Message, Role, TextPart
 from ..system_prompt.builder import build_context_blocks
 from .message_store import MessageStore
@@ -52,15 +59,21 @@ class _SafeSource:
     this wrapper is only used on the message channel.
     """
 
-    def __init__(self, src: ContextSource) -> None:
+    def __init__(self, src: ContextSource, events: EventEmitter | None = None) -> None:
         self._src = src
+        self._events = events
         self.name = src.name
         self.tag = source_tag(src)
 
     async def gather(self, workspace_root: Path) -> str | None:
         try:
             return await self._src.gather(workspace_root)
-        except Exception:
+        except Exception as e:
+            if self._events is not None:
+                # Type name only — exception messages can carry paths/secrets.
+                self._events.emit(
+                    SourceFailed(source=self.name, error=type(e).__name__)
+                )
             logger.debug(
                 "live source %r failed to gather; skipping",
                 self.name,
@@ -77,10 +90,12 @@ class Context:
         store: MessageStore | None = None,
         live_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
+        events: EventEmitter | None = None,
     ) -> None:
         self._store = store if store is not None else MessageStore()
         self._system_prompt = system_prompt
         self._workspace_root = workspace_root
+        self._events = events
         sources = list(live_sources) if live_sources else []
         self._run_sources = [s for s in sources if source_placement(s) is Placement.RUN]
         self._call_sources = [
@@ -100,6 +115,11 @@ class Context:
     def store(self) -> MessageStore:
         """Access to the underlying store (for inspection, debugging, persistence)."""
         return self._store
+
+    @property
+    def events(self) -> EventEmitter | None:
+        """The session's event seam; None for bare (unrecorded) contexts."""
+        return self._events
 
     def get_messages(self) -> list[Message]:
         """Project the stored messages into what the LLM should see this turn.
@@ -140,57 +160,90 @@ class Context:
         consecutive user-role messages, and never mutates or persists
         stored Messages — merges are model_copy replacements in the
         outgoing list only.
+
+        When an emitter is attached, every call emits one call.request
+        event recording what was assembled; without one, behavior is
+        byte-identical to an unrecorded context.
         """
         msgs = self.get_messages()
+        injected_run: InjectedBlock | None = None
+        injected_call: InjectedBlock | None = None
+
         if (
-            not (self._run_sources or self._call_sources)
-            or self._workspace_root is None
-        ):
-            return msgs
+            self._run_sources or self._call_sources
+        ) and self._workspace_root is not None:
+            if self._run_sources and not self._run_gathered:
+                self._run_blocks = await self._gather_blocks(self._run_sources)
+                self._run_gathered = True
 
-        if self._run_sources and not self._run_gathered:
-            self._run_blocks = await self._gather_blocks(self._run_sources)
-            self._run_gathered = True
+            call_blocks: str | None = None
+            if self._call_sources:
+                call_blocks = await self._gather_blocks(self._call_sources)
 
-        call_blocks: str | None = None
-        if self._call_sources:
-            call_blocks = await self._gather_blocks(self._call_sources)
-
-        user_idx = next(
-            (i for i in range(len(msgs) - 1, -1, -1) if msgs[i].role is Role.USER),
-            None,
-        )
-        if user_idx is None and self._run_blocks:
-            logger.debug("no user message to anchor RUN blocks; skipping this run")
-
-        merged: list[str] = []
-        if user_idx is not None and self._run_blocks:
-            merged.append(self._run_blocks)
-        if call_blocks and user_idx == len(msgs) - 1:
-            # First call of a run: the user message is the tail, so CALL
-            # blocks are exactly as fresh as RUN blocks — merge them too
-            # rather than emit a consecutive user carrier.
-            merged.append(call_blocks)
-            call_blocks = None
-
-        if merged:
-            injected = "\n".join([*merged, _MERGED_FRAMING])
-            msgs[user_idx] = _merge_into_user(msgs[user_idx], injected)
-
-        if call_blocks:
-            msgs.append(
-                Message(
-                    role=Role.USER,
-                    content=f"{call_blocks}\n{_CARRIER_FRAMING}",
-                )
+            user_idx = next(
+                (i for i in range(len(msgs) - 1, -1, -1) if msgs[i].role is Role.USER),
+                None,
             )
+            if user_idx is None and self._run_blocks:
+                logger.debug("no user message to anchor RUN blocks; skipping this run")
 
+            merged: list[str] = []
+            if user_idx is not None and self._run_blocks:
+                merged.append(self._run_blocks)
+            if call_blocks and user_idx == len(msgs) - 1:
+                # First call of a run: the user message is the tail, so CALL
+                # blocks are exactly as fresh as RUN blocks — merge them too
+                # rather than emit a consecutive user carrier.
+                merged.append(call_blocks)
+                call_blocks = None
+
+            if merged:
+                injected = "\n".join([*merged, _MERGED_FRAMING])
+                msgs[user_idx] = _merge_into_user(msgs[user_idx], injected)
+                # anchor is a store index: user_idx is a position in the
+                # assembled list, which the system message (if any) shifts
+                # by one.
+                offset = 1 if self._system_prompt is not None else 0
+                injected_run = InjectedBlock(anchor=user_idx - offset, text=injected)
+
+            if call_blocks:
+                carrier = f"{call_blocks}\n{_CARRIER_FRAMING}"
+                msgs.append(Message(role=Role.USER, content=carrier))
+                injected_call = InjectedBlock(anchor=None, text=carrier)
+
+        self._emit_call_request(msgs, injected_run, injected_call)
         return msgs
+
+    def _emit_call_request(
+        self,
+        msgs: list[Message],
+        injected_run: InjectedBlock | None,
+        injected_call: InjectedBlock | None,
+    ) -> None:
+        """Record the audit payload for one assembled input.
+
+        Every exit of assemble() passes through here — a call with no
+        live injection is still a call the model saw.
+        """
+        if self._events is None:
+            return
+        self._events.emit(
+            CallRequest(
+                # The default full projection, today. A projection strategy
+                # that shapes history replaces this with its actual ranges.
+                projected=[(0, len(self._store))],
+                store_len=len(self._store),
+                system_prompt=self._system_prompt,
+                injected_run=injected_run,
+                injected_call=injected_call,
+                assembled_sha256=hash_messages(msgs),
+            )
+        )
 
     async def _gather_blocks(self, sources: list[ContextSource]) -> str | None:
         """Gather and format one channel's sources, tolerating failures."""
         return await build_context_blocks(
-            [_SafeSource(s) for s in sources],
+            [_SafeSource(s, self._events) for s in sources],
             self._workspace_root,
             preamble=None,
         )
