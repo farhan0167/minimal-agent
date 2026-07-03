@@ -217,6 +217,42 @@ Skills are reusable prompt templates stored as markdown files. Drop a `SKILL.md`
 
 Skills are auto-discovered when you pass `workspace_root` to the `Agent`. Format follows the official [Agent Skills Specification](https://agentskills.io/specification). See [minimal_agent/README.md](minimal_agent/README.md#5-write-a-skill) for authoring details.
 
+### Observability
+
+Sessions record what happens as they run — no wiring needed. Two artifacts land next to the transcript in the session directory:
+
+```
+.minimal_agent/sessions/<session-id>/
+├── session.json     # identity, aggregate usage
+├── messages.jsonl   # the conversation
+├── events.jsonl     # the timeline: one timestamped event per line
+├── calls.jsonl      # one provenance record per LLM call
+└── blobs/           # content-addressed system prompts and tool schemas
+```
+
+`events.jsonl` answers *"what happened, when?"* — a run started, a call took 2.7s and used 876 tokens, a tool was denied after 8 seconds of deliberation, a context source failed to gather. `calls.jsonl` + `blobs/` answer *"what exactly did the model see?"* — every call's full input (system prompt, projected messages, injected live blocks, tool schemas) is reconstructible, byte-exactly, from the session directory alone.
+
+Read it back with the audit API:
+
+```python
+from minimal_agent import reconstruct_call, session_runs
+
+# The holistic view: session → runs → calls, each call carrying its
+# full input, its response, latency, usage, and tool executions.
+for run in session_runs(session.session_dir):
+    print(run.run_id, run.status, f"{run.duration_ms}ms")
+    for call in run.calls:
+        print(f"  {call.call_id}: {call.latency_ms}ms, "
+              f"{len(call.input.messages)} input messages")
+
+# Or one call's exact input, verified against its recorded hash.
+call = reconstruct_call(session.session_dir, "r-4c7d01ab:c1")
+assert call.verified
+call.messages   # exactly what the model saw, in order
+```
+
+Recording is fire-and-forget — it can never fail or slow a run — and a bare in-memory `Context()` records nothing. Because system prompts and tool schemas are content-addressed, *"the agent behaves differently since yesterday"* is answered by diffing two blobs.
+
 ## Example: Full-stack web app
 
 The `example/` directory contains a ready-to-run chat application with a **FastAPI backend** and a **React frontend** that demonstrates the agent in action.
@@ -269,6 +305,8 @@ The Vite dev server proxies `/api/*` requests to the backend on port 8000.
 3. Chat with the agent — it can read/write/edit files, run shell commands, search the web, and more
 
 The agent streams responses back via Server-Sent Events, and session history is persisted to disk so you can pick up where you left off.
+
+The server also exposes each session's observability artifacts over HTTP: `GET /sessions/{id}/events` (the timeline), `/sessions/{id}/calls` (raw audit records), `/sessions/{id}/calls/{call_id}` (byte-exact input reconstruction), and `/sessions/{id}/runs` (every model input and output, by run and call, in one response).
 
 ## Development
 
