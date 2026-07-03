@@ -28,9 +28,7 @@ class CreateSessionRequest(BaseModel):
 class AttachmentContent(BaseModel):
     """A base64-encoded file attachment (image or PDF)."""
 
-    data: str = Field(
-        description="Base64 data URI (e.g. 'data:image/png;base64,...')."
-    )
+    data: str = Field(description="Base64 data URI (e.g. 'data:image/png;base64,...').")
     mime_type: str = Field(
         description="MIME type of the attachment (e.g. 'image/png', 'application/pdf')."
     )
@@ -83,3 +81,95 @@ class ToolInfo(BaseModel):
 
 class ToolListResponse(BaseModel):
     tools: list[ToolInfo]
+
+
+# --- Observability (events.jsonl / calls.jsonl / reconstruction) ---
+
+
+class EventListResponse(BaseModel):
+    """The session timeline: raw envelopes from events.jsonl, in order."""
+
+    events: list[dict]
+
+
+class CallRecordListResponse(BaseModel):
+    """Raw audit records from calls.jsonl, one per LLM call."""
+
+    calls: list[dict]
+
+
+class ReconstructedCallResponse(BaseModel):
+    """One LLM call's exact input, rebuilt from the session directory."""
+
+    call_id: str
+    run_id: str | None = None
+    ts: str
+    model: str | None = None
+    backend: str | None = None
+    verified: bool = Field(
+        description=(
+            "Whether the rebuilt messages hash to the recorded value. False "
+            "means unverifiable (e.g. serialization drift), not tampered."
+        )
+    )
+    recorded_sha256: str
+    computed_sha256: str
+    tools: list[dict] | None = Field(
+        default=None, description="Tool schemas the model was offered."
+    )
+    messages: list[MessageResponse] = Field(
+        description="Exactly what the model saw on this call, in order."
+    )
+
+
+class ToolExecutionInfo(BaseModel):
+    """One tool dispatch within a call."""
+
+    tool_call_id: str
+    name: str
+    status: str | None = Field(
+        default=None, description="Null if the dispatch never returned."
+    )
+    duration_ms: int | None = None
+
+
+class CallViewResponse(BaseModel):
+    """One LLM call, fully expanded: input, response, and tool activity."""
+
+    call_id: str
+    ts: str
+    input: ReconstructedCallResponse
+    response: MessageResponse | None = Field(
+        default=None,
+        description=(
+            "The model's reply to this call. Null if the call never "
+            "completed (crash/disconnect before the reply was stored)."
+        ),
+    )
+    latency_ms: int | None = None
+    usage: dict | None = None
+    tool_executions: list[ToolExecutionInfo]
+
+
+class RunViewResponse(BaseModel):
+    """One agent run and every LLM call it made."""
+
+    run_id: str
+    started_at: str | None = None
+    model: str | None = None
+    backend: str | None = None
+    status: str | None = Field(
+        default=None,
+        description=(
+            "completed | max_turns | abandoned | error; null if the run "
+            "never finalized or was recorded without a run frame."
+        ),
+    )
+    duration_ms: int | None = None
+    calls: list[CallViewResponse]
+
+
+class RunListResponse(BaseModel):
+    """The holistic view: every model input and output, by run and call."""
+
+    runs: list[RunViewResponse]

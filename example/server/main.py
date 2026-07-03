@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from routes.agents import router as agents_router
 from routes.chat import router as chat_router
+from routes.observability import router as observability_router
 from routes.sessions import router as sessions_router
 from routes.tools import router as tools_router
 
@@ -20,6 +21,7 @@ app.include_router(agents_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
 app.include_router(tools_router)
+app.include_router(observability_router)
 
 
 @app.get("/health")
