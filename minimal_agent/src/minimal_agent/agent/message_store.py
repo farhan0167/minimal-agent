@@ -25,6 +25,9 @@ class MessageStore:
     def __init__(self, *, path: Path | None = None) -> None:
         self._messages: list[Message] = []
         self._path = path
+        # Healing actions from_file() took (synthetic appends), recorded so
+        # session loading can report them (e.g. on a session.loaded event).
+        self.healing_actions: list[str] = []
 
     def append(self, msg: Message) -> None:
         """Append a message to the in-memory log and, if a path is set, to disk."""
@@ -129,6 +132,7 @@ class MessageStore:
                 ),
             )
             self.append(msg)
+            self.healing_actions.append(f"synthetic_tool_result:{orphan_id}")
             logger.info(
                 "Appended synthetic interrupt result for tool_call_id=%s",
                 orphan_id,
@@ -154,9 +158,8 @@ class MessageStore:
         if self._messages[-1].role != Role.USER:
             return
 
-        self.append(
-            Message(role=Role.ASSISTANT, content=INTERRUPTED_RESPONSE_MARKER)
-        )
+        self.append(Message(role=Role.ASSISTANT, content=INTERRUPTED_RESPONSE_MARKER))
+        self.healing_actions.append("interrupted_response_marker")
         logger.info(
             "Healed trailing unanswered user message with an interrupted-"
             "response marker (likely mid-stream interrupt artifact)."

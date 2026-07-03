@@ -11,11 +11,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from ..context_sources import ContextSource
+from ..events import EventEmitter, SessionCreated, SessionLoaded
 from ..llm.types import Usage
 from .context import Context
 from .message_store import MessageStore
+from .sinks import CallLogSink, TraceSink
 
 _DEFAULT_BASE_DIR = Path(".minimal_agent/sessions")
+
+
+def _make_emitter(session_dir: Path) -> EventEmitter:
+    """The default event seam for a session-backed context.
+
+    Recording is default-on exactly where persistence is: both built-in
+    sinks write session artifacts next to messages.jsonl.
+    """
+    return EventEmitter(sinks=[TraceSink(session_dir), CallLogSink(session_dir)])
 
 
 class SessionConfigMismatchError(Exception):
@@ -104,18 +116,20 @@ class Session:
     def usage(self) -> Usage | None:
         return self._meta.usage
 
+    @property
+    def workspace_root(self) -> str | None:
+        return self._meta.workspace_root
+
     def update_usage(self, usage: Usage) -> None:
         """Accumulate usage from an API call and persist metadata."""
         if self._meta.usage is None:
             self._meta.usage = usage
         else:
             self._meta.usage = Usage(
-                prompt_tokens=self._meta.usage.prompt_tokens
-                + usage.prompt_tokens,
+                prompt_tokens=self._meta.usage.prompt_tokens + usage.prompt_tokens,
                 completion_tokens=self._meta.usage.completion_tokens
                 + usage.completion_tokens,
-                total_tokens=self._meta.usage.total_tokens
-                + usage.total_tokens,
+                total_tokens=self._meta.usage.total_tokens + usage.total_tokens,
             )
         self._meta.updated_at = datetime.now(tz=timezone.utc)
         self._save_metadata()
@@ -134,8 +148,14 @@ class Session:
         system_prompt: str | None = None,
         base_dir: Path = _DEFAULT_BASE_DIR,
         workspace_root: str | None = None,
+        live_sources: list[ContextSource] | None = None,
     ) -> "Session":
-        """Start a new session. Creates the directory and files on disk."""
+        """Start a new session. Creates the directory and files on disk.
+
+        live_sources (RUN/CALL-placed context sources) are forwarded to
+        the Context together with the workspace root; they are runtime
+        wiring, not persisted state.
+        """
         now = datetime.now(tz=timezone.utc)
         meta = SessionMeta(
             session_id=now.strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:4],
@@ -149,12 +169,38 @@ class Session:
         session_dir = base_dir / meta.session_id
         session_dir.mkdir(parents=True, exist_ok=True)
 
+        emitter = _make_emitter(session_dir)
         store = MessageStore(path=session_dir / "messages.jsonl")
-        context = Context(system_prompt=system_prompt, store=store)
+        context = Context(
+            system_prompt=system_prompt,
+            store=store,
+            live_sources=live_sources,
+            workspace_root=Path(workspace_root) if workspace_root else None,
+            events=emitter,
+        )
 
         session = cls(meta=meta, context=context, base_dir=base_dir)
         session._save_metadata()
+        emitter.emit(SessionCreated())
         return session
+
+    @classmethod
+    def read_meta(
+        cls,
+        session_id: str,
+        *,
+        base_dir: Path = _DEFAULT_BASE_DIR,
+    ) -> SessionMeta:
+        """Read a session's metadata without loading its messages.
+
+        The cheap peek for hosts that need e.g. the workspace root or
+        model before deciding how to resume a session. Reads only
+        session.json, never the JSONL. Raises FileNotFoundError if the
+        session doesn't exist.
+        """
+        meta_path = base_dir / session_id / "session.json"
+        with open(meta_path) as f:
+            return SessionMeta.from_dict(json.load(f))
 
     @classmethod
     def load(
@@ -165,32 +211,27 @@ class Session:
         backend: str,
         system_prompt: str | None = None,
         base_dir: Path = _DEFAULT_BASE_DIR,
+        live_sources: list[ContextSource] | None = None,
     ) -> "Session":
         """Resume an existing session from disk.
 
         Validates that the current model and backend match what the
         session was created with. Raises SessionConfigMismatchError
         if they differ.
+
+        live_sources are re-attached to the Context with the persisted
+        workspace_root — live content is regenerated, never restored, so
+        sessions predating workspace_root persistence degrade to no live
+        gathering.
         """
         session_dir = base_dir / session_id
-        meta_path = session_dir / "session.json"
-
-        with open(meta_path) as f:
-            data = json.load(f)
-
-        meta = SessionMeta.from_dict(data)
+        meta = cls.read_meta(session_id, base_dir=base_dir)
 
         mismatches = []
         if meta.model and meta.model != model:
-            mismatches.append(
-                f"model: session={meta.model!r}, "
-                f"current={model!r}"
-            )
+            mismatches.append(f"model: session={meta.model!r}, current={model!r}")
         if meta.backend and meta.backend != backend:
-            mismatches.append(
-                f"backend: session={meta.backend!r}, "
-                f"current={backend!r}"
-            )
+            mismatches.append(f"backend: session={meta.backend!r}, current={backend!r}")
         if mismatches:
             raise SessionConfigMismatchError(
                 "Cannot resume session with different LLM config: "
@@ -199,7 +240,20 @@ class Session:
 
         messages_path = session_dir / "messages.jsonl"
         store = MessageStore.from_file(messages_path)
-        context = Context(system_prompt=system_prompt, store=store)
+        emitter = _make_emitter(session_dir)
+        context = Context(
+            system_prompt=system_prompt,
+            store=store,
+            live_sources=live_sources,
+            workspace_root=(Path(meta.workspace_root) if meta.workspace_root else None),
+            events=emitter,
+        )
+        emitter.emit(
+            SessionLoaded(
+                message_count=len(store),
+                healed=list(store.healing_actions),
+            )
+        )
 
         return cls(meta=meta, context=context, base_dir=base_dir)
 

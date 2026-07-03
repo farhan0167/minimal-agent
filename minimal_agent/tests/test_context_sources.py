@@ -2,12 +2,15 @@
 
 from pathlib import Path
 
-from minimal_agent.skills import SkillMeta, SkillSource
-from minimal_agent.system_prompt.context_sources import (
+from minimal_agent.context_sources import (
     DirectoryTreeSource,
     GitStatusSource,
+    Placement,
     SkillsContextSource,
+    source_placement,
+    source_tag,
 )
+from minimal_agent.skills import SkillMeta, SkillSource
 
 
 class TestGitStatusSource:
@@ -162,3 +165,56 @@ class TestCustomContextSource:
         assert source.name == "custom"
         result = await source.gather(tmp_path)
         assert result == "custom context data"
+
+
+class _BareSource:
+    """Only the two protocol members — no placement, no tag."""
+
+    @property
+    def name(self) -> str:
+        return "bare"
+
+    async def gather(self, workspace_root: Path) -> str | None:
+        return "data"
+
+
+class TestPlacementResolution:
+    def test_bare_source_defaults_to_session(self):
+        assert source_placement(_BareSource()) is Placement.SESSION
+
+    def test_git_status_is_run(self):
+        assert source_placement(GitStatusSource()) is Placement.RUN
+
+    def test_directory_tree_is_session(self):
+        assert source_placement(DirectoryTreeSource()) is Placement.SESSION
+
+    def test_skills_source_is_session(self):
+        assert source_placement(SkillsContextSource(skills=[])) is (Placement.SESSION)
+
+    def test_plain_string_placement_normalizes(self):
+        class StringPlaced(_BareSource):
+            placement = "run"
+
+        assert source_placement(StringPlaced()) is Placement.RUN
+
+
+class TestTagResolution:
+    def test_default_tag_is_context(self):
+        assert source_tag(_BareSource()) == "context"
+        assert source_tag(GitStatusSource()) == "context"
+
+    def test_custom_tag_resolves(self):
+        class Reminder(_BareSource):
+            tag = "system-reminder"
+
+        assert source_tag(Reminder()) == "system-reminder"
+
+
+class TestLegacyImportPaths:
+    def test_system_prompt_reexports(self):
+        from minimal_agent import context_sources, system_prompt
+
+        assert system_prompt.GitStatusSource is context_sources.GitStatusSource
+        assert system_prompt.ContextSource is context_sources.ContextSource
+        assert system_prompt.DirectoryTreeSource is context_sources.DirectoryTreeSource
+        assert system_prompt.SkillsContextSource is context_sources.SkillsContextSource

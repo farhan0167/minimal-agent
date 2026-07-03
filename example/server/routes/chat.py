@@ -20,7 +20,7 @@ from minimal_agent.llm.types import (
 from pdf2image import convert_from_bytes
 from sse_starlette.sse import EventSourceResponse
 
-from app import build_agent, load_agent_type, load_session, validate_workspace
+from app import get_sessions_dir, open_session_readonly, resume_session
 from schemas import AttachmentContent, ChatRequest
 
 router = APIRouter(prefix="/sessions", tags=["chat"])
@@ -99,27 +99,14 @@ async def _stream_agent(
 ) -> AsyncGenerator[dict, None]:
     """Run the agent loop and yield SSE events."""
     try:
-        session = load_session(session_id)
+        agent, session = await resume_session(session_id)
     except FileNotFoundError:
         yield {"event": "error", "data": json.dumps({"detail": "Session not found"})}
         return
-
-    workspace_root = session._meta.workspace_root
-    if not workspace_root:
-        yield {
-            "event": "error",
-            "data": json.dumps({"detail": "Session has no workspace_root"}),
-        }
-        return
-
-    try:
-        workspace = validate_workspace(workspace_root)
     except ValueError as e:
+        # Missing or disallowed workspace.
         yield {"event": "error", "data": json.dumps({"detail": str(e)})}
         return
-
-    agent_type = load_agent_type(session_id)
-    agent = build_agent(agent_type, workspace, model=session._meta.model, backend=session._meta.backend)
 
     # Build user message — multimodal when attachments are present.
     if req.attachments:
@@ -199,7 +186,7 @@ async def _stream_agent(
 async def chat_route(session_id: str, req: ChatRequest):
     # Validate session exists before starting stream.
     try:
-        load_session(session_id)
+        Session.read_meta(session_id, base_dir=get_sessions_dir())
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -209,7 +196,7 @@ async def chat_route(session_id: str, req: ChatRequest):
 @router.get("/{session_id}/messages")
 async def messages_route(session_id: str):
     try:
-        session = load_session(session_id)
+        session = open_session_readonly(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
 

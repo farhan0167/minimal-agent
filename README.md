@@ -60,8 +60,8 @@ minimal-agent = { path = "../minimal_agent" }
 import asyncio
 from pathlib import Path
 
-from minimal_agent import Agent, Session, Settings
-from minimal_agent.llm import LLM
+from minimal_agent import Agent, Settings
+from minimal_agent.llm import LLM, Message, Role
 from minimal_agent.tools.builtin.read_file import ReadFile
 from minimal_agent.tools.builtin.run_shell import RunShell
 
@@ -76,22 +76,19 @@ llm = LLM(
 agent = Agent(
     llm=llm,
     tools=[
-        ReadFile(workspace_root=workspace),
+        ReadFile(workspace_root=workspace, read_timestamps={}),
         RunShell(workspace_root=workspace),
     ],
+    workspace_root=workspace,
 )
 
 
 async def main():
-    system_prompt = await agent.build_system_prompt(workspace_root=workspace)
-    session = Session.create(
-        model=settings.LLM_MODEL,
-        backend=settings.LLM_BACKEND,
-        system_prompt=system_prompt,
-    )
+    # The agent builds the system prompt and stamps its identity
+    # (model, backend, workspace) onto the session.
+    session = await agent.create_session()
 
     # Add a user message
-    from minimal_agent.llm import Message, Role
     session.context.add(Message(role=Role.USER, content="List the files in this directory"))
 
     # Run the agent loop
@@ -103,6 +100,8 @@ asyncio.run(main())
 ```
 
 That's a working agent. It reads the user message, calls the LLM, uses tools if needed, and prints the response.
+
+Sessions are persisted to disk. To resume one later, use `session = await agent.load_session(session_id)` — the agent rebuilds the system prompt fresh and validates that the session's model, backend, and workspace match its own.
 
 ### 3. Add your own tools
 
@@ -179,11 +178,9 @@ agent = Agent(
 
 ### 5. Context sources
 
-Context sources inject dynamic information into the system prompt (git status, directory trees, or anything you define). Implement the `ContextSource` protocol:
+Context sources gather dynamic information about the environment (git status, directory trees, or anything you define) and inject it into what the model sees. Implement the `ContextSource` protocol — any object with a `name` and an async `gather()`:
 
 ```python
-from minimal_agent.system_prompt import ContextSource
-
 class DatabaseSchemaSource:
     name = "db_schema"
 
@@ -196,8 +193,19 @@ agent = Agent(
     tools=[...],
     prompt="You are a database assistant.",
     context_sources=[DatabaseSchemaSource()],
+    workspace_root=workspace,
 )
 ```
+
+An optional class-level `placement` (from `minimal_agent.context_sources`) declares when a source is gathered and where its output lands:
+
+| `placement` | Gathered | Lands |
+|---|---|---|
+| `Placement.SESSION` (default) | Once, at session creation | System prompt, labeled as a snapshot |
+| `Placement.RUN` | Once per `agent.run()` | Merged into that run's user message |
+| `Placement.CALL` | Before every LLM call | Trailing message, refreshed each call |
+
+Use `SESSION` for stable facts, and `RUN` for volatile state that changes between user turns — the built-in `GitStatusSource` is RUN-placed, so the model sees the working tree as of the current turn, not session start. Reserve `CALL` for state that must track the agent's own mid-run side effects; its content is re-sent (uncached) on every call. RUN/CALL content is never written to the transcript, and it reaches the conversation only for sessions created through `agent.create_session()` / `agent.load_session()`.
 
 ### Built-in tools
 
@@ -208,6 +216,42 @@ agent = Agent(
 Skills are reusable prompt templates stored as markdown files. Drop a `SKILL.md` at `.minimal_agent/skills/<name>/SKILL.md` (project-level) or `~/.minimal_agent/skills/<name>/SKILL.md` (user-level), and the agent sees it in its skill list. When the model decides a skill is relevant, it loads the full instructions on demand via the built-in `skill` tool — cheap metadata always, expensive prompt only when needed.
 
 Skills are auto-discovered when you pass `workspace_root` to the `Agent`. Format follows the official [Agent Skills Specification](https://agentskills.io/specification). See [minimal_agent/README.md](minimal_agent/README.md#5-write-a-skill) for authoring details.
+
+### Observability
+
+Sessions record what happens as they run — no wiring needed. Two artifacts land next to the transcript in the session directory:
+
+```
+.minimal_agent/sessions/<session-id>/
+├── session.json     # identity, aggregate usage
+├── messages.jsonl   # the conversation
+├── events.jsonl     # the timeline: one timestamped event per line
+├── calls.jsonl      # one provenance record per LLM call
+└── blobs/           # content-addressed system prompts and tool schemas
+```
+
+`events.jsonl` answers *"what happened, when?"* — a run started, a call took 2.7s and used 876 tokens, a tool was denied after 8 seconds of deliberation, a context source failed to gather. `calls.jsonl` + `blobs/` answer *"what exactly did the model see?"* — every call's full input (system prompt, projected messages, injected live blocks, tool schemas) is reconstructible, byte-exactly, from the session directory alone.
+
+Read it back with the audit API:
+
+```python
+from minimal_agent import reconstruct_call, session_runs
+
+# The holistic view: session → runs → calls, each call carrying its
+# full input, its response, latency, usage, and tool executions.
+for run in session_runs(session.session_dir):
+    print(run.run_id, run.status, f"{run.duration_ms}ms")
+    for call in run.calls:
+        print(f"  {call.call_id}: {call.latency_ms}ms, "
+              f"{len(call.input.messages)} input messages")
+
+# Or one call's exact input, verified against its recorded hash.
+call = reconstruct_call(session.session_dir, "r-4c7d01ab:c1")
+assert call.verified
+call.messages   # exactly what the model saw, in order
+```
+
+Recording is fire-and-forget — it can never fail or slow a run — and a bare in-memory `Context()` records nothing. Because system prompts and tool schemas are content-addressed, *"the agent behaves differently since yesterday"* is answered by diffing two blobs.
 
 ## Example: Full-stack web app
 
@@ -261,6 +305,8 @@ The Vite dev server proxies `/api/*` requests to the backend on port 8000.
 3. Chat with the agent — it can read/write/edit files, run shell commands, search the web, and more
 
 The agent streams responses back via Server-Sent Events, and session history is persisted to disk so you can pick up where you left off.
+
+The server also exposes each session's observability artifacts over HTTP: `GET /sessions/{id}/events` (the timeline), `/sessions/{id}/calls` (raw audit records), `/sessions/{id}/calls/{call_id}` (byte-exact input reconstruction), and `/sessions/{id}/runs` (every model input and output, by run and call, in one response).
 
 ## Development
 

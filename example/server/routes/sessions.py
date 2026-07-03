@@ -8,7 +8,7 @@ from app import (
     create_session,
     get_sessions_dir,
     load_agent_type,
-    load_session,
+    open_session_readonly,
     validate_workspace,
 )
 from minimal_agent.agent import Session
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 def _session_response(session: Session, agent_type: str) -> SessionResponse:
     return SessionResponse(
         session_id=session.session_id,
-        workspace_root=session._meta.workspace_root,
+        workspace_root=session.workspace_root,
         agent_type=agent_type,
         model=session.model,
         backend=session.backend,
@@ -73,7 +73,7 @@ async def list_sessions_route():
 @router.get("/{session_id}", response_model=SessionResponse)
 async def get_session_route(session_id: str):
     try:
-        session = load_session(session_id)
+        session = open_session_readonly(session_id)
         agent_type = load_agent_type(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")

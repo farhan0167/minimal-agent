@@ -5,28 +5,49 @@ LLM configuration. Sessions are instances of that identity — every session
 created by an agent inherits its prompt.
 """
 
+import json
+import time
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from typing import Optional, Union
 
-from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
-from ..llm.types import LLMTool, Usage
-from ..skills import discover_skills
-from ..system_prompt import (
+from ..context_sources import (
     ContextSource,
     DirectoryTreeSource,
     GitStatusSource,
+    Placement,
     SkillsContextSource,
-    build_system_prompt,
-    load_prompt,
+    source_placement,
 )
+from ..events import CallResponse, RunEnd, RunEndStatus, RunStart
+from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
+from ..llm.types import LLMTool, Usage
+from ..skills import discover_skills
+from ..system_prompt import build_system_prompt, load_prompt
 from ..tools import ToolContext, dispatch
 from ..tools.base import BaseTool
 from ..tools.builtin.skill import SkillTool
 from ..tools.context import PermissionCallback
 from .context import Context
+from .session import (
+    _DEFAULT_BASE_DIR,
+    Session,
+    SessionConfigMismatchError,
+    SessionMeta,
+)
 
 OnUsageCallback = Callable[[Usage], None]
+
+
+def _canonical_tools_json(tools: list[LLMTool]) -> str:
+    """Canonical JSON of the tool schemas: sorted by name, sorted keys,
+    compact separators — same schemas ⇒ same bytes ⇒ same blob."""
+    return json.dumps(
+        sorted((t.model_dump() for t in tools), key=lambda t: t["name"]),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
 
 # Default context sources for the built-in software engineering agent.
 _DEFAULT_CONTEXT_SOURCES: list[ContextSource] = [
@@ -52,6 +73,7 @@ class Agent:
         self._llm_tools: list[LLMTool] = [t.as_llm_tool() for t in tools]
         self._max_turns = max_turns
         self._behavior_prompt = load_prompt(prompt)
+        self._workspace_root = workspace_root
 
         # Default prompt → default context sources.
         # Custom prompt → blank slate (user opts in).
@@ -73,18 +95,114 @@ class Agent:
                 self._llm_tools.append(skill_tool.as_llm_tool())
                 resolved_sources.append(SkillsContextSource(skills))
 
-        self._context_sources = resolved_sources
+        # Partition by placement: SESSION sources feed the system prompt;
+        # live (RUN/CALL) sources feed the message channel via the Context
+        # of every session this agent creates.
+        self._prompt_sources = [
+            s for s in resolved_sources if source_placement(s) is Placement.SESSION
+        ]
+        self._live_sources = [
+            s for s in resolved_sources if source_placement(s) is not Placement.SESSION
+        ]
+
+        # Canonical fingerprint of the tool schemas — computed once, after
+        # skill discovery has registered its tool. Carried on run.start so
+        # "when did a tool description change?" is answerable from the
+        # session directory alone.
+        self._tools_json = _canonical_tools_json(self._llm_tools)
 
     async def build_system_prompt(self, workspace_root: Path) -> str:
         """Build the full system prompt for a new session.
 
         Combines the behavior prompt, environment block, and context
-        blocks from this agent's configured sources.
+        blocks from this agent's SESSION-placed sources.
         """
         return await build_system_prompt(
             behavior_prompt=self._behavior_prompt,
             workspace_root=workspace_root,
-            context_sources=self._context_sources,
+            context_sources=self._prompt_sources,
+        )
+
+    async def create_session(
+        self,
+        workspace_root: Path | None = None,
+        *,
+        base_dir: Path = _DEFAULT_BASE_DIR,
+    ) -> Session:
+        """Create a new session carrying this agent's identity.
+
+        Builds the system prompt and forwards model/backend from the
+        agent's LLM, so callers state their settings exactly once.
+        workspace_root defaults to the root the Agent was constructed
+        with; passing neither there nor here raises ValueError.
+        """
+        root = workspace_root or self._workspace_root
+        if root is None:
+            raise ValueError(
+                "workspace_root required — pass it to create_session() "
+                "or to the Agent constructor"
+            )
+        system_prompt = await self.build_system_prompt(root)
+        return Session.create(
+            model=self._llm.model,
+            backend=self._llm.backend,
+            system_prompt=system_prompt,
+            workspace_root=str(root),
+            base_dir=base_dir,
+            live_sources=self._live_sources,
+        )
+
+    async def load_session(
+        self,
+        session_id: str,
+        *,
+        base_dir: Path = _DEFAULT_BASE_DIR,
+    ) -> Session:
+        """Resume a session with this agent's identity re-attached.
+
+        Rebuilds the system prompt fresh against the session's persisted
+        workspace root (rebuild, don't restore). Raises
+        SessionConfigMismatchError if the session's model, backend, or
+        workspace don't match this agent's.
+        """
+        meta = Session.read_meta(session_id, base_dir=base_dir)
+        root = self._resolve_load_root(meta)
+        system_prompt = await self.build_system_prompt(root)
+        return Session.load(
+            session_id,
+            model=self._llm.model,
+            backend=self._llm.backend,
+            system_prompt=system_prompt,
+            base_dir=base_dir,
+            live_sources=self._live_sources,
+        )
+
+    def _resolve_load_root(self, meta: SessionMeta) -> Path:
+        """Pick the workspace root to rebuild the prompt against.
+
+        The session's persisted root wins — a session is bound to its
+        workspace. An agent constructed for a different workspace is an
+        identity mismatch, same category as a wrong model. Sessions
+        predating workspace_root persistence fall back to the agent's
+        constructor root.
+        """
+        if meta.workspace_root is not None:
+            persisted = Path(meta.workspace_root).resolve()
+            if (
+                self._workspace_root is not None
+                and self._workspace_root.resolve() != persisted
+            ):
+                raise SessionConfigMismatchError(
+                    "Cannot resume session bound to a different workspace: "
+                    f"session={str(persisted)!r}, "
+                    f"agent={str(self._workspace_root.resolve())!r}"
+                )
+            return persisted
+        if self._workspace_root is not None:
+            return self._workspace_root
+        raise ValueError(
+            f"Session {meta.session_id!r} has no persisted workspace_root "
+            "and the Agent has none — cannot rebuild the system prompt"
         )
 
     async def run(
@@ -98,7 +216,10 @@ class Agent:
         """Run the agent loop, yielding each message as it's produced.
 
         The loop:
-        1. Call LLM with context.get_messages() + tool schemas.
+        1. Call LLM with context.assemble() + tool schemas. assemble()
+           gathers RUN sources on the run's first call (begin_run() marks
+           the boundary), CALL sources every call, and injects the blocks
+           per the merge rule — the loop sends its output verbatim.
         2. Yield the assistant message.
         3. If tool calls present, dispatch each one, yield results.
         4. Repeat until no tool calls or max_turns exhausted.
@@ -114,48 +235,109 @@ class Agent:
         Callbacks:
             on_usage: Called with the Usage from each LLM API call.
             permission_callback: Called when a tool requires user confirmation.
+
+        When the context carries an event emitter, the run is traced:
+        run.start/run.end frame it (run.end fires from a finally, so even
+        an abandoned or crashed run leaves a truthful record), and each
+        LLM call emits a call.response with latency and usage.
         """
-        for _turn in range(self._max_turns):
-            ctx = ToolContext(permission_callback=permission_callback)
-
-            if stream:
-                acc = StreamAccumulator()
-                async for chunk in self._llm.stream(
-                    messages=context.get_messages(),
-                    tools=self._llm_tools,
-                    tool_choice="auto",
-                ):
-                    acc.add(chunk)
-                    yield chunk
-                    # Usage rides the final chunk (include_usage is on by
-                    # default in the facade), not a separate response object.
-                    if on_usage and chunk.usage:
-                        on_usage(chunk.usage)
-                text = acc.text
-                tool_calls = acc.tool_calls()
-            else:
-                resp = await self._llm.generate(
-                    messages=context.get_messages(),
-                    tools=self._llm_tools,
-                    tool_choice="auto",
+        context.begin_run()
+        events = context.events
+        if events is not None:
+            events.emit(
+                RunStart(
+                    model=self._llm.model,
+                    backend=str(self._llm.backend),
+                    tools_json=self._tools_json,
+                    store_len=len(context.store),
                 )
-                if on_usage and resp.usage:
-                    on_usage(resp.usage)
-                text = resp.text
-                tool_calls = resp.tool_calls
-
-            assistant_msg = Message(
-                role=Role.ASSISTANT,
-                content=text,
-                tool_calls=tool_calls,
             )
-            context.add(assistant_msg)
-            yield assistant_msg
+        run_t0 = time.monotonic()
+        calls = 0
+        status = RunEndStatus.MAX_TURNS
 
-            if not tool_calls:
-                return
+        try:
+            for _turn in range(self._max_turns):
+                ctx = ToolContext(
+                    permission_callback=permission_callback,
+                    events=events,
+                )
+                messages = await context.assemble()
+                calls += 1
+                call_t0 = time.monotonic()
 
-            for tc in tool_calls:
-                result_msg = await dispatch(tc, self._tools_by_name, ctx)
-                context.add(result_msg)
-                yield result_msg
+                if stream:
+                    acc = StreamAccumulator()
+                    usage: Optional[Usage] = None
+                    async for chunk in self._llm.stream(
+                        messages=messages,
+                        tools=self._llm_tools,
+                        tool_choice="auto",
+                    ):
+                        acc.add(chunk)
+                        yield chunk
+                        # Usage rides the final chunk (include_usage is on by
+                        # default in the facade), not a separate response
+                        # object.
+                        if chunk.usage:
+                            usage = chunk.usage
+                            if on_usage:
+                                on_usage(chunk.usage)
+                    text = acc.text
+                    tool_calls = acc.tool_calls()
+                else:
+                    resp = await self._llm.generate(
+                        messages=messages,
+                        tools=self._llm_tools,
+                        tool_choice="auto",
+                    )
+                    usage = resp.usage
+                    if on_usage and resp.usage:
+                        on_usage(resp.usage)
+                    text = resp.text
+                    tool_calls = resp.tool_calls
+
+                if events is not None:
+                    events.emit(
+                        CallResponse(
+                            latency_ms=int((time.monotonic() - call_t0) * 1000),
+                            usage=usage.model_dump() if usage else None,
+                            tool_calls=len(tool_calls or []),
+                        )
+                    )
+
+                assistant_msg = Message(
+                    role=Role.ASSISTANT,
+                    content=text,
+                    tool_calls=tool_calls,
+                )
+                context.add(assistant_msg)
+                yield assistant_msg
+
+                if not tool_calls:
+                    status = RunEndStatus.COMPLETED
+                    return
+
+                for tc in tool_calls:
+                    result_msg = await dispatch(tc, self._tools_by_name, ctx)
+                    context.add(result_msg)
+                    yield result_msg
+        except GeneratorExit:
+            # Consumer closed the generator (e.g. client disconnect
+            # mid-stream) — record it truthfully rather than silently.
+            status = RunEndStatus.ABANDONED
+            raise
+        except BaseException:
+            status = RunEndStatus.ERROR
+            raise
+        finally:
+            # Sync emit — fires even on GeneratorExit, where an await
+            # would be illegal.
+            if events is not None:
+                events.emit(
+                    RunEnd(
+                        status=status,
+                        calls=calls,
+                        duration_ms=int((time.monotonic() - run_t0) * 1000),
+                    )
+                )

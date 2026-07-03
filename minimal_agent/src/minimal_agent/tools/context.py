@@ -9,6 +9,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Optional
 
+from ..events import EventEmitter
+
 # Signature: (tool_name, description_of_what_it_wants_to_do) → allowed?
 PermissionCallback = Callable[[str, str], Awaitable[bool]]
 
@@ -23,3 +25,5 @@ class ToolContext:
     """
 
     permission_callback: Optional[PermissionCallback] = field(default=None)
+    # Event seam for tool.start/tool.end emission; None means no recording.
+    events: Optional[EventEmitter] = field(default=None)
