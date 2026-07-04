@@ -132,6 +132,53 @@ Tools are how the agent interacts with the world. Each tool is a class that inhe
 | `Grep` | Search file contents using ripgrep |
 | `Glob` | Find files by name pattern |
 
+### Spawning sub-agents
+
+The built-in `spawn_agents` tool lets the orchestrator LLM fan work out to concurrent sub-agents. Each sub-agent is a fully separate `Agent` with its own isolated `Context` — it doesn't share history with the orchestrator or with other sub-agents. It runs to completion inside the tool call and returns its final text as the tool result. Sub-agents cannot spawn further sub-agents (the tool excludes itself from any sub-agent's tool set, so there's no recursion).
+
+Wire it up like any other tool, but it needs the orchestrator's `LLM` and a name→tool map so it knows what it's allowed to hand out:
+
+```python
+from minimal_agent import Agent
+from minimal_agent.llm import LLM
+from minimal_agent.tools.builtin.grep import Grep
+from minimal_agent.tools.builtin.glob import Glob
+from minimal_agent.tools.builtin.read_file import ReadFile
+from minimal_agent.tools.builtin.spawn_agents import SpawnAgents
+
+llm = LLM(model="gpt-4o", backend="openai")
+workspace = Path.cwd()
+
+builtin_tools = [
+    ReadFile(workspace_root=workspace, read_timestamps={}),
+    Grep(workspace_root=workspace),
+    Glob(workspace_root=workspace),
+]
+tools_by_name = {t.name: t for t in builtin_tools}
+
+spawn_agents = SpawnAgents(
+    llm=llm,                        # sub-agents reuse the orchestrator's LLM
+    available_tools=tools_by_name,   # pool sub-agents can be given tools from
+    workspace_root=workspace,
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[*builtin_tools, spawn_agents],
+    workspace_root=workspace,
+)
+```
+
+The orchestrator LLM decides at call time how many sub-agents to spawn, what each one's task is, and which tools (by name) each gets — up to 10 concurrently. Each `SubAgentSpec` accepts:
+
+| Field | Meaning |
+|---|---|
+| `task` | Self-contained instructions — the sub-agent sees *only* this task, no orchestrator history |
+| `tools` | Tool names from `available_tools` to hand out; `None` gives it everything except `spawn_agents` itself |
+| `max_turns` | Agent-loop turn cap for this sub-agent (1–20, default 5) |
+
+Results come back concatenated, each labeled `[Sub-agent N: <task>]`, with failures captured inline as `ERROR: <type>: <message>` rather than raised — a crashing sub-agent doesn't take down the others or the orchestrator.
+
 ### System Prompt
 
 The system prompt is built from three parts: a **behavior prompt** (markdown that defines the agent's personality), an **environment block** (workspace metadata), and **context blocks** (from SESSION-placed context sources, labeled as a session-start snapshot). The `system_prompt` module handles assembly — you just pass a markdown file or string. Volatile state like git status doesn't live here: it rides the message list, refreshed each run (see [Write a custom context source](#4-write-a-custom-context-source)).
