@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from app import (
     create_session,
+    get_session_manager,
     get_sessions_dir,
     load_agent_type,
     open_session_readonly,
@@ -52,7 +53,7 @@ async def create_session_route(req: CreateSessionRequest):
 
 @router.get("", response_model=SessionListResponse)
 async def list_sessions_route():
-    sessions = Session.list_sessions(base_dir=get_sessions_dir())
+    sessions = get_session_manager().list_sessions()
     return SessionListResponse(
         sessions=[
             SessionResponse(

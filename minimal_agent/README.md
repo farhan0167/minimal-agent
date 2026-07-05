@@ -88,7 +88,7 @@ async for item in agent.run(session.context, stream=True):
         print()  # assistant turn committed — finish the line
 ```
 
-Token usage rides the final chunk of each turn, so `on_usage` works the same in both modes.
+Token usage rides the final chunk of each turn, so `on_usage` works the same in both modes. (`on_usage` is a display hook for live counters — session accounting happens automatically, no wiring needed.)
 
 ### Resuming a session
 
@@ -112,7 +112,23 @@ The agent owns its **identity** — the same agent instance can drive many sessi
 
 ### Session
 
-A `Session` is a single conversation. It holds the message history and metadata (model, backend, timestamps, token usage, workspace root). Sessions are created with `agent.create_session()` and resumed with `agent.load_session()` — the factories stamp the agent's identity onto the session, so the prompt, settings, and context sources are always consistent. The lower-level `Session.create()` / `Session.load()` remain available for non-agent consumers. Message history is persisted as JSONL on disk.
+A `Session` is a single conversation. It holds the message history and metadata (model, backend, timestamps, token usage, workspace root). Sessions are created with `agent.create_session()` and resumed with `agent.load_session()` — the factories stamp the agent's identity onto the session, so the prompt, settings, and context sources are always consistent.
+
+Where sessions live — and how they're recorded — is a `SessionManager`. A default one records under `.minimal_agent/sessions/`; construct one only to change policy:
+
+```python
+from minimal_agent import SessionManager
+
+agent = Agent(llm=llm, tools=[...], workspace_root=workspace,
+              sessions=SessionManager(base_dir=Path("/srv/sessions")))
+recent = agent.sessions.list_sessions()
+```
+
+Every session records itself as it runs: the transcript (`messages.jsonl`), a timeline of everything that happened (`events.jsonl`), and a byte-exact audit of every LLM call (`calls.jsonl` + `blobs/`). Token usage — including usage from any sub-agents — is accounted into `session.json` automatically.
+
+### Scope
+
+A `Scope` is one node in a session's recording tree. The session root is a scope; a tool that runs its own agent opens a *child scope* under it (`ctx.scope.child(...)`), which gets the identical artifact kit in `agents/<agent-id>/` inside the session directory — full transcript, timeline, and call audit for the nested agent, linked to the exact tool call that spawned it. You only touch scopes when writing a tool that embeds an agent; everything else records itself.
 
 ### Context
 
@@ -178,6 +194,24 @@ The orchestrator LLM decides at call time how many sub-agents to spawn, what eac
 | `max_turns` | Agent-loop turn cap for this sub-agent (1–20, default 5) |
 
 Results come back concatenated, each labeled `[Sub-agent N: <task>]`, with failures captured inline as `ERROR: <type>: <message>` rather than raised — a crashing sub-agent doesn't take down the others or the orchestrator.
+
+Every sub-agent is fully recorded under the session's `agents/` directory: its own transcript, timeline, and call audit, plus an `agent.json` naming who spawned it, its task, final status, and token usage. The parent session's timeline gains `agent.spawn` / `agent.end` events, and sub-agent usage rolls up into the session's totals — nothing an agent does in a session is off the record.
+
+If you write your own tool that runs an agent inside it, ask the tool's scope for a child and you get the same recording:
+
+```python
+async def invoke(self, args, ctx: ToolContext) -> str:
+    with ctx.scope.child(
+        spawned_by=self.name, task=args.task, tool_call_id=ctx.tool_call_id
+    ) as scope:
+        context = scope.new_context(system_prompt=...)
+        context.add(Message(role=Role.USER, content=args.task))
+        async for msg in my_agent.run(context):
+            ...
+    return final_answer
+```
+
+The child scope allocates its directory, records the nested run end to end, and closes with a truthful status (`completed` / `error` / `abandoned`) even if the body raises. Under a bare `ToolContext()` (unit tests), the same code runs unrecorded.
 
 ### System Prompt
 

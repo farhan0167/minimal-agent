@@ -20,7 +20,7 @@ from minimal_agent.llm.types import (
 from pdf2image import convert_from_bytes
 from sse_starlette.sse import EventSourceResponse
 
-from app import get_sessions_dir, open_session_readonly, resume_session
+from app import get_session_manager, open_session_readonly, resume_session
 from schemas import AttachmentContent, ChatRequest
 
 router = APIRouter(prefix="/sessions", tags=["chat"])
@@ -119,11 +119,12 @@ async def _stream_agent(
 
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
+    # Display-only tally for the SSE "done" event. Session accounting is
+    # automatic — the session subscribes to its scope's usage totals.
     def on_usage(usage):
         usage_total["prompt_tokens"] += usage.prompt_tokens
         usage_total["completion_tokens"] += usage.completion_tokens
         usage_total["total_tokens"] += usage.total_tokens
-        session.update_usage(usage)
 
     async def auto_approve(tool_name: str, description: str) -> bool:
         return True
@@ -186,7 +187,7 @@ async def _stream_agent(
 async def chat_route(session_id: str, req: ChatRequest):
     # Validate session exists before starting stream.
     try:
-        Session.read_meta(session_id, base_dir=get_sessions_dir())
+        get_session_manager().read_meta(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
 

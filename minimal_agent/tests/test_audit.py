@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from minimal_agent.agent import Agent
-from minimal_agent.agent.session import Session
+from minimal_agent.agent.session import SessionManager
 from minimal_agent.audit import (
     CallRecordNotFoundError,
     read_call_records,
@@ -41,10 +41,9 @@ async def _session_with_one_call(tmp_path, **create_overrides):
         model="test-model",
         backend="openai",
         system_prompt="you are helpful",
-        base_dir=tmp_path,
     )
     defaults.update(create_overrides)
-    session = Session.create(**defaults)
+    session = SessionManager(base_dir=tmp_path).create_session(**defaults)
     session.context.add(Message(role=Role.USER, content="what changed?"))
     assembled = await session.context.assemble()
     return session, assembled
@@ -101,8 +100,8 @@ async def test_tampered_transcript_reports_unverified_not_error(tmp_path):
 
 
 def test_readers_return_empty_for_sessions_predating_the_artifacts(tmp_path):
-    session = Session.create(
-        model="test-model", backend="openai", base_dir=tmp_path
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai"
     )
     (session.session_dir / "events.jsonl").unlink()
 
@@ -144,12 +143,8 @@ async def _run_two_call_session(tmp_path):
         side_effect=[
             GenerateResponse(
                 text="checking",
-                tool_calls=[
-                    ToolCall(id="tc_1", name="probe_tool", arguments={})
-                ],
-                usage=Usage(
-                    prompt_tokens=10, completion_tokens=5, total_tokens=15
-                ),
+                tool_calls=[ToolCall(id="tc_1", name="probe_tool", arguments={})],
+                usage=Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
             ),
             GenerateResponse(text="the answer", tool_calls=None),
         ]
@@ -160,8 +155,9 @@ async def _run_two_call_session(tmp_path):
         prompt="you are a test agent",
         workspace_root=ws,
         enable_skills=False,
+        sessions=SessionManager(base_dir=tmp_path / "sessions"),
     )
-    session = await agent.create_session(base_dir=tmp_path / "sessions")
+    session = await agent.create_session()
     session.context.add(Message(role=Role.USER, content="go"))
     async for _ in agent.run(session.context):
         pass
@@ -220,15 +216,15 @@ async def test_session_runs_degraded_direct_assemble(tmp_path):
 
 
 def test_session_runs_empty_session(tmp_path):
-    session = Session.create(
-        model="test-model", backend="openai", base_dir=tmp_path
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai"
     )
     assert session_runs(session.session_dir) == []
 
 
 async def test_reconstruct_carries_fingerprint_and_parsed_tools(tmp_path):
-    session = Session.create(
-        model="test-model", backend="openai", base_dir=tmp_path
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai"
     )
     session.context.events.emit(
         RunStart(

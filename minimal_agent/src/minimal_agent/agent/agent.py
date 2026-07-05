@@ -30,9 +30,9 @@ from ..tools.builtin.skill import SkillTool
 from ..tools.context import PermissionCallback
 from .context import Context
 from .session import (
-    _DEFAULT_BASE_DIR,
     Session,
     SessionConfigMismatchError,
+    SessionManager,
     SessionMeta,
 )
 
@@ -67,8 +67,12 @@ class Agent:
         max_turns: int = 10,
         workspace_root: Path | None = None,
         enable_skills: bool = True,
+        sessions: SessionManager | None = None,
     ) -> None:
         self._llm = llm
+        # Identity lives here; persistence policy lives in the manager.
+        # The default manager records under .minimal_agent/sessions.
+        self._sessions = sessions if sessions is not None else SessionManager()
         self._tools_by_name: dict[str, BaseTool] = {t.name: t for t in tools}
         self._llm_tools: list[LLMTool] = [t.as_llm_tool() for t in tools]
         self._max_turns = max_turns
@@ -123,18 +127,19 @@ class Agent:
             context_sources=self._prompt_sources,
         )
 
-    async def create_session(
-        self,
-        workspace_root: Path | None = None,
-        *,
-        base_dir: Path = _DEFAULT_BASE_DIR,
-    ) -> Session:
+    @property
+    def sessions(self) -> SessionManager:
+        """The persistence policy this agent's session factories use."""
+        return self._sessions
+
+    async def create_session(self, workspace_root: Path | None = None) -> Session:
         """Create a new session carrying this agent's identity.
 
-        Builds the system prompt and forwards model/backend from the
-        agent's LLM, so callers state their settings exactly once.
-        workspace_root defaults to the root the Agent was constructed
-        with; passing neither there nor here raises ValueError.
+        Identity (prompt, model/backend, live sources) comes from the
+        agent; persistence wiring comes from the attached SessionManager —
+        callers state each exactly once. workspace_root defaults to the
+        root the Agent was constructed with; passing neither there nor
+        here raises ValueError.
         """
         root = workspace_root or self._workspace_root
         if root is None:
@@ -143,21 +148,15 @@ class Agent:
                 "or to the Agent constructor"
             )
         system_prompt = await self.build_system_prompt(root)
-        return Session.create(
+        return self._sessions.create_session(
             model=self._llm.model,
             backend=self._llm.backend,
             system_prompt=system_prompt,
             workspace_root=str(root),
-            base_dir=base_dir,
             live_sources=self._live_sources,
         )
 
-    async def load_session(
-        self,
-        session_id: str,
-        *,
-        base_dir: Path = _DEFAULT_BASE_DIR,
-    ) -> Session:
+    async def load_session(self, session_id: str) -> Session:
         """Resume a session with this agent's identity re-attached.
 
         Rebuilds the system prompt fresh against the session's persisted
@@ -165,15 +164,14 @@ class Agent:
         SessionConfigMismatchError if the session's model, backend, or
         workspace don't match this agent's.
         """
-        meta = Session.read_meta(session_id, base_dir=base_dir)
+        meta = self._sessions.read_meta(session_id)
         root = self._resolve_load_root(meta)
         system_prompt = await self.build_system_prompt(root)
-        return Session.load(
+        return self._sessions.load_session(
             session_id,
             model=self._llm.model,
             backend=self._llm.backend,
             system_prompt=system_prompt,
-            base_dir=base_dir,
             live_sources=self._live_sources,
         )
 
@@ -236,31 +234,31 @@ class Agent:
             on_usage: Called with the Usage from each LLM API call.
             permission_callback: Called when a tool requires user confirmation.
 
-        When the context carries an event emitter, the run is traced:
-        run.start/run.end frame it (run.end fires from a finally, so even
-        an abandoned or crashed run leaves a truthful record), and each
-        LLM call emits a call.response with latency and usage.
+        The run is traced through the context's scope: run.start/run.end
+        frame it (run.end fires from a finally, so even an abandoned or
+        crashed run leaves a truthful record), and each LLM call emits a
+        call.response with latency and usage. On a bare context the scope
+        is a NullScope and the same emissions go nowhere.
         """
         context.begin_run()
         events = context.events
-        if events is not None:
-            events.emit(
-                RunStart(
-                    model=self._llm.model,
-                    backend=str(self._llm.backend),
-                    tools_json=self._tools_json,
-                    store_len=len(context.store),
-                )
+        events.emit(
+            RunStart(
+                model=self._llm.model,
+                backend=str(self._llm.backend),
+                tools_json=self._tools_json,
+                store_len=len(context.store),
             )
+        )
         run_t0 = time.monotonic()
         calls = 0
         status = RunEndStatus.MAX_TURNS
 
         try:
             for _turn in range(self._max_turns):
-                ctx = ToolContext(
+                tool_ctx = ToolContext(
                     permission_callback=permission_callback,
-                    events=events,
+                    scope=context.scope,
                 )
                 messages = await context.assemble()
                 calls += 1
@@ -297,14 +295,13 @@ class Agent:
                     text = resp.text
                     tool_calls = resp.tool_calls
 
-                if events is not None:
-                    events.emit(
-                        CallResponse(
-                            latency_ms=int((time.monotonic() - call_t0) * 1000),
-                            usage=usage.model_dump() if usage else None,
-                            tool_calls=len(tool_calls or []),
-                        )
+                events.emit(
+                    CallResponse(
+                        latency_ms=int((time.monotonic() - call_t0) * 1000),
+                        usage=usage.model_dump() if usage else None,
+                        tool_calls=len(tool_calls or []),
                     )
+                )
 
                 assistant_msg = Message(
                     role=Role.ASSISTANT,
@@ -319,7 +316,7 @@ class Agent:
                     return
 
                 for tc in tool_calls:
-                    result_msg = await dispatch(tc, self._tools_by_name, ctx)
+                    result_msg = await dispatch(tc, self._tools_by_name, tool_ctx)
                     context.add(result_msg)
                     yield result_msg
         except GeneratorExit:
@@ -333,11 +330,10 @@ class Agent:
         finally:
             # Sync emit — fires even on GeneratorExit, where an await
             # would be illegal.
-            if events is not None:
-                events.emit(
-                    RunEnd(
-                        status=status,
-                        calls=calls,
-                        duration_ms=int((time.monotonic() - run_t0) * 1000),
-                    )
+            events.emit(
+                RunEnd(
+                    status=status,
+                    calls=calls,
+                    duration_ms=int((time.monotonic() - run_t0) * 1000),
                 )
+            )

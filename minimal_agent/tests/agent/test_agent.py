@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel
 
-from minimal_agent.agent import Agent, Context
-from minimal_agent.agent.session import Session, SessionConfigMismatchError
+from minimal_agent.agent import Agent, Context, NullScope
+from minimal_agent.agent.session import SessionConfigMismatchError, SessionManager
 from minimal_agent.context_sources import (
     DirectoryTreeSource,
     GitStatusSource,
@@ -288,10 +288,14 @@ class _CountingSource:
         return f"gathered {self.calls}"
 
 
-def _make_factory_agent(workspace_root=None, model="test-model", **kwargs):
+def _make_factory_agent(
+    workspace_root=None, model="test-model", base_dir=None, **kwargs
+):
     llm = _make_llm(return_value=GenerateResponse(text="hi", tool_calls=None))
     llm.model = model
     llm.backend = "openai"
+    if base_dir is not None:
+        kwargs["sessions"] = SessionManager(base_dir=base_dir)
     return Agent(
         llm=llm,
         tools=[],
@@ -304,9 +308,9 @@ def _make_factory_agent(workspace_root=None, model="test-model", **kwargs):
 async def test_create_session_bakes_prompt_and_settings(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
-    agent = _make_factory_agent(workspace_root=ws)
+    agent = _make_factory_agent(workspace_root=ws, base_dir=tmp_path / "sessions")
 
-    session = await agent.create_session(base_dir=tmp_path / "sessions")
+    session = await agent.create_session()
 
     msgs = session.context.get_messages()
     assert msgs[0].role == Role.SYSTEM
@@ -321,17 +325,19 @@ async def test_create_session_explicit_root_overrides(tmp_path):
     other_ws = tmp_path / "b"
     constructor_ws.mkdir()
     other_ws.mkdir()
-    agent = _make_factory_agent(workspace_root=constructor_ws)
+    agent = _make_factory_agent(
+        workspace_root=constructor_ws, base_dir=tmp_path / "sessions"
+    )
 
-    session = await agent.create_session(other_ws, base_dir=tmp_path / "sessions")
+    session = await agent.create_session(other_ws)
     assert session.workspace_root == str(other_ws)
 
 
 async def test_create_session_without_any_root_raises(tmp_path):
-    agent = _make_factory_agent(workspace_root=None)
+    agent = _make_factory_agent(workspace_root=None, base_dir=tmp_path / "sessions")
 
     with pytest.raises(ValueError, match="workspace_root"):
-        await agent.create_session(base_dir=tmp_path / "sessions")
+        await agent.create_session()
 
 
 async def test_load_session_reattaches_system_prompt(tmp_path):
@@ -339,10 +345,10 @@ async def test_load_session_reattaches_system_prompt(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     base = tmp_path / "sessions"
-    agent = _make_factory_agent(workspace_root=ws)
-    created = await agent.create_session(base_dir=base)
+    agent = _make_factory_agent(workspace_root=ws, base_dir=base)
+    created = await agent.create_session()
 
-    loaded = await agent.load_session(created.session_id, base_dir=base)
+    loaded = await agent.load_session(created.session_id)
 
     msgs = loaded.context.get_messages()
     assert msgs[0].role == Role.SYSTEM
@@ -355,12 +361,14 @@ async def test_load_session_rebuilds_prompt_fresh(tmp_path):
     ws.mkdir()
     base = tmp_path / "sessions"
     source = _CountingSource()
-    agent = _make_factory_agent(workspace_root=ws, context_sources=[source])
+    agent = _make_factory_agent(
+        workspace_root=ws, context_sources=[source], base_dir=base
+    )
 
-    created = await agent.create_session(base_dir=base)
+    created = await agent.create_session()
     assert "gathered 1" in created.context.get_messages()[0].content
 
-    loaded = await agent.load_session(created.session_id, base_dir=base)
+    loaded = await agent.load_session(created.session_id)
     assert "gathered 2" in loaded.context.get_messages()[0].content
 
 
@@ -368,11 +376,13 @@ async def test_load_session_rejects_different_model(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     base = tmp_path / "sessions"
-    created = await _make_factory_agent(workspace_root=ws).create_session(base_dir=base)
+    created = await _make_factory_agent(
+        workspace_root=ws, base_dir=base
+    ).create_session()
 
-    other = _make_factory_agent(workspace_root=ws, model="other-model")
+    other = _make_factory_agent(workspace_root=ws, model="other-model", base_dir=base)
     with pytest.raises(SessionConfigMismatchError, match="model"):
-        await other.load_session(created.session_id, base_dir=base)
+        await other.load_session(created.session_id)
 
 
 async def test_load_session_rejects_different_workspace(tmp_path):
@@ -381,11 +391,13 @@ async def test_load_session_rejects_different_workspace(tmp_path):
     ws.mkdir()
     other_ws.mkdir()
     base = tmp_path / "sessions"
-    created = await _make_factory_agent(workspace_root=ws).create_session(base_dir=base)
+    created = await _make_factory_agent(
+        workspace_root=ws, base_dir=base
+    ).create_session()
 
-    other = _make_factory_agent(workspace_root=other_ws)
+    other = _make_factory_agent(workspace_root=other_ws, base_dir=base)
     with pytest.raises(SessionConfigMismatchError, match="workspace"):
-        await other.load_session(created.session_id, base_dir=base)
+        await other.load_session(created.session_id)
 
 
 async def test_load_session_equal_roots_after_resolve_ok(tmp_path):
@@ -393,35 +405,41 @@ async def test_load_session_equal_roots_after_resolve_ok(tmp_path):
     ws = tmp_path / "ws"
     (ws / "sub").mkdir(parents=True)
     base = tmp_path / "sessions"
-    created = await _make_factory_agent(workspace_root=ws).create_session(base_dir=base)
+    created = await _make_factory_agent(
+        workspace_root=ws, base_dir=base
+    ).create_session()
 
     same_ws_spelled_differently = ws / "sub" / ".."
-    agent = _make_factory_agent(workspace_root=same_ws_spelled_differently)
-    loaded = await agent.load_session(created.session_id, base_dir=base)
+    agent = _make_factory_agent(
+        workspace_root=same_ws_spelled_differently, base_dir=base
+    )
+    loaded = await agent.load_session(created.session_id)
     assert loaded.session_id == created.session_id
 
 
 async def test_load_session_legacy_meta_falls_back_to_agent_root(tmp_path):
     """Sessions persisted before workspace_root use the agent's root."""
     base = tmp_path / "sessions"
-    legacy = Session.create(
-        model="test-model", backend="openai", base_dir=base
+    legacy = SessionManager(base_dir=base).create_session(
+        model="test-model", backend="openai"
     )  # no workspace_root persisted
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    agent = _make_factory_agent(workspace_root=ws)
-    loaded = await agent.load_session(legacy.session_id, base_dir=base)
+    agent = _make_factory_agent(workspace_root=ws, base_dir=base)
+    loaded = await agent.load_session(legacy.session_id)
     assert loaded.context.get_messages()[0].role == Role.SYSTEM
 
 
 async def test_load_session_no_root_anywhere_raises(tmp_path):
     base = tmp_path / "sessions"
-    legacy = Session.create(model="test-model", backend="openai", base_dir=base)
+    legacy = SessionManager(base_dir=base).create_session(
+        model="test-model", backend="openai"
+    )
 
-    agent = _make_factory_agent(workspace_root=None)
+    agent = _make_factory_agent(workspace_root=None, base_dir=base)
     with pytest.raises(ValueError, match="workspace_root"):
-        await agent.load_session(legacy.session_id, base_dir=base)
+        await agent.load_session(legacy.session_id)
 
 
 # ---- live sources through the loop (Placement.RUN / Placement.CALL) --------
@@ -461,8 +479,9 @@ async def _session_with_source(tmp_path, source, llm_responses):
         prompt="you are a test agent",
         context_sources=[source],
         workspace_root=ws,
+        sessions=SessionManager(base_dir=tmp_path / "sessions"),
     )
-    session = await agent.create_session(base_dir=tmp_path / "sessions")
+    session = await agent.create_session()
     return agent, session, llm
 
 
@@ -575,8 +594,9 @@ async def test_streaming_run_assembles_like_nonstreaming(tmp_path):
         prompt="you are a test agent",
         context_sources=[source],
         workspace_root=ws,
+        sessions=SessionManager(base_dir=tmp_path / "sessions"),
     )
-    session = await agent.create_session(base_dir=tmp_path / "sessions")
+    session = await agent.create_session()
     session.context.add(Message(role=Role.USER, content="hello"))
 
     async for _ in agent.run(session.context, stream=True):
@@ -595,10 +615,10 @@ async def test_factories_partition_session_and_live_sources(tmp_path):
     ws.mkdir()
     base = tmp_path / "sessions"
     agent = _make_factory_agent(
-        workspace_root=ws, context_sources=[session_src, run_src]
+        workspace_root=ws, context_sources=[session_src, run_src], base_dir=base
     )
 
-    created = await agent.create_session(base_dir=base)
+    created = await agent.create_session()
     prompt = created.context.get_messages()[0].content
     assert "gathered 1" in prompt  # SESSION source baked in
     assert "liveProbe" not in prompt  # RUN source stays out
@@ -608,7 +628,7 @@ async def test_factories_partition_session_and_live_sources(tmp_path):
     assert '<context name="liveProbe">' in msgs[-1].content
 
     # load_session re-attaches the live sources too.
-    loaded = await agent.load_session(created.session_id, base_dir=base)
+    loaded = await agent.load_session(created.session_id)
     loaded.context.add(Message(role=Role.USER, content="again"))
     msgs = await loaded.context.assemble()
     assert '<context name="liveProbe">' in msgs[-1].content
@@ -659,8 +679,13 @@ async def test_default_agent_injects_git_status_into_user_message(tmp_path):
     llm = _make_llm(return_value=GenerateResponse(text="hi", tool_calls=None))
     llm.model = "test-model"
     llm.backend = "openai"
-    agent = Agent(llm=llm, tools=[], workspace_root=ws)
-    session = await agent.create_session(base_dir=tmp_path / "sessions")
+    agent = Agent(
+        llm=llm,
+        tools=[],
+        workspace_root=ws,
+        sessions=SessionManager(base_dir=tmp_path / "sessions"),
+    )
+    session = await agent.create_session()
 
     system_prompt = session.context.get_messages()[0].content
     assert '<context name="gitStatus">' not in system_prompt
@@ -687,7 +712,9 @@ class _RecorderSink:
 
 def _recorded_context(**ctx_kwargs) -> tuple[Context, "_RecorderSink"]:
     rec = _RecorderSink()
-    ctx = Context(events=EventEmitter(sinks=[rec]), **ctx_kwargs)
+    scope = NullScope()
+    scope.events = EventEmitter(sinks=[rec])
+    ctx = Context(scope=scope, **ctx_kwargs)
     return ctx, rec
 
 
@@ -862,7 +889,7 @@ async def test_run_start_tools_json_parses_back_to_the_tool_schemas():
 async def test_bare_context_emits_nothing_and_runs_unchanged():
     llm = _make_llm(return_value=GenerateResponse(text="hi", tool_calls=None))
     agent = Agent(llm=llm, tools=[])
-    context = Context()  # no emitter
+    context = Context()  # NullScope: zero-sink emitter
     context.add(Message(role=Role.USER, content="go"))
 
     messages = [msg async for msg in agent.run(context)]

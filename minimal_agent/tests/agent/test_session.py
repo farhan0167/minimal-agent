@@ -4,7 +4,8 @@ import json
 import pytest
 
 from minimal_agent.agent.context import _merge_into_user
-from minimal_agent.agent.session import Session, SessionConfigMismatchError
+from minimal_agent.agent.session import SessionConfigMismatchError, SessionManager
+from minimal_agent.events import CallResponse
 from minimal_agent.llm.types import Message, Role, Usage
 
 _MODEL = "gpt-4o-mini"
@@ -13,24 +14,23 @@ _BACKEND = "openai"
 
 def _create(tmp_path, **overrides):
     """Helper to create a session with default model/backend."""
-    defaults = dict(
-        model=_MODEL,
-        backend=_BACKEND,
-        base_dir=tmp_path,
-    )
+    defaults = dict(model=_MODEL, backend=_BACKEND)
     defaults.update(overrides)
-    return Session.create(**defaults)
+    return SessionManager(base_dir=tmp_path).create_session(**defaults)
 
 
 def _load(session_id, tmp_path, **overrides):
     """Helper to load a session with default model/backend."""
-    defaults = dict(
-        model=_MODEL,
-        backend=_BACKEND,
-        base_dir=tmp_path,
-    )
+    defaults = dict(model=_MODEL, backend=_BACKEND)
     defaults.update(overrides)
-    return Session.load(session_id, **defaults)
+    return SessionManager(base_dir=tmp_path).load_session(session_id, **defaults)
+
+
+def _report_usage(session, usage: Usage) -> None:
+    """Report usage the way the loop does: a call.response on the scope."""
+    session.scope.events.emit(
+        CallResponse(latency_ms=1, usage=usage.model_dump(), tool_calls=0)
+    )
 
 
 def test_create_makes_directory_and_files(tmp_path):
@@ -117,15 +117,16 @@ def test_load_rejects_both_mismatched(tmp_path):
     assert "backend" in str(exc_info.value)
 
 
-def test_update_usage_accumulates(tmp_path):
+def test_usage_accumulates_from_call_response_events(tmp_path):
+    """Accounting is a sink: call.response usage lands in session.json."""
     session = _create(tmp_path)
 
     u1 = Usage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
-    session.update_usage(u1)
+    _report_usage(session, u1)
     assert session.usage == u1
 
     u2 = Usage(prompt_tokens=200, completion_tokens=100, total_tokens=300)
-    session.update_usage(u2)
+    _report_usage(session, u2)
 
     assert session.usage is not None
     assert session.usage.prompt_tokens == 300
@@ -137,24 +138,25 @@ def test_update_usage_accumulates(tmp_path):
     assert meta["usage"]["prompt_tokens"] == 300
 
 
-def test_update_usage_updates_timestamp(tmp_path):
+def test_usage_updates_timestamp(tmp_path):
     session = _create(tmp_path)
     original_updated = session.updated_at
 
-    u = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
-    session.update_usage(u)
+    _report_usage(
+        session, Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+    )
 
     assert session.updated_at >= original_updated
 
 
 def test_list_sessions_sorted_by_updated_at(tmp_path):
     s1 = _create(tmp_path)
-    s1.update_usage(Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2))
+    _report_usage(s1, Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2))
 
     s2 = _create(tmp_path)
-    s2.update_usage(Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2))
+    _report_usage(s2, Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2))
 
-    sessions = Session.list_sessions(base_dir=tmp_path)
+    sessions = SessionManager(base_dir=tmp_path).list_sessions()
 
     assert len(sessions) == 2
     # Most recently updated first
@@ -166,7 +168,7 @@ def test_read_meta_returns_metadata(tmp_path):
     session = _create(tmp_path, workspace_root="/some/workspace")
     sid = session.session_id
 
-    meta = Session.read_meta(sid, base_dir=tmp_path)
+    meta = SessionManager(base_dir=tmp_path).read_meta(sid)
 
     assert meta.session_id == sid
     assert meta.model == _MODEL
@@ -180,13 +182,13 @@ def test_read_meta_does_not_touch_messages(tmp_path):
     sid = session.session_id
     (tmp_path / sid / "messages.jsonl").write_text("not json at all\n")
 
-    meta = Session.read_meta(sid, base_dir=tmp_path)
+    meta = SessionManager(base_dir=tmp_path).read_meta(sid)
     assert meta.session_id == sid
 
 
 def test_read_meta_missing_session_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
-        Session.read_meta("no-such-session", base_dir=tmp_path)
+        SessionManager(base_dir=tmp_path).read_meta("no-such-session")
 
 
 def test_workspace_root_property(tmp_path):
@@ -251,12 +253,12 @@ async def test_load_without_persisted_root_degrades_silently(tmp_path):
 
 
 def test_list_sessions_empty_dir(tmp_path):
-    sessions = Session.list_sessions(base_dir=tmp_path)
+    sessions = SessionManager(base_dir=tmp_path).list_sessions()
     assert sessions == []
 
 
 def test_list_sessions_nonexistent_dir(tmp_path):
-    sessions = Session.list_sessions(base_dir=tmp_path / "nope")
+    sessions = SessionManager(base_dir=tmp_path / "nope").list_sessions()
     assert sessions == []
 
 
