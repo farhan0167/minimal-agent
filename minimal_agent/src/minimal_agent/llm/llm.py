@@ -510,6 +510,11 @@ class LLM:
                 text=delta.content or "",
                 tool_calls=tool_call_deltas,
                 finish_reason=choice.finish_reason,
+                # OpenAI sends usage as a dedicated trailing chunk with empty
+                # choices (handled above), but OpenRouter and other compat
+                # providers attach it to the final content chunk — parse it
+                # here too or those providers never report usage.
+                usage=self._parse_usage(getattr(event, "usage", None)),
                 raw=event,
             )
 
@@ -566,9 +571,7 @@ class StreamAccumulator:
                 args = json.loads(slot["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {"__raw__": slot["arguments"]}
-            calls.append(
-                ToolCall(id=slot["id"], name=slot["name"], arguments=args)
-            )
+            calls.append(ToolCall(id=slot["id"], name=slot["name"], arguments=args))
         return calls
 
 
