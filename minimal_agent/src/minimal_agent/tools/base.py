@@ -12,7 +12,7 @@ from typing import ClassVar, Generic, TypeVar
 
 from pydantic import BaseModel
 
-from ..llm.types import LLMTool
+from ..llm.types import ContentPart, LLMTool
 from .context import ToolContext
 from .results import ValidationOk, ValidationResult
 
@@ -82,6 +82,19 @@ class BaseTool(Generic[InputModel, Out], ABC):
         as a tool-result message. Default: `str(out)`.
         """
         return str(out)
+
+    def render_parts_for_assistant(self, out: Out) -> list[ContentPart]:
+        """Non-text content parts (images, etc.) to relocate onto a trailing
+        user message. Default: none — only multimodal tools override this.
+
+        The OpenAI Chat Completions API forbids non-text content on a `tool`
+        message, so images an image-reading tool produces cannot ride its
+        tool-result message. The agent loop collects these parts across the
+        turn's tool batch and appends them to a single user message after the
+        batch is answered. See
+        [.claude/specifications/multimodal-tool-results.md](../.claude/specifications/multimodal-tool-results.md).
+        """
+        return []
 
     # --- Wire-format projection ---------------------------------------------
 

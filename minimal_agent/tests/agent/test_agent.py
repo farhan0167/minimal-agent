@@ -121,6 +121,77 @@ async def test_tool_calls_dispatched_and_yielded():
     assert messages[2].content == "The answer is 42."
 
 
+class _ImageTool(BaseTool[_EmptyInput, dict]):
+    """Tool that returns an image part, like read_file on an image."""
+
+    name = "image_tool"
+    input_schema = _EmptyInput
+
+    async def invoke(self, args: _EmptyInput, ctx: ToolContext) -> dict:
+        return {"uri": "data:image/png;base64,ABC"}
+
+    def render_result_for_assistant(self, out: dict) -> str:
+        return "image attached below"
+
+    def render_parts_for_assistant(self, out: dict):
+        from minimal_agent.llm.types import ImagePart, ImageUrl
+
+        return [ImagePart(image_url=ImageUrl(url=out["uri"]))]
+
+
+async def test_image_tool_flushes_trailing_user_message():
+    """A tool producing image parts yields a trailing USER message with the
+    parts, positioned AFTER the tool result (API-legal ordering)."""
+    responses = [
+        GenerateResponse(
+            text="reading",
+            tool_calls=[ToolCall(id="tc_1", name="image_tool", arguments={})],
+        ),
+        GenerateResponse(text="I see it.", tool_calls=None),
+    ]
+    llm = _make_llm(side_effect=responses)
+    agent = Agent(llm=llm, tools=[_ImageTool()])
+
+    context = Context()
+    context.add(Message(role=Role.USER, content="look"))
+
+    messages = [msg async for msg in agent.run(context)]
+
+    # assistant(tool_calls) → tool → user(parts) → assistant
+    assert [m.role for m in messages] == [
+        Role.ASSISTANT,
+        Role.TOOL,
+        Role.USER,
+        Role.ASSISTANT,
+    ]
+    # The tool message is the text pointer (no image bytes on it).
+    assert messages[1].content == "image attached below"
+    # The trailing user message carries the image part.
+    parts = messages[2].content
+    assert isinstance(parts, list) and len(parts) == 1
+    assert parts[0].image_url.url == "data:image/png;base64,ABC"
+
+
+async def test_text_tool_produces_no_trailing_user_message():
+    """A text-only tool contributes no parts — no synthetic user message."""
+    responses = [
+        GenerateResponse(
+            text="checking",
+            tool_calls=[ToolCall(id="tc_1", name="test_tool", arguments={})],
+        ),
+        GenerateResponse(text="done", tool_calls=None),
+    ]
+    llm = _make_llm(side_effect=responses)
+    agent = Agent(llm=llm, tools=[_make_tool("test_tool")])
+
+    context = Context()
+    context.add(Message(role=Role.USER, content="go"))
+
+    messages = [msg async for msg in agent.run(context)]
+
+    assert [m.role for m in messages] == [Role.ASSISTANT, Role.TOOL, Role.ASSISTANT]
+
+
 async def test_context_store_matches_yielded():
     """After run(), the context store contains exactly the yielded messages
     plus the original user message."""

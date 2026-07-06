@@ -18,7 +18,7 @@ from typing import Any, Dict, Tuple
 from pydantic import ValidationError
 
 from ..events import ToolEnd, ToolStart, ToolStatus
-from ..llm.types import Message, Role, ToolCall
+from ..llm.types import ContentPart, Message, Role, ToolCall
 from .base import BaseTool
 from .context import ToolContext
 
@@ -27,14 +27,20 @@ async def dispatch(
     tool_call: ToolCall,
     tools_by_name: Dict[str, BaseTool[Any, Any]],
     ctx: ToolContext,
-) -> Message:
-    """Execute one tool call and return the resulting tool-role Message."""
+) -> Tuple[Message, list[ContentPart]]:
+    """Execute one tool call → (tool-role Message, relocatable content parts).
+
+    The parts list is non-empty only when a multimodal tool produced content
+    (e.g. an image) the API forbids on a `tool` message. The agent loop
+    relocates those parts onto a trailing user message after the tool batch is
+    answered. For text-only tools — and every error path — it is empty.
+    """
     # Per-call copy: the caller's ToolContext is shared across a turn's
     # tool calls; the id must not leak from one call into the next.
     ctx = replace(ctx, tool_call_id=tool_call.id)
     ctx.scope.events.emit(ToolStart(tool_call_id=tool_call.id, name=tool_call.name))
     t0 = time.monotonic()
-    status, msg = await _dispatch_inner(tool_call, tools_by_name, ctx)
+    status, msg, parts = await _dispatch_inner(tool_call, tools_by_name, ctx)
     ctx.scope.events.emit(
         ToolEnd(
             tool_call_id=tool_call.id,
@@ -44,40 +50,56 @@ async def dispatch(
             children=tuple(ctx.scope.children_of(tool_call.id)),
         )
     )
-    return msg
+    return msg, parts
 
 
 async def _dispatch_inner(
     tool_call: ToolCall,
     tools_by_name: Dict[str, BaseTool[Any, Any]],
     ctx: ToolContext,
-) -> Tuple[ToolStatus, Message]:
-    """The pipeline. Each exit maps to exactly one ToolStatus."""
+) -> Tuple[ToolStatus, Message, list[ContentPart]]:
+    """The pipeline. Each exit maps to exactly one ToolStatus.
+
+    Only the success path can carry content parts; every error path returns an
+    empty parts list.
+    """
     tool = tools_by_name.get(tool_call.name)
     if tool is None:
-        return ToolStatus.UNKNOWN_TOOL, Message(
-            role=Role.TOOL,
-            tool_call_id=tool_call.id,
-            content=f"error: unknown tool {tool_call.name!r}",
+        return (
+            ToolStatus.UNKNOWN_TOOL,
+            Message(
+                role=Role.TOOL,
+                tool_call_id=tool_call.id,
+                content=f"error: unknown tool {tool_call.name!r}",
+            ),
+            [],
         )
 
     # 1. Parse + Pydantic-validate the model's JSON into the input schema.
     try:
         args = tool.input_schema.model_validate(tool_call.arguments)
     except ValidationError as e:
-        return ToolStatus.INVALID_ARGS, Message(
-            role=Role.TOOL,
-            tool_call_id=tool_call.id,
-            content=f"invalid arguments: {e}",
+        return (
+            ToolStatus.INVALID_ARGS,
+            Message(
+                role=Role.TOOL,
+                tool_call_id=tool_call.id,
+                content=f"invalid arguments: {e}",
+            ),
+            [],
         )
 
     # 2. Semantic validation (path escape, allowlists, etc.)
     validation = await tool.validate(args, ctx)
     if not validation.ok:
-        return ToolStatus.VALIDATION_FAILED, Message(
-            role=Role.TOOL,
-            tool_call_id=tool_call.id,
-            content=f"validation failed: {validation.message}",
+        return (
+            ToolStatus.VALIDATION_FAILED,
+            Message(
+                role=Role.TOOL,
+                tool_call_id=tool_call.id,
+                content=f"validation failed: {validation.message}",
+            ),
+            [],
         )
 
     # 3. Permission check.
@@ -86,31 +108,48 @@ async def _dispatch_inner(
         try:
             allowed = await ctx.permission_callback(tool_call.name, description)
         except Exception as e:
-            return ToolStatus.PERMISSION_ERROR, Message(
-                role=Role.TOOL,
-                tool_call_id=tool_call.id,
-                content=f"permission error: {type(e).__name__}: {e}",
+            return (
+                ToolStatus.PERMISSION_ERROR,
+                Message(
+                    role=Role.TOOL,
+                    tool_call_id=tool_call.id,
+                    content=f"permission error: {type(e).__name__}: {e}",
+                ),
+                [],
             )
         if not allowed:
-            return ToolStatus.DENIED, Message(
-                role=Role.TOOL,
-                tool_call_id=tool_call.id,
-                content=f"permission denied: user rejected {tool_call.name}",
+            return (
+                ToolStatus.DENIED,
+                Message(
+                    role=Role.TOOL,
+                    tool_call_id=tool_call.id,
+                    content=f"permission denied: user rejected {tool_call.name}",
+                ),
+                [],
             )
 
     # 4. Execute.
     try:
         out = await tool.invoke(args, ctx)
     except Exception as e:
-        return ToolStatus.ERROR, Message(
-            role=Role.TOOL,
-            tool_call_id=tool_call.id,
-            content=f"tool error: {type(e).__name__}: {e}",
+        return (
+            ToolStatus.ERROR,
+            Message(
+                role=Role.TOOL,
+                tool_call_id=tool_call.id,
+                content=f"tool error: {type(e).__name__}: {e}",
+            ),
+            [],
         )
 
-    # 5. Serialize for the assistant.
-    return ToolStatus.OK, Message(
-        role=Role.TOOL,
-        tool_call_id=tool_call.id,
-        content=tool.render_result_for_assistant(out),
+    # 5. Serialize for the assistant. Text goes on the tool message; any
+    # non-text parts (images) are handed back for the loop to relocate.
+    return (
+        ToolStatus.OK,
+        Message(
+            role=Role.TOOL,
+            tool_call_id=tool_call.id,
+            content=tool.render_result_for_assistant(out),
+        ),
+        tool.render_parts_for_assistant(out),
     )

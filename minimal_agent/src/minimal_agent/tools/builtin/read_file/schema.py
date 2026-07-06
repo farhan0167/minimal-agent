@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ReadFileInput(BaseModel):
@@ -23,3 +23,17 @@ class ReadFileInput(BaseModel):
         description="Maximum number of lines to return. "
         "Omit to read to the end of the file.",
     )
+
+    @field_validator("offset", "limit", mode="before")
+    @classmethod
+    def _blank_to_none(cls, v: object) -> object:
+        """Coerce a blank/empty optional to None.
+
+        Models frequently emit "" (or whitespace) for an optional int they
+        don't want to use, instead of omitting the field. Pydantic won't parse
+        "" as an int, so without this the whole tool call fails with a
+        validation error before invoke() ever runs. Treat blank as "omitted".
+        """
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
