@@ -706,8 +706,13 @@ async def test_factories_partition_session_and_live_sources(tmp_path):
 
 
 def test_default_prompt_puts_git_status_on_message_channel():
-    agent = _make_factory_agent()  # custom prompt → no default sources
-    assert agent._live_sources == []
+    # Custom prompt → no default git/tree sources, but AGENTS.md rides
+    # alongside every agent (RUN-placed), so it's the sole live source.
+    agent = _make_factory_agent()
+    assert [type(s).__name__ for s in agent._live_sources] == ["AgentsMdSource"]
+    assert all(
+        not isinstance(s, GitStatusSource) for s in agent._live_sources
+    )
 
     llm = _make_llm(return_value=GenerateResponse(text="hi", tool_calls=None))
     llm.model = "test-model"

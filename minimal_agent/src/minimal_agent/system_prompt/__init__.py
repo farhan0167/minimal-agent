@@ -4,6 +4,7 @@
 # message channel too, not just the prompt). Re-exported here so existing
 # imports keep working; new code should import from the new home.
 from ..context_sources import (
+    AgentsMdSource,
     ContextSource,
     DirectoryTreeSource,
     GitStatusSource,
@@ -14,6 +15,7 @@ from .builder import build_system_prompt, load_prompt
 __all__ = [
     "build_system_prompt",
     "load_prompt",
+    "AgentsMdSource",
     "ContextSource",
     "DirectoryTreeSource",
     "GitStatusSource",

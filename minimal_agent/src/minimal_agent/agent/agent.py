@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 from ..context_sources import (
+    AgentsMdSource,
     ContextSource,
     DirectoryTreeSource,
     GitStatusSource,
@@ -87,6 +88,12 @@ class Agent:
             resolved_sources = list(_DEFAULT_CONTEXT_SOURCES)
         else:
             resolved_sources = []
+
+        # AGENTS.md rides alongside every agent, default or custom — it
+        # augments the behavior prompt, never replaces it. Skipped when the
+        # caller explicitly supplied their own sources.
+        if context_sources is None:
+            resolved_sources.append(AgentsMdSource())
 
         # Skill discovery: scan the filesystem once at construction, register
         # the SkillTool and inject the metadata list into the system prompt.

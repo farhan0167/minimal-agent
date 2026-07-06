@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from minimal_agent.context_sources import (
+    AgentsMdSource,
     DirectoryTreeSource,
     GitStatusSource,
     Placement,
@@ -11,6 +12,53 @@ from minimal_agent.context_sources import (
     source_tag,
 )
 from minimal_agent.skills import SkillMeta, SkillSource
+
+
+class TestAgentsMdSource:
+    async def test_returns_none_when_missing(self, tmp_path: Path):
+        assert await AgentsMdSource().gather(tmp_path) is None
+
+    async def test_returns_none_when_blank(self, tmp_path: Path):
+        (tmp_path / "AGENTS.md").write_text("   \n\n  ")
+        assert await AgentsMdSource().gather(tmp_path) is None
+
+    async def test_passthrough_content(self, tmp_path: Path):
+        (tmp_path / "AGENTS.md").write_text("Use tabs, not spaces.")
+        result = await AgentsMdSource().gather(tmp_path)
+        assert result == "Use tabs, not spaces."
+
+    async def test_expands_import_at_line_start(self, tmp_path: Path):
+        (tmp_path / "CLAUDE.md").write_text("Project rules here.")
+        (tmp_path / "AGENTS.md").write_text("Header\n@CLAUDE.md\nFooter")
+        result = await AgentsMdSource().gather(tmp_path)
+        assert result == "Header\nProject rules here.\nFooter"
+
+    async def test_missing_import_left_literal(self, tmp_path: Path):
+        (tmp_path / "AGENTS.md").write_text("@NOPE.md")
+        result = await AgentsMdSource().gather(tmp_path)
+        assert result == "@NOPE.md"
+
+    async def test_import_not_at_line_start_ignored(self, tmp_path: Path):
+        (tmp_path / "CLAUDE.md").write_text("SHOULD NOT APPEAR")
+        (tmp_path / "AGENTS.md").write_text("ping user @CLAUDE.md now")
+        result = await AgentsMdSource().gather(tmp_path)
+        assert result == "ping user @CLAUDE.md now"
+
+    async def test_import_one_level_only(self, tmp_path: Path):
+        # An @-line inside an imported file is NOT recursively expanded.
+        (tmp_path / "B.md").write_text("leaf")
+        (tmp_path / "CLAUDE.md").write_text("start\n@B.md\nend")
+        (tmp_path / "AGENTS.md").write_text("@CLAUDE.md")
+        result = await AgentsMdSource().gather(tmp_path)
+        assert result == "start\n@B.md\nend"
+
+    async def test_import_outside_root_rejected(self, tmp_path: Path):
+        (tmp_path / "AGENTS.md").write_text("@../secret.md")
+        result = await AgentsMdSource().gather(tmp_path)
+        assert result == "@../secret.md"
+
+    def test_placement_is_run(self):
+        assert source_placement(AgentsMdSource()) is Placement.RUN
 
 
 class TestGitStatusSource:
