@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from minimal_agent.agent import Agent
-from minimal_agent.agent.session import Session
+from minimal_agent.agent.session import SessionManager
 from minimal_agent.audit import (
     CallRecordNotFoundError,
     read_call_records,
@@ -41,10 +41,9 @@ async def _session_with_one_call(tmp_path, **create_overrides):
         model="test-model",
         backend="openai",
         system_prompt="you are helpful",
-        base_dir=tmp_path,
     )
     defaults.update(create_overrides)
-    session = Session.create(**defaults)
+    session = SessionManager(base_dir=tmp_path).create_session(**defaults)
     session.context.add(Message(role=Role.USER, content="what changed?"))
     assembled = await session.context.assemble()
     return session, assembled
@@ -101,8 +100,8 @@ async def test_tampered_transcript_reports_unverified_not_error(tmp_path):
 
 
 def test_readers_return_empty_for_sessions_predating_the_artifacts(tmp_path):
-    session = Session.create(
-        model="test-model", backend="openai", base_dir=tmp_path
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai"
     )
     (session.session_dir / "events.jsonl").unlink()
 
@@ -144,12 +143,8 @@ async def _run_two_call_session(tmp_path):
         side_effect=[
             GenerateResponse(
                 text="checking",
-                tool_calls=[
-                    ToolCall(id="tc_1", name="probe_tool", arguments={})
-                ],
-                usage=Usage(
-                    prompt_tokens=10, completion_tokens=5, total_tokens=15
-                ),
+                tool_calls=[ToolCall(id="tc_1", name="probe_tool", arguments={})],
+                usage=Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
             ),
             GenerateResponse(text="the answer", tool_calls=None),
         ]
@@ -160,8 +155,9 @@ async def _run_two_call_session(tmp_path):
         prompt="you are a test agent",
         workspace_root=ws,
         enable_skills=False,
+        sessions=SessionManager(base_dir=tmp_path / "sessions"),
     )
-    session = await agent.create_session(base_dir=tmp_path / "sessions")
+    session = await agent.create_session()
     session.context.add(Message(role=Role.USER, content="go"))
     async for _ in agent.run(session.context):
         pass
@@ -220,15 +216,15 @@ async def test_session_runs_degraded_direct_assemble(tmp_path):
 
 
 def test_session_runs_empty_session(tmp_path):
-    session = Session.create(
-        model="test-model", backend="openai", base_dir=tmp_path
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai"
     )
     assert session_runs(session.session_dir) == []
 
 
 async def test_reconstruct_carries_fingerprint_and_parsed_tools(tmp_path):
-    session = Session.create(
-        model="test-model", backend="openai", base_dir=tmp_path
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai"
     )
     session.context.events.emit(
         RunStart(
@@ -248,3 +244,101 @@ async def test_reconstruct_carries_fingerprint_and_parsed_tools(tmp_path):
     assert result.model == "test-model"
     assert result.backend == "openai"
     assert result.tools == [{"name": "echo"}]
+
+
+# ---- the recording tree (child scopes, spawned agents) -----------------------
+
+
+async def test_reconstruct_call_in_child_scope_resolves_root_blobs(tmp_path):
+    """Children share the session root's blobs/ — reconstruction walks up."""
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", system_prompt="root sys"
+    )
+
+    with session.scope.child(spawned_by="t", task="x") as child:
+        ctx = child.new_context(system_prompt="child sys")
+        ctx.add(Message(role=Role.USER, content="hi"))
+        assembled = await ctx.assemble()
+
+    assert not (child.dir / "blobs").exists()  # kit has no local blob store
+    (record,) = read_call_records(child.dir)
+    result = reconstruct_call(child.dir, record["call_id"])
+    assert result.verified
+    assert result.messages == assembled
+    assert result.messages[0].content == "child sys"
+
+
+async def test_session_runs_surfaces_spawned_agents(tmp_path):
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", system_prompt="sys"
+    )
+    scope = session.scope
+    scope.events.emit(
+        RunStart(model="test-model", backend="openai", tools_json="[]", store_len=0)
+    )
+    session.context.add(Message(role=Role.USER, content="go"))
+    await session.context.assemble()  # call c1
+
+    with scope.child(spawned_by="spawn_agents", task="sub task", tool_call_id="tc_1"):
+        pass
+
+    (run,) = session_runs(session.session_dir)
+    (call,) = run.calls
+    (agent,) = call.spawned_agents
+    assert agent.spawned_by == "spawn_agents"
+    assert agent.task == "sub task"
+    assert agent.tool_call_id == "tc_1"
+    assert agent.status == "completed"  # joined from agent.end
+
+
+async def test_tool_end_children_surface_in_tool_executions(tmp_path):
+    from minimal_agent.events import ToolEnd, ToolStart
+
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", system_prompt="sys"
+    )
+    scope = session.scope
+    scope.events.emit(
+        RunStart(model="test-model", backend="openai", tools_json="[]", store_len=0)
+    )
+    session.context.add(Message(role=Role.USER, content="go"))
+    await session.context.assemble()
+    scope.events.emit(ToolStart(tool_call_id="tc_1", name="spawner"))
+    scope.events.emit(
+        ToolEnd(
+            tool_call_id="tc_1",
+            name="spawner",
+            status="ok",
+            duration_ms=5,
+            children=("a-11112222",),
+        )
+    )
+
+    (run,) = session_runs(session.session_dir)
+    (execution,) = run.calls[0].tool_executions
+    assert execution.children == ["a-11112222"]
+
+
+async def test_session_tree_walks_nested_agents(tmp_path):
+    from minimal_agent.audit import session_tree
+
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", system_prompt="root sys"
+    )
+
+    with session.scope.child(spawned_by="t", task="inner work") as child:
+        ctx = child.new_context(system_prompt="child sys")
+        ctx.add(Message(role=Role.USER, content="hi"))
+        await ctx.assemble()
+
+    tree = session_tree(session.session_dir)
+    assert tree.agent is None  # session root
+    (node,) = tree.children
+    assert node.agent["task"] == "inner work"
+    assert node.agent["status"] == "completed"
+    # The child's calls reconstruct through the same view, one level down.
+    (run,) = node.runs
+    (call,) = run.calls
+    assert call.input.verified
+    assert call.input.messages[0].content == "child sys"
+    assert node.children == []

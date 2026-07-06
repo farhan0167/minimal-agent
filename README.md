@@ -103,6 +103,23 @@ That's a working agent. It reads the user message, calls the LLM, uses tools if 
 
 Sessions are persisted to disk. To resume one later, use `session = await agent.load_session(session_id)` — the agent rebuilds the system prompt fresh and validates that the session's model, backend, and workspace match its own.
 
+By default sessions live under `.minimal_agent/sessions/`. Where they live — and how they're recorded — is a `SessionManager`, which you only construct when you want a different policy:
+
+```python
+from minimal_agent import SessionManager
+
+agent = Agent(
+    llm=llm,
+    tools=[...],
+    workspace_root=workspace,
+    sessions=SessionManager(base_dir=Path("/var/lib/myapp/sessions")),
+)
+
+sessions = agent.sessions.list_sessions()   # most recent first
+```
+
+The agent supplies identity (prompt, model, tools); the manager supplies storage. Token usage is accounted automatically — every LLM call's usage lands in `session.json` without any wiring on your side.
+
 ### 3. Add your own tools
 
 Create a tool by subclassing `BaseTool`. A tool needs three things: a name, a Pydantic input schema, and an `invoke` method.
@@ -219,33 +236,80 @@ Skills are auto-discovered when you pass `workspace_root` to the `Agent`. Format
 
 ### Observability
 
-Sessions record what happens as they run — no wiring needed. Two artifacts land next to the transcript in the session directory:
+Sessions record what happens as they run — no wiring needed. Everything that happens in a session, including every sub-agent, lands in one directory tree:
 
 ```
 .minimal_agent/sessions/<session-id>/
-├── session.json     # identity, aggregate usage
+├── session.json     # identity, aggregate usage (sub-agents included)
 ├── messages.jsonl   # the conversation
 ├── events.jsonl     # the timeline: one timestamped event per line
 ├── calls.jsonl      # one provenance record per LLM call
-└── blobs/           # content-addressed system prompts and tool schemas
+├── blobs/           # content-addressed system prompts and tool schemas,
+│                    # shared by every agent in the session
+└── agents/          # one directory per nested agent
+    └── a-3f9c21ab/
+        ├── agent.json       # who spawned it, task, status, usage, model
+        ├── messages.jsonl   # the sub-agent's full transcript
+        ├── events.jsonl     # its own timeline
+        └── calls.jsonl      # its own call audit
 ```
 
-`events.jsonl` answers *"what happened, when?"* — a run started, a call took 2.7s and used 876 tokens, a tool was denied after 8 seconds of deliberation, a context source failed to gather. `calls.jsonl` + `blobs/` answer *"what exactly did the model see?"* — every call's full input (system prompt, projected messages, injected live blocks, tool schemas) is reconstructible, byte-exactly, from the session directory alone.
+`events.jsonl` answers *"what happened, when?"* — a run started, a call took 2.7s and used 876 tokens, a tool was denied after 8 seconds of deliberation, a sub-agent was spawned and completed. `calls.jsonl` + `blobs/` answer *"what exactly did the model see?"* — every call's full input (system prompt, projected messages, injected live blocks, tool schemas) is reconstructible, byte-exactly, from the session directory alone. Both guarantees hold for every agent in the tree: a sub-agent's record is the same shape as the main agent's, just one directory down.
+
+### Sub-agents are recorded too
+
+When the built-in `spawn_agents` tool runs sub-agents, each one gets its own recorded home under `agents/` automatically. The parent's timeline gains `agent.spawn` / `agent.end` events (with status and token usage), the child's `agent.json` points back at the exact tool call that spawned it, and the sub-agent's token usage rolls up into the session's `session.json`.
+
+If you write a custom tool that runs its own agent, you get the same recording with one `with` block — ask the tool's scope for a child:
+
+```python
+class DeepResearch(BaseTool[ResearchInput, str]):
+    name = "deep_research"
+
+    async def invoke(self, args: ResearchInput, ctx: ToolContext) -> str:
+        researcher = Agent(llm=self._llm, tools=self._tools, prompt=RESEARCH_PROMPT)
+
+        with ctx.scope.child(
+            spawned_by=self.name, task=args.question, tool_call_id=ctx.tool_call_id
+        ) as scope:
+            context = scope.new_context(
+                system_prompt=await researcher.build_system_prompt(self._root)
+            )
+            context.add(Message(role=Role.USER, content=args.question))
+
+            answer = ""
+            async for msg in researcher.run(context):
+                if msg.role == Role.ASSISTANT and msg.content:
+                    answer = msg.content
+        return answer
+```
+
+No sessions, directories, or wiring in sight — the child scope allocates its directory under the session, records the whole nested run, and closes with a truthful status (`completed` / `error` / `abandoned`) even if the sub-agent crashes. In a unit test (no session), the same code runs unrecorded.
 
 Read it back with the audit API:
 
 ```python
-from minimal_agent import reconstruct_call, session_runs
+from minimal_agent import reconstruct_call, session_runs, session_tree
 
 # The holistic view: session → runs → calls, each call carrying its
-# full input, its response, latency, usage, and tool executions.
+# full input, its response, latency, usage, tool executions, and any
+# sub-agents it spawned.
 for run in session_runs(session.session_dir):
     print(run.run_id, run.status, f"{run.duration_ms}ms")
     for call in run.calls:
         print(f"  {call.call_id}: {call.latency_ms}ms, "
               f"{len(call.input.messages)} input messages")
+        for agent in call.spawned_agents:
+            print(f"    spawned {agent.agent_id}: {agent.task} → {agent.status}")
 
-# Or one call's exact input, verified against its recorded hash.
+# The whole tree: the session root's runs plus every nested agent's,
+# recursively — sub-agents get the same runs view, one directory down.
+tree = session_tree(session.session_dir)
+for node in tree.children:
+    print(node.agent["task"], node.agent["status"], len(node.runs))
+
+# Or one call's exact input, verified against its recorded hash. Works
+# on the session root and on any agents/<id>/ directory alike.
 call = reconstruct_call(session.session_dir, "r-4c7d01ab:c1")
 assert call.verified
 call.messages   # exactly what the model saw, in order

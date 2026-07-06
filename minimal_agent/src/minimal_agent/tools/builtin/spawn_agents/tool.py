@@ -5,13 +5,19 @@ does, and which tools each gets. Sub-agents are ephemeral: they run to
 completion inside the tool call, have their own isolated context, and
 return their final answer as the tool result.
 
+Each sub-agent runs inside a child scope of the calling agent's scope, so
+its full record — transcript, trace, call audit — lands under the session's
+`agents/<agent_id>/` directory. This tool is the reference implementation
+of recorded sub-agents; a custom tool that arms its own agent should use
+the same `ctx.scope.child(...)` one-liner.
+
 Sub-agents cannot spawn further sub-agents (no recursion).
 """
 
 import asyncio
 from pathlib import Path
 
-from ....agent import Agent, Context
+from ....agent import Agent
 from ....llm import LLM
 from ....llm.types import Message, Role
 from ...base import BaseTool
@@ -38,12 +44,8 @@ class SpawnAgents(BaseTool[SpawnAgentsInput, str]):
         self._available_tools = available_tools
         self._workspace_root = workspace_root
 
-    async def invoke(
-        self, args: SpawnAgentsInput, ctx: ToolContext
-    ) -> str:
-        tasks = [
-            self._run_sub_agent(i, spec) for i, spec in enumerate(args.agents)
-        ]
+    async def invoke(self, args: SpawnAgentsInput, ctx: ToolContext) -> str:
+        tasks = [self._run_sub_agent(spec, ctx) for spec in args.agents]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         parts: list[str] = []
@@ -57,25 +59,28 @@ class SpawnAgents(BaseTool[SpawnAgentsInput, str]):
 
         return "\n\n---\n\n".join(parts)
 
-    async def _run_sub_agent(self, index: int, spec: SubAgentSpec) -> str:
-        """Build and run a single sub-agent to completion."""
-        tools = self._resolve_tools(spec.tools)
-
+    async def _run_sub_agent(self, spec: SubAgentSpec, ctx: ToolContext) -> str:
+        """Build and run a single sub-agent to completion, recorded."""
         agent = Agent(
             llm=self._llm,
-            tools=tools,
+            tools=self._resolve_tools(spec.tools),
             prompt=_SUB_AGENT_PROMPT_PATH.read_text().format(task=spec.task),
             max_turns=spec.max_turns,
         )
-
         system_prompt = await agent.build_system_prompt(self._workspace_root)
-        context = Context(system_prompt=system_prompt)
-        context.add(Message(role=Role.USER, content=spec.task))
 
-        last_assistant = ""
-        async for msg in agent.run(context):
-            if msg.role == Role.ASSISTANT and msg.content:
-                last_assistant = msg.content
+        with ctx.scope.child(
+            spawned_by=self.name,
+            task=spec.task,
+            tool_call_id=ctx.tool_call_id,
+        ) as scope:
+            context = scope.new_context(system_prompt=system_prompt)
+            context.add(Message(role=Role.USER, content=spec.task))
+
+            last_assistant = ""
+            async for msg in agent.run(context):
+                if msg.role == Role.ASSISTANT and msg.content:
+                    last_assistant = msg.content
 
         return last_assistant or "(sub-agent produced no output)"
 
@@ -87,11 +92,7 @@ class SpawnAgents(BaseTool[SpawnAgentsInput, str]):
         Unknown names are silently skipped.
         """
         if tool_names is None:
-            return [
-                t
-                for name, t in self._available_tools.items()
-                if name != self.name
-            ]
+            return [t for name, t in self._available_tools.items() if name != self.name]
         return [
             self._available_tools[name]
             for name in tool_names

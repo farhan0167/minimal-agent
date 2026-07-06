@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from agents import get_agent_config
-from minimal_agent.agent import Agent, Session
+from minimal_agent.agent import Agent, Session, SessionManager
 from minimal_agent.config import settings
 
 
@@ -49,6 +49,11 @@ def get_sessions_dir() -> Path:
     return Path(settings.SESSIONS_DIR)
 
 
+def get_session_manager() -> SessionManager:
+    """The server's persistence policy — one place to change base dir/sinks."""
+    return SessionManager(base_dir=get_sessions_dir())
+
+
 # --- Agent type sidecar ---
 
 
@@ -78,7 +83,9 @@ def build_agent(
 ) -> Agent:
     """Build an agent by delegating to the appropriate agent module."""
     agent_config = get_agent_config(agent_type)
-    return agent_config.build_agent(workspace, model=model, backend=backend)
+    return agent_config.build_agent(
+        workspace, model=model, backend=backend, sessions=get_session_manager()
+    )
 
 
 async def create_session(
@@ -92,7 +99,7 @@ async def create_session(
     backend = backend or settings.LLM_BACKEND
 
     agent = build_agent(agent_type, workspace, model=model, backend=backend)
-    session = await agent.create_session(base_dir=get_sessions_dir())
+    session = await agent.create_session()
 
     save_agent_type(session.session_id, agent_type)
 
@@ -107,7 +114,7 @@ async def resume_session(session_id: str) -> tuple[Agent, Session]:
     system prompt fresh and validates that everything agrees. This is
     the path for running the agent against an existing session.
     """
-    meta = Session.read_meta(session_id, base_dir=get_sessions_dir())
+    meta = get_session_manager().read_meta(session_id)
     if meta.workspace_root is None:
         raise ValueError(f"Session {session_id} has no workspace_root")
     workspace = validate_workspace(meta.workspace_root)
@@ -116,7 +123,7 @@ async def resume_session(session_id: str) -> tuple[Agent, Session]:
     agent = build_agent(
         agent_type, workspace, model=meta.model, backend=meta.backend
     )
-    session = await agent.load_session(session_id, base_dir=get_sessions_dir())
+    session = await agent.load_session(session_id)
     return agent, session
 
 
@@ -127,11 +134,11 @@ def open_session_readonly(session_id: str) -> Session:
     conversation and never run the agent, so get_messages() should not
     contain a system message. To run the agent, use resume_session().
     """
-    meta = Session.read_meta(session_id, base_dir=get_sessions_dir())
-    return Session.load(
+    manager = get_session_manager()
+    meta = manager.read_meta(session_id)
+    return manager.load_session(
         session_id,
         model=meta.model,
         backend=meta.backend,
         system_prompt=None,
-        base_dir=get_sessions_dir(),
     )

@@ -5,12 +5,14 @@ Errors never raise out of `dispatch`: a failing tool becomes a tool-result
 message so the model can observe and recover. The agent loop must not crash
 because a tool threw.
 
-Every dispatch is bracketed by tool.start/tool.end events (when the context
-carries an emitter) — how permission denials, validation failures, and tool
-exceptions enter the timeline, with durations.
+Every dispatch is bracketed by tool.start/tool.end events on the context's
+scope — how permission denials, validation failures, and tool exceptions
+enter the timeline, with durations. tool.end also carries the ids of any
+child scopes the tool spawned, as a second join path to their records.
 """
 
 import time
+from dataclasses import replace
 from typing import Any, Dict, Tuple
 
 from pydantic import ValidationError
@@ -27,19 +29,21 @@ async def dispatch(
     ctx: ToolContext,
 ) -> Message:
     """Execute one tool call and return the resulting tool-role Message."""
-    if ctx.events is not None:
-        ctx.events.emit(ToolStart(tool_call_id=tool_call.id, name=tool_call.name))
+    # Per-call copy: the caller's ToolContext is shared across a turn's
+    # tool calls; the id must not leak from one call into the next.
+    ctx = replace(ctx, tool_call_id=tool_call.id)
+    ctx.scope.events.emit(ToolStart(tool_call_id=tool_call.id, name=tool_call.name))
     t0 = time.monotonic()
     status, msg = await _dispatch_inner(tool_call, tools_by_name, ctx)
-    if ctx.events is not None:
-        ctx.events.emit(
-            ToolEnd(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                status=status,
-                duration_ms=int((time.monotonic() - t0) * 1000),
-            )
+    ctx.scope.events.emit(
+        ToolEnd(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            status=status,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            children=tuple(ctx.scope.children_of(tool_call.id)),
         )
+    )
     return msg
 
 

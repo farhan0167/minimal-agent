@@ -87,7 +87,7 @@ def test_trace_sink_never_carries_audit_owned_fields(tmp_path):
 
 
 def test_blob_store_writes_content_addressed_file_once(tmp_path):
-    store = BlobStore(tmp_path)
+    store = BlobStore(tmp_path / "blobs")
 
     ref = store.put("hello")
     assert ref.startswith("sha256:")
@@ -101,7 +101,7 @@ def test_blob_store_writes_content_addressed_file_once(tmp_path):
 
 
 def test_blob_store_repeat_put_does_no_io(tmp_path, monkeypatch):
-    store = BlobStore(tmp_path)
+    store = BlobStore(tmp_path / "blobs")
     ref = store.put("hello")
 
     def _fail(*args, **kwargs):
@@ -114,7 +114,7 @@ def test_blob_store_repeat_put_does_no_io(tmp_path, monkeypatch):
 
 
 def test_blob_store_distinct_content_distinct_blobs(tmp_path):
-    store = BlobStore(tmp_path)
+    store = BlobStore(tmp_path / "blobs")
     assert store.put("a") != store.put("b")
     assert len(list((tmp_path / "blobs").iterdir())) == 2
 

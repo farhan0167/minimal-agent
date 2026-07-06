@@ -83,10 +83,11 @@ async def run_loop(agent: Agent, session: Session) -> None:
 
             _ask_permission = _make_permission_callback()
 
+            # Usage accounting is automatic (the session subscribes to its
+            # scope's totals) — no on_usage wiring needed for it.
             async for item in agent.run(
                 session.context,
                 stream=True,
-                on_usage=session.update_usage,
                 permission_callback=_ask_permission,
             ):
                 if isinstance(item, StreamChunk):

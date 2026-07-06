@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from minimal_agent.agent import Agent, Session, SessionConfigMismatchError
+from minimal_agent.agent import Agent, Session, SessionConfigMismatchError, SessionManager
 from minimal_agent.config import settings
 from minimal_agent.llm import LLM
 from minimal_agent.tools.builtin.edit_file import EditFile
@@ -65,6 +65,7 @@ def _build_agent(workspace: Path) -> Agent:
         llm=llm,
         tools=[*builtin_tools, spawn_agents],
         workspace_root=workspace,
+        sessions=SessionManager(base_dir=Path(settings.SESSIONS_DIR)),
     )
 
 
@@ -75,12 +76,11 @@ async def _pick_session(agent: Agent) -> Session | None:
     they always carry the agent's identity (system prompt, settings,
     persisted workspace).
     """
-    sessions_dir = Path(settings.SESSIONS_DIR)
-    sessions = Session.list_sessions(base_dir=sessions_dir)
+    sessions = agent.sessions.list_sessions()
 
     if not sessions:
         render.print_info("Starting new session.")
-        return await agent.create_session(base_dir=sessions_dir)
+        return await agent.create_session()
 
     render.print_session_list(sessions)
     render.console.print()
@@ -92,7 +92,7 @@ async def _pick_session(agent: Agent) -> Session | None:
             )
         except (EOFError, KeyboardInterrupt):
             render.print_info("\nStarting new session.")
-            return await agent.create_session(base_dir=sessions_dir)
+            return await agent.create_session()
 
         choice = choice.strip().lower()
 
@@ -100,16 +100,14 @@ async def _pick_session(agent: Agent) -> Session | None:
             return None
 
         if choice == "n" or choice == "":
-            return await agent.create_session(base_dir=sessions_dir)
+            return await agent.create_session()
 
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(sessions[:10]):
                 meta = sessions[idx]
                 try:
-                    return await agent.load_session(
-                        meta.session_id, base_dir=sessions_dir
-                    )
+                    return await agent.load_session(meta.session_id)
                 except SessionConfigMismatchError as e:
                     render.print_error(str(e))
                     continue

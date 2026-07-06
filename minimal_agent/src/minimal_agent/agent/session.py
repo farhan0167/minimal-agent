@@ -1,8 +1,13 @@
-"""Session — the user-facing unit of conversation.
+"""Session — the user-facing root of a recording tree.
 
-Owns identity, metadata, and the Context. Provides factory methods to
-create new sessions and load existing ones. Messages are persisted via
-the MessageStore's JSONL backend; metadata is persisted as session.json.
+`Session` owns identity metadata, usage rollup, and the root `Scope`'s
+Context. It no longer knows how anything is wired to disk: persistence
+policy — where sessions live, which sinks record them — belongs to
+`SessionManager`, the only code that knows the directory layout.
+
+Child scopes under `agents/` are immutable records of nested-agent runs,
+never sessions: not resumable, not listed, no config validation. See
+[.claude/specifications/scopes-and-session-management.md](../.claude/specifications/scopes-and-session-management.md).
 """
 
 import json
@@ -12,22 +17,14 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..context_sources import ContextSource
-from ..events import EventEmitter, SessionCreated, SessionLoaded
+from ..events import SessionCreated, SessionLoaded, Sink
 from ..llm.types import Usage
 from .context import Context
 from .message_store import MessageStore
-from .sinks import CallLogSink, TraceSink
+from .scope import RecordedScope
+from .sinks import BlobStore
 
 _DEFAULT_BASE_DIR = Path(".minimal_agent/sessions")
-
-
-def _make_emitter(session_dir: Path) -> EventEmitter:
-    """The default event seam for a session-backed context.
-
-    Recording is default-on exactly where persistence is: both built-in
-    sinks write session artifacts next to messages.jsonl.
-    """
-    return EventEmitter(sinks=[TraceSink(session_dir), CallLogSink(session_dir)])
 
 
 class SessionConfigMismatchError(Exception):
@@ -73,20 +70,31 @@ class SessionMeta:
 
 
 class Session:
+    """One conversation: meta + the root scope's Context.
+
+    Usage accounting is automatic — the session subscribes to the root
+    scope's totals, which every scope in the tree forwards to, so
+    session.json reflects the true cost including nested agents. Hosts
+    never call an accounting method.
+    """
+
     def __init__(
         self,
         *,
         meta: SessionMeta,
         context: Context,
-        base_dir: Path,
+        session_dir: Path,
+        scope: RecordedScope,
     ) -> None:
         self._meta = meta
         self._context = context
-        self._base_dir = base_dir
+        self._session_dir = session_dir
+        self._scope = scope
+        scope.totals.subscribe(self._on_usage)
 
     @property
     def session_dir(self) -> Path:
-        return self._base_dir / self._meta.session_id
+        return self._session_dir
 
     @property
     def session_id(self) -> str:
@@ -95,6 +103,11 @@ class Session:
     @property
     def context(self) -> Context:
         return self._context
+
+    @property
+    def scope(self) -> RecordedScope:
+        """The root of this session's recording tree."""
+        return self._scope
 
     @property
     def model(self) -> str:
@@ -120,36 +133,53 @@ class Session:
     def workspace_root(self) -> str | None:
         return self._meta.workspace_root
 
-    def update_usage(self, usage: Usage) -> None:
-        """Accumulate usage from an API call and persist metadata."""
-        if self._meta.usage is None:
-            self._meta.usage = usage
-        else:
-            self._meta.usage = Usage(
-                prompt_tokens=self._meta.usage.prompt_tokens + usage.prompt_tokens,
-                completion_tokens=self._meta.usage.completion_tokens
-                + usage.completion_tokens,
-                total_tokens=self._meta.usage.total_tokens + usage.total_tokens,
-            )
+    def _on_usage(self, total: Usage) -> None:
+        """Root-totals listener: mirror the running total into session.json."""
+        self._meta.usage = total.model_copy()
         self._meta.updated_at = datetime.now(tz=timezone.utc)
         self._save_metadata()
 
     def _save_metadata(self) -> None:
         """Write session.json — small file, rewritten in full."""
-        meta_path = self.session_dir / "session.json"
+        meta_path = self._session_dir / "session.json"
         meta_path.write_text(json.dumps(self._meta.to_dict(), indent=2) + "\n")
 
-    @classmethod
-    def create(
-        cls,
+
+class SessionManager:
+    """Persistence policy — where sessions live and how they are recorded.
+
+    The only code that knows the directory layout. Agents hold one (a
+    default is constructed when none is given) and delegate their session
+    factories to it; hosts construct one explicitly only to change policy:
+
+        manager = SessionManager(base_dir=Path("/var/lib/app/sessions"))
+        agent = Agent(llm, tools, workspace_root=root, sessions=manager)
+    """
+
+    def __init__(
+        self,
+        *,
+        base_dir: Path = _DEFAULT_BASE_DIR,
+        extra_sinks: list[Sink] | None = None,
+    ) -> None:
+        self._base_dir = base_dir
+        # Appended to every scope's emitter in every session this manager
+        # creates — the seam for live UI feeds, OTel exporters, etc.
+        self._extra_sinks = list(extra_sinks) if extra_sinks else []
+
+    @property
+    def base_dir(self) -> Path:
+        return self._base_dir
+
+    def create_session(
+        self,
         *,
         model: str,
         backend: str,
         system_prompt: str | None = None,
-        base_dir: Path = _DEFAULT_BASE_DIR,
         workspace_root: str | None = None,
         live_sources: list[ContextSource] | None = None,
-    ) -> "Session":
+    ) -> Session:
         """Start a new session. Creates the directory and files on disk.
 
         live_sources (RUN/CALL-placed context sources) are forwarded to
@@ -166,53 +196,32 @@ class Session:
             workspace_root=workspace_root,
         )
 
-        session_dir = base_dir / meta.session_id
+        session_dir = self._base_dir / meta.session_id
         session_dir.mkdir(parents=True, exist_ok=True)
 
-        emitter = _make_emitter(session_dir)
-        store = MessageStore(path=session_dir / "messages.jsonl")
-        context = Context(
+        scope = self._root_scope(session_dir, meta.session_id)
+        context = scope.new_context(
             system_prompt=system_prompt,
-            store=store,
             live_sources=live_sources,
             workspace_root=Path(workspace_root) if workspace_root else None,
-            events=emitter,
         )
 
-        session = cls(meta=meta, context=context, base_dir=base_dir)
+        session = Session(
+            meta=meta, context=context, session_dir=session_dir, scope=scope
+        )
         session._save_metadata()
-        emitter.emit(SessionCreated())
+        scope.events.emit(SessionCreated())
         return session
 
-    @classmethod
-    def read_meta(
-        cls,
-        session_id: str,
-        *,
-        base_dir: Path = _DEFAULT_BASE_DIR,
-    ) -> SessionMeta:
-        """Read a session's metadata without loading its messages.
-
-        The cheap peek for hosts that need e.g. the workspace root or
-        model before deciding how to resume a session. Reads only
-        session.json, never the JSONL. Raises FileNotFoundError if the
-        session doesn't exist.
-        """
-        meta_path = base_dir / session_id / "session.json"
-        with open(meta_path) as f:
-            return SessionMeta.from_dict(json.load(f))
-
-    @classmethod
-    def load(
-        cls,
+    def load_session(
+        self,
         session_id: str,
         *,
         model: str,
         backend: str,
         system_prompt: str | None = None,
-        base_dir: Path = _DEFAULT_BASE_DIR,
         live_sources: list[ContextSource] | None = None,
-    ) -> "Session":
+    ) -> Session:
         """Resume an existing session from disk.
 
         Validates that the current model and backend match what the
@@ -224,8 +233,8 @@ class Session:
         sessions predating workspace_root persistence degrade to no live
         gathering.
         """
-        session_dir = base_dir / session_id
-        meta = cls.read_meta(session_id, base_dir=base_dir)
+        session_dir = self._base_dir / session_id
+        meta = self.read_meta(session_id)
 
         mismatches = []
         if meta.model and meta.model != model:
@@ -238,41 +247,45 @@ class Session:
                 + "; ".join(mismatches)
             )
 
-        messages_path = session_dir / "messages.jsonl"
-        store = MessageStore.from_file(messages_path)
-        emitter = _make_emitter(session_dir)
-        context = Context(
+        store = MessageStore.from_file(session_dir / "messages.jsonl")
+        scope = self._root_scope(session_dir, session_id, store=store)
+        context = scope.new_context(
             system_prompt=system_prompt,
-            store=store,
             live_sources=live_sources,
             workspace_root=(Path(meta.workspace_root) if meta.workspace_root else None),
-            events=emitter,
         )
-        emitter.emit(
+        scope.events.emit(
             SessionLoaded(
                 message_count=len(store),
                 healed=list(store.healing_actions),
             )
         )
 
-        return cls(meta=meta, context=context, base_dir=base_dir)
+        return Session(meta=meta, context=context, session_dir=session_dir, scope=scope)
 
-    @classmethod
-    def list_sessions(
-        cls,
-        *,
-        base_dir: Path = _DEFAULT_BASE_DIR,
-    ) -> list[SessionMeta]:
+    def read_meta(self, session_id: str) -> SessionMeta:
+        """Read a session's metadata without loading its messages.
+
+        The cheap peek for hosts that need e.g. the workspace root or
+        model before deciding how to resume a session. Reads only
+        session.json, never the JSONL. Raises FileNotFoundError if the
+        session doesn't exist.
+        """
+        meta_path = self._base_dir / session_id / "session.json"
+        with open(meta_path) as f:
+            return SessionMeta.from_dict(json.load(f))
+
+    def list_sessions(self) -> list[SessionMeta]:
         """List all sessions by reading their metadata files.
 
         Returns a list of SessionMeta, sorted by updated_at
         descending (most recent first).
         """
         sessions: list[SessionMeta] = []
-        if not base_dir.exists():
+        if not self._base_dir.exists():
             return sessions
 
-        for session_dir in base_dir.iterdir():
+        for session_dir in self._base_dir.iterdir():
             if not session_dir.is_dir():
                 continue
             meta_path = session_dir / "session.json"
@@ -282,3 +295,23 @@ class Session:
 
         sessions.sort(key=lambda s: s.updated_at, reverse=True)
         return sessions
+
+    def _root_scope(
+        self,
+        session_dir: Path,
+        session_id: str,
+        *,
+        store: MessageStore | None = None,
+    ) -> RecordedScope:
+        """Wire the artifact kit for a session root.
+
+        Recording is default-on exactly where persistence is: every
+        session-backed context records; only bare contexts don't.
+        """
+        return RecordedScope(
+            session_dir,
+            blobs=BlobStore(session_dir / "blobs"),
+            session_id=session_id,
+            store=store,
+            extra_sinks=self._extra_sinks,
+        )

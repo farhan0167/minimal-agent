@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from minimal_agent.agent import Agent
+from minimal_agent.agent import Agent, SessionManager
 from minimal_agent.config import Backend, settings
 from minimal_agent.llm import LLM
 from minimal_agent.tools.builtin.edit_file import EditFile
@@ -38,7 +38,13 @@ class SWEAgentConfig:
     def get_tool_names(self) -> list[str]:
         return [cls.name for cls in _TOOL_CLASSES]
 
-    def build_agent(self, workspace: Path, model: str, backend: str) -> Agent:
+    def build_agent(
+        self,
+        workspace: Path,
+        model: str,
+        backend: str,
+        sessions: SessionManager | None = None,
+    ) -> Agent:
         llm = LLM(
             model=model or settings.LLM_MODEL,
             backend=Backend(backend) if backend else settings.LLM_BACKEND,
@@ -72,6 +78,7 @@ class SWEAgentConfig:
             llm=llm,
             tools=[*builtin_tools, spawn_agents],
             workspace_root=workspace,
+            sessions=sessions,
         )
 
 

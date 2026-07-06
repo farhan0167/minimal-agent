@@ -4,6 +4,7 @@ import pytest
 
 from minimal_agent.agent.context import Context, _merge_into_user
 from minimal_agent.agent.message_store import MessageStore
+from minimal_agent.agent.scope import NullScope
 from minimal_agent.context_sources import Placement
 from minimal_agent.events import (
     CallRequest,
@@ -97,9 +98,12 @@ class _LiveSource:
 
 
 def _live_context(*sources, workspace_root="ws", store=None) -> Context:
+    scope = NullScope()
+    if store is not None:
+        scope.store = store
     return Context(
         system_prompt="sys",
-        store=store,
+        scope=scope,
         live_sources=list(sources),
         workspace_root=Path(workspace_root) if workspace_root else None,
     )
@@ -340,11 +344,13 @@ def _recorded_context(
     *sources, system_prompt="sys", workspace_root="ws"
 ) -> tuple[Context, "_Recorder"]:
     rec = _Recorder()
+    scope = NullScope()
+    scope.events = EventEmitter(sinks=[rec])
     ctx = Context(
         system_prompt=system_prompt,
+        scope=scope,
         live_sources=list(sources),
         workspace_root=Path(workspace_root) if workspace_root else None,
-        events=EventEmitter(sinks=[rec]),
     )
     return ctx, rec
 

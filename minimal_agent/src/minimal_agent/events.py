@@ -36,6 +36,8 @@ class EventType(StrEnum):
     TOOL_START = "tool.start"
     TOOL_END = "tool.end"
     SOURCE_FAILED = "source.failed"
+    AGENT_SPAWN = "agent.spawn"
+    AGENT_END = "agent.end"
 
 
 class RunEndStatus(StrEnum):
@@ -43,6 +45,12 @@ class RunEndStatus(StrEnum):
     MAX_TURNS = "max_turns"  # loop budget exhausted
     ABANDONED = "abandoned"  # consumer closed the generator (disconnect)
     ERROR = "error"  # an exception escaped the loop
+
+
+class AgentEndStatus(StrEnum):
+    COMPLETED = "completed"  # the child scope's body exited normally
+    ERROR = "error"  # an exception escaped the child's body
+    ABANDONED = "abandoned"  # cancelled / generator closed mid-run
 
 
 class ToolStatus(StrEnum):
@@ -133,6 +141,9 @@ class ToolEnd:
     name: str
     status: ToolStatus
     duration_ms: int
+    # Agent ids of child scopes spawned during this tool call — a second
+    # join path in case a best-effort agent.spawn line was dropped.
+    children: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -141,6 +152,31 @@ class SourceFailed:
     source: str  # source.name
     # Exception type name only — messages can carry paths/secrets.
     error: str
+
+
+@dataclass(frozen=True)
+class AgentSpawn:
+    """A child scope was opened under this scope — a nested agent is
+    about to run. Emitted on the parent's emitter by `Scope.child()`."""
+
+    type: ClassVar[EventType] = EventType.AGENT_SPAWN
+    agent_id: str
+    spawned_by: str  # tool name, e.g. "spawn_agents"
+    task: str
+    tool_call_id: str | None
+
+
+@dataclass(frozen=True)
+class AgentEnd:
+    """The child scope closed. Always paired with an agent.spawn — emitted
+    from the context manager's exit, so a crashed or cancelled child still
+    leaves a truthful closing record in the parent's trace."""
+
+    type: ClassVar[EventType] = EventType.AGENT_END
+    agent_id: str
+    status: AgentEndStatus
+    duration_ms: int
+    usage: dict | None  # child's accumulated Usage.model_dump(); None if no calls
 
 
 Event = Union[
@@ -153,6 +189,8 @@ Event = Union[
     ToolStart,
     ToolEnd,
     SourceFailed,
+    AgentSpawn,
+    AgentEnd,
 ]
 
 
@@ -177,6 +215,8 @@ _CALL_SCOPED = {
     EventType.CALL_RESPONSE,
     EventType.TOOL_START,
     EventType.TOOL_END,
+    EventType.AGENT_SPAWN,
+    EventType.AGENT_END,
 }
 
 _ENVELOPE_VERSION = 1
@@ -204,6 +244,21 @@ class EventEmitter:
         self._sinks = sinks
         self._run_id: str | None = None
         self._call_no = 0
+
+    @property
+    def run_id(self) -> str | None:
+        """The current run id; None before the first run.start."""
+        return self._run_id
+
+    @property
+    def call_id(self) -> str | None:
+        """The current call id; None before the first call.request.
+
+        Read by Scope.child() to stamp parent linkage into agent.json.
+        """
+        if self._run_id is None or self._call_no == 0:
+            return None
+        return f"{self._run_id}:c{self._call_no}"
 
     def emit(self, event: Event) -> None:
         if isinstance(event, RunStart):

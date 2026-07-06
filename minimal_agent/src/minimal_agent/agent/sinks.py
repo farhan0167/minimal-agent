@@ -70,14 +70,17 @@ class TraceSink:
 
 
 class BlobStore:
-    """Content-addressed, write-once files under the session's `blobs/`.
+    """Content-addressed, write-once files in a `blobs/` directory.
 
-    An in-memory ref cache makes repeat puts of the same text cost one
-    hash and zero I/O.
+    One instance is shared by every scope in a session (children reuse the
+    session root's store), so identical content — tool schemas, prompt
+    fragments — is written once per session, not once per scope. The
+    in-memory ref cache makes repeat puts of the same text cost one hash
+    and zero I/O.
     """
 
-    def __init__(self, session_dir: Path) -> None:
-        self._dir = session_dir / "blobs"
+    def __init__(self, blobs_dir: Path) -> None:
+        self._dir = blobs_dir
         self._known: set[str] = set()
 
     def put(self, text: str) -> str:
@@ -114,9 +117,9 @@ class CallLogSink:
     send it once per run.
     """
 
-    def __init__(self, session_dir: Path) -> None:
-        self._path = session_dir / "calls.jsonl"
-        self._blobs = BlobStore(session_dir)
+    def __init__(self, scope_dir: Path, *, blobs: BlobStore | None = None) -> None:
+        self._path = scope_dir / "calls.jsonl"
+        self._blobs = blobs if blobs is not None else BlobStore(scope_dir / "blobs")
         self._fp: RunStart | None = None
 
     def handle(self, env: Envelope) -> None:

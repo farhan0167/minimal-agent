@@ -29,6 +29,7 @@ from ..events import (
 from ..llm.types import Message, Role, TextPart
 from ..system_prompt.builder import build_context_blocks
 from .message_store import MessageStore
+from .scope import NullScope, Scope
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class _SafeSource:
     this wrapper is only used on the message channel.
     """
 
-    def __init__(self, src: ContextSource, events: EventEmitter | None = None) -> None:
+    def __init__(self, src: ContextSource, events: EventEmitter) -> None:
         self._src = src
         self._events = events
         self.name = src.name
@@ -69,11 +70,8 @@ class _SafeSource:
         try:
             return await self._src.gather(workspace_root)
         except Exception as e:
-            if self._events is not None:
-                # Type name only — exception messages can carry paths/secrets.
-                self._events.emit(
-                    SourceFailed(source=self.name, error=type(e).__name__)
-                )
+            # Type name only — exception messages can carry paths/secrets.
+            self._events.emit(SourceFailed(source=self.name, error=type(e).__name__))
             logger.debug(
                 "live source %r failed to gather; skipping",
                 self.name,
@@ -87,15 +85,17 @@ class Context:
         self,
         *,
         system_prompt: str | None = None,
-        store: MessageStore | None = None,
+        scope: Scope | None = None,
         live_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
-        events: EventEmitter | None = None,
     ) -> None:
-        self._store = store if store is not None else MessageStore()
+        # The scope supplies both storage and the event seam. A bare
+        # Context gets a NullScope: in-memory store, zero-sink emitter —
+        # byte-identical behavior, nothing recorded.
+        self._scope: Scope = scope if scope is not None else NullScope()
+        self._store = self._scope.store
         self._system_prompt = system_prompt
         self._workspace_root = workspace_root
-        self._events = events
         sources = list(live_sources) if live_sources else []
         self._run_sources = [s for s in sources if source_placement(s) is Placement.RUN]
         self._call_sources = [
@@ -117,9 +117,14 @@ class Context:
         return self._store
 
     @property
-    def events(self) -> EventEmitter | None:
-        """The session's event seam; None for bare (unrecorded) contexts."""
-        return self._events
+    def scope(self) -> Scope:
+        """The recording node this context hangs off (NullScope if bare)."""
+        return self._scope
+
+    @property
+    def events(self) -> EventEmitter:
+        """The scope's event seam — always present, zero sinks when bare."""
+        return self._scope.events
 
     def get_messages(self) -> list[Message]:
         """Project the stored messages into what the LLM should see this turn.
@@ -225,9 +230,7 @@ class Context:
         Every exit of assemble() passes through here — a call with no
         live injection is still a call the model saw.
         """
-        if self._events is None:
-            return
-        self._events.emit(
+        self._scope.events.emit(
             CallRequest(
                 # The default full projection, today. A projection strategy
                 # that shapes history replaces this with its actual ranges.
@@ -243,7 +246,7 @@ class Context:
     async def _gather_blocks(self, sources: list[ContextSource]) -> str | None:
         """Gather and format one channel's sources, tolerating failures."""
         return await build_context_blocks(
-            [_SafeSource(s, self._events) for s in sources],
+            [_SafeSource(s, self._scope.events) for s in sources],
             self._workspace_root,
             preamble=None,
         )
