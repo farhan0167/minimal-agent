@@ -131,6 +131,26 @@ class ToolExecutionInfo(BaseModel):
         default=None, description="Null if the dispatch never returned."
     )
     duration_ms: int | None = None
+    children: list[str] = Field(
+        default_factory=list,
+        description="Agent ids of child scopes this tool call spawned.",
+    )
+
+
+class SpawnedAgentInfo(BaseModel):
+    """One nested agent spawned during a call. Its full record lives
+    under agents/<agent_id>/ in the session directory."""
+
+    agent_id: str
+    spawned_by: str
+    task: str
+    tool_call_id: str | None = None
+    status: str | None = Field(
+        default=None,
+        description="completed | error | abandoned; null if never closed.",
+    )
+    duration_ms: int | None = None
+    usage: dict | None = None
 
 
 class CallViewResponse(BaseModel):
@@ -149,6 +169,7 @@ class CallViewResponse(BaseModel):
     latency_ms: int | None = None
     usage: dict | None = None
     tool_executions: list[ToolExecutionInfo]
+    spawned_agents: list[SpawnedAgentInfo] = Field(default_factory=list)
 
 
 class RunViewResponse(BaseModel):
@@ -173,3 +194,15 @@ class RunListResponse(BaseModel):
     """The holistic view: every model input and output, by run and call."""
 
     runs: list[RunViewResponse]
+
+
+class ScopeViewResponse(BaseModel):
+    """One node of the session's recording tree: the session root
+    (agent=null) or a nested agent, each with the same runs view."""
+
+    agent: dict | None = Field(
+        default=None,
+        description="agent.json of a nested agent; null at the session root.",
+    )
+    runs: list[RunViewResponse]
+    children: list["ScopeViewResponse"] = Field(default_factory=list)

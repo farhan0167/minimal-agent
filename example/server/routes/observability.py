@@ -10,10 +10,13 @@ from fastapi import APIRouter, HTTPException
 from minimal_agent.audit import (
     CallRecordNotFoundError,
     ReconstructedCall,
+    RunView,
+    ScopeView,
     read_call_records,
     read_events,
     reconstruct_call,
     session_runs,
+    session_tree,
 )
 
 from app import get_sessions_dir
@@ -25,6 +28,8 @@ from schemas import (
     ReconstructedCallResponse,
     RunListResponse,
     RunViewResponse,
+    ScopeViewResponse,
+    SpawnedAgentInfo,
     ToolExecutionInfo,
 )
 
@@ -50,6 +55,62 @@ def _reconstructed_response(result: ReconstructedCall) -> ReconstructedCallRespo
         computed_sha256=result.computed_sha256,
         tools=result.tools,
         messages=[MessageResponse(**m.model_dump()) for m in result.messages],
+    )
+
+
+def _run_response(run: RunView) -> RunViewResponse:
+    return RunViewResponse(
+        run_id=run.run_id,
+        started_at=run.started_at,
+        model=run.model,
+        backend=run.backend,
+        status=run.status,
+        duration_ms=run.duration_ms,
+        calls=[
+            CallViewResponse(
+                call_id=call.call_id,
+                ts=call.ts,
+                input=_reconstructed_response(call.input),
+                response=(
+                    MessageResponse(**call.response.model_dump())
+                    if call.response
+                    else None
+                ),
+                latency_ms=call.latency_ms,
+                usage=call.usage,
+                tool_executions=[
+                    ToolExecutionInfo(
+                        tool_call_id=t.tool_call_id,
+                        name=t.name,
+                        status=t.status,
+                        duration_ms=t.duration_ms,
+                        children=t.children,
+                    )
+                    for t in call.tool_executions
+                ],
+                spawned_agents=[
+                    SpawnedAgentInfo(
+                        agent_id=a.agent_id,
+                        spawned_by=a.spawned_by,
+                        task=a.task,
+                        tool_call_id=a.tool_call_id,
+                        status=a.status,
+                        duration_ms=a.duration_ms,
+                        usage=a.usage,
+                    )
+                    for a in call.spawned_agents
+                ],
+            )
+            for call in run.calls
+        ],
+    )
+
+
+def _scope_response(scope: ScopeView) -> ScopeViewResponse:
+    return ScopeViewResponse(
+        agent=scope.agent,
+        runs=[_run_response(run) for run in scope.runs],
+        children=[_scope_response(child) for child in scope.children],
     )
 
 
@@ -81,43 +142,22 @@ async def list_runs_route(session_id: str):
             status_code=422, detail=f"Session not reconstructible: {e}"
         ) from e
 
-    return RunListResponse(
-        runs=[
-            RunViewResponse(
-                run_id=run.run_id,
-                started_at=run.started_at,
-                model=run.model,
-                backend=run.backend,
-                status=run.status,
-                duration_ms=run.duration_ms,
-                calls=[
-                    CallViewResponse(
-                        call_id=call.call_id,
-                        ts=call.ts,
-                        input=_reconstructed_response(call.input),
-                        response=(
-                            MessageResponse(**call.response.model_dump())
-                            if call.response
-                            else None
-                        ),
-                        latency_ms=call.latency_ms,
-                        usage=call.usage,
-                        tool_executions=[
-                            ToolExecutionInfo(
-                                tool_call_id=t.tool_call_id,
-                                name=t.name,
-                                status=t.status,
-                                duration_ms=t.duration_ms,
-                            )
-                            for t in call.tool_executions
-                        ],
-                    )
-                    for call in run.calls
-                ],
-            )
-            for run in runs
-        ]
-    )
+    return RunListResponse(runs=[_run_response(run) for run in runs])
+
+
+@router.get("/{session_id}/tree", response_model=ScopeViewResponse)
+async def session_tree_route(session_id: str):
+    """The whole recording tree: the session root's runs plus every nested
+    agent's, recursively — the complete record of everything every agent
+    in the session did."""
+    try:
+        tree = session_tree(_session_dir(session_id))
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=422, detail=f"Session not reconstructible: {e}"
+        ) from e
+
+    return _scope_response(tree)
 
 
 @router.get(
