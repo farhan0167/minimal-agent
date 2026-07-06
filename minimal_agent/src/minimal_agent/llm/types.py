@@ -45,7 +45,47 @@ class ImagePart(BaseModel):
     image_url: ImageUrl
 
 
-ContentPart = Union[TextPart, ImagePart]
+class InputAudio(BaseModel):
+    """Base64 audio payload for an audio content part.
+
+    Unlike images, audio is not wrapped in a data: URI — the raw base64 goes
+    in `data` and the container format is a separate field. OpenAI currently
+    accepts only "wav" and "mp3".
+    """
+
+    data: str
+    format: Literal["wav", "mp3"]
+
+
+class AudioPart(BaseModel):
+    """An audio segment in a multimodal message (user messages only)."""
+
+    type: Literal["input_audio"] = "input_audio"
+    input_audio: InputAudio
+
+
+class FileData(BaseModel):
+    """The payload of a `file` content part.
+
+    Supply *either* an inline document (`file_data` base64 + `filename`) *or* a
+    reference to a previously uploaded file (`file_id`). This is OpenAI's path
+    for PDFs and other documents — distinct from `image_url`. All fields are
+    optional so `exclude_none=True` drops whichever branch is unused.
+    """
+
+    file_data: Optional[str] = None
+    filename: Optional[str] = None
+    file_id: Optional[str] = None
+
+
+class FilePart(BaseModel):
+    """A document segment in a multimodal message (user messages only)."""
+
+    type: Literal["file"] = "file"
+    file: FileData
+
+
+ContentPart = Union[TextPart, ImagePart, AudioPart, FilePart]
 
 
 class ToolCall(BaseModel):

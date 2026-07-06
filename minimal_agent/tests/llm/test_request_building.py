@@ -11,8 +11,12 @@ import pytest
 
 from minimal_agent.llm.llm import LLM
 from minimal_agent.llm.types import (
+    AudioPart,
+    FileData,
+    FilePart,
     ImagePart,
     ImageUrl,
+    InputAudio,
     LLMTool,
     Message,
     Role,
@@ -111,6 +115,39 @@ class TestMessageToOpenAI:
         )
         out = llm._message_to_openai(msg)
         assert out["content"][0]["image_url"]["detail"] == "high"
+
+    def test_audio_part_dumped_to_dict(self, llm: LLM) -> None:
+        msg = Message(
+            role=Role.USER,
+            content=[AudioPart(input_audio=InputAudio(data="AABB", format="wav"))],
+        )
+        out = llm._message_to_openai(msg)
+        assert out["content"] == [
+            {"type": "input_audio", "input_audio": {"data": "AABB", "format": "wav"}}
+        ]
+
+    def test_file_part_inline_drops_unused_file_id(self, llm: LLM) -> None:
+        msg = Message(
+            role=Role.USER,
+            content=[
+                FilePart(file=FileData(file_data="JVBER", filename="report.pdf"))
+            ],
+        )
+        out = llm._message_to_openai(msg)
+        # file_id is None, so exclude_none drops it — leaving the inline branch.
+        assert out["content"] == [
+            {"type": "file", "file": {"file_data": "JVBER", "filename": "report.pdf"}}
+        ]
+
+    def test_file_part_reference_drops_inline_fields(self, llm: LLM) -> None:
+        msg = Message(
+            role=Role.USER,
+            content=[FilePart(file=FileData(file_id="file-abc123"))],
+        )
+        out = llm._message_to_openai(msg)
+        assert out["content"] == [
+            {"type": "file", "file": {"file_id": "file-abc123"}}
+        ]
 
 
 # ---- _build_messages -------------------------------------------------------
