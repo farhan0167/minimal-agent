@@ -1,6 +1,53 @@
-"""Read-specific helpers: text content reading with line numbers."""
+"""Read-specific helpers: text content reading with line numbers, plus
+image/PDF rasterization into base64 data URIs for multimodal reads."""
 
+import base64
+import io
 from pathlib import Path
+
+# Extensions we send to the model as images (data-URI mime by suffix).
+IMAGE_MIME_BY_SUFFIX: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+
+class PdfSupportUnavailable(RuntimeError):
+    """Raised when a PDF read is requested but `pdf2image` isn't installed."""
+
+
+def image_to_data_uri(file_path: Path, mime: str) -> str:
+    """Read an image file and encode it as a base64 data URI."""
+    data = base64.b64encode(file_path.read_bytes()).decode()
+    return f"data:{mime};base64,{data}"
+
+
+def pdf_to_data_uris(file_path: Path) -> list[str]:
+    """Rasterize a PDF to one PNG data URI per page.
+
+    Mirrors `example/server`'s attachment handling so read-PDFs and uploaded
+    PDFs reach the model identically. `pdf2image` (and system poppler) is an
+    optional dependency — absence raises PdfSupportUnavailable rather than a
+    bare ImportError, so the dispatcher surfaces a clear message to the model.
+    """
+    try:
+        from pdf2image import convert_from_bytes
+    except ImportError as e:  # pragma: no cover - exercised via monkeypatch
+        raise PdfSupportUnavailable(
+            "Reading PDF files requires the 'pdf2image' package (and system "
+            "poppler), which is not installed."
+        ) from e
+
+    uris: list[str] = []
+    for page_img in convert_from_bytes(file_path.read_bytes()):
+        buf = io.BytesIO()
+        page_img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        uris.append(f"data:image/png;base64,{b64}")
+    return uris
 
 
 def read_text_content(

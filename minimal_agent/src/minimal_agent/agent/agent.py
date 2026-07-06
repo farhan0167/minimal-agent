@@ -21,7 +21,7 @@ from ..context_sources import (
 )
 from ..events import CallResponse, RunEnd, RunEndStatus, RunStart
 from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
-from ..llm.types import LLMTool, Usage
+from ..llm.types import ContentPart, LLMTool, Usage
 from ..skills import discover_skills
 from ..system_prompt import build_system_prompt, load_prompt
 from ..tools import ToolContext, dispatch
@@ -315,10 +315,25 @@ class Agent:
                     status = RunEndStatus.COMPLETED
                     return
 
+                pending_parts: list[ContentPart] = []
                 for tc in tool_calls:
-                    result_msg = await dispatch(tc, self._tools_by_name, tool_ctx)
+                    result_msg, extra_parts = await dispatch(
+                        tc, self._tools_by_name, tool_ctx
+                    )
                     context.add(result_msg)
                     yield result_msg
+                    pending_parts.extend(extra_parts)
+
+                # Non-text parts (images from an image/PDF read) can't ride a
+                # `tool` message and can't interleave between tool results —
+                # the API rejects both. Flush them as ONE user message after
+                # the whole batch is answered, the only API-legal slot. This
+                # message is harness-generated, not user-typed; it's persisted
+                # and replayed so the model re-sees the bytes next turn.
+                if pending_parts:
+                    parts_msg = Message(role=Role.USER, content=pending_parts)
+                    context.add(parts_msg)
+                    yield parts_msg
         except GeneratorExit:
             # Consumer closed the generator (e.g. client disconnect
             # mid-stream) — record it truthfully rather than silently.

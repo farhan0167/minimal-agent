@@ -63,14 +63,49 @@ def _call(name: str, arguments: dict) -> ToolCall:
 
 async def test_happy_path_renders_result():
     tools = {"echo": EchoTool()}
-    msg = await dispatch(_call("echo", {"text": "hi"}), tools, ToolContext())
+    msg, parts = await dispatch(_call("echo", {"text": "hi"}), tools, ToolContext())
     assert msg.role == Role.TOOL
     assert msg.tool_call_id == "call_1"
     assert msg.content == "hi"
+    # Text-only tool contributes no relocatable parts.
+    assert parts == []
+
+
+class PartsInput(BaseModel):
+    """No fields."""
+
+
+class PartsTool(BaseTool[PartsInput, str]):
+    """Tool that emits a relocatable content part alongside its text."""
+
+    name: ClassVar[str] = "parts"
+    input_schema: ClassVar[type[BaseModel]] = PartsInput
+
+    async def invoke(self, args: PartsInput, ctx: ToolContext) -> str:
+        return "pointer"
+
+    def render_parts_for_assistant(self, out: str):
+        from minimal_agent.llm.types import ImagePart, ImageUrl
+
+        return [ImagePart(image_url=ImageUrl(url="data:image/png;base64,Z"))]
+
+
+async def test_multimodal_tool_returns_parts():
+    tools = {"parts": PartsTool()}
+    msg, parts = await dispatch(_call("parts", {}), tools, ToolContext())
+    assert msg.content == "pointer"
+    assert len(parts) == 1
+    assert parts[0].image_url.url == "data:image/png;base64,Z"
+
+
+async def test_error_path_returns_empty_parts():
+    tools = {"boom": BoomTool()}
+    _, parts = await dispatch(_call("boom", {"text": "x"}), tools, ToolContext())
+    assert parts == []
 
 
 async def test_unknown_tool_returns_error_message():
-    msg = await dispatch(_call("missing", {}), {}, ToolContext())
+    msg, _ = await dispatch(_call("missing", {}), {}, ToolContext())
     assert msg.role == Role.TOOL
     assert "unknown tool" in msg.content
     assert "'missing'" in msg.content
@@ -79,13 +114,13 @@ async def test_unknown_tool_returns_error_message():
 async def test_pydantic_validation_failure_surfaced():
     tools = {"echo": EchoTool()}
     # Missing required `text` field.
-    msg = await dispatch(_call("echo", {}), tools, ToolContext())
+    msg, _ = await dispatch(_call("echo", {}), tools, ToolContext())
     assert "invalid arguments" in msg.content
 
 
 async def test_semantic_validation_failure_surfaced():
     tools = {"rejecting": RejectingTool()}
-    msg = await dispatch(_call("rejecting", {"text": "x"}), tools, ToolContext())
+    msg, _ = await dispatch(_call("rejecting", {"text": "x"}), tools, ToolContext())
     assert "validation failed" in msg.content
     assert "nope" in msg.content
 
@@ -94,7 +129,7 @@ async def test_invoke_exception_becomes_error_message():
     """A raising tool must not bring down the dispatcher — the model sees
     the error and can recover."""
     tools = {"boom": BoomTool()}
-    msg = await dispatch(_call("boom", {"text": "x"}), tools, ToolContext())
+    msg, _ = await dispatch(_call("boom", {"text": "x"}), tools, ToolContext())
     assert msg.role == Role.TOOL
     assert "tool error" in msg.content
     assert "RuntimeError" in msg.content
@@ -134,7 +169,7 @@ async def test_permission_denied_blocks_invoke():
 
     ctx = ToolContext(permission_callback=deny)
     tools = {"guarded": PermissionTool()}
-    msg = await dispatch(_call("guarded", {"text": "secret"}), tools, ctx)
+    msg, _ = await dispatch(_call("guarded", {"text": "secret"}), tools, ctx)
     assert "permission denied" in msg.content
     assert "guarded" in msg.content
 
@@ -147,7 +182,7 @@ async def test_permission_allowed_executes():
 
     ctx = ToolContext(permission_callback=allow)
     tools = {"guarded": PermissionTool()}
-    msg = await dispatch(_call("guarded", {"text": "hello"}), tools, ctx)
+    msg, _ = await dispatch(_call("guarded", {"text": "hello"}), tools, ctx)
     assert msg.content == "hello"
 
 
@@ -155,7 +190,7 @@ async def test_permission_not_checked_when_no_callback():
     """When no callback is set, tools that need permission still execute."""
     ctx = ToolContext()  # no callback
     tools = {"guarded": PermissionTool()}
-    msg = await dispatch(_call("guarded", {"text": "hello"}), tools, ctx)
+    msg, _ = await dispatch(_call("guarded", {"text": "hello"}), tools, ctx)
     assert msg.content == "hello"
 
 
@@ -170,7 +205,7 @@ async def test_permission_not_checked_when_tool_doesnt_need_it():
 
     ctx = ToolContext(permission_callback=should_not_be_called)
     tools = {"echo": EchoTool()}
-    msg = await dispatch(_call("echo", {"text": "hi"}), tools, ctx)
+    msg, _ = await dispatch(_call("echo", {"text": "hi"}), tools, ctx)
     assert msg.content == "hi"
     assert not called
 
@@ -199,7 +234,7 @@ async def test_permission_callback_error_surfaces():
 
     ctx = ToolContext(permission_callback=boom)
     tools = {"guarded": PermissionTool()}
-    msg = await dispatch(_call("guarded", {"text": "x"}), tools, ctx)
+    msg, _ = await dispatch(_call("guarded", {"text": "x"}), tools, ctx)
     assert "permission error" in msg.content
     assert "prompt crashed" in msg.content
 
@@ -304,7 +339,7 @@ async def test_dispatch_emits_matched_start_end_pair():
 
 async def test_dispatch_without_emitter_emits_nothing():
     # No events field set — the plain path all other tests exercise.
-    msg = await dispatch(
+    msg, _ = await dispatch(
         _call("echo", {"text": "hi"}), {"echo": EchoTool()}, ToolContext()
     )
     assert msg.content == "hi"

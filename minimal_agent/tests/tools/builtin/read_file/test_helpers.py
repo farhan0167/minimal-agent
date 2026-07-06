@@ -1,8 +1,17 @@
 """Tests for read_file helpers (read_text_content)."""
 
+import base64
+import builtins
 from pathlib import Path
 
-from minimal_agent.tools.builtin.read_file.helpers import read_text_content
+import pytest
+
+from minimal_agent.tools.builtin.read_file.helpers import (
+    PdfSupportUnavailable,
+    image_to_data_uri,
+    pdf_to_data_uris,
+    read_text_content,
+)
 
 
 class TestReadTextContent:
@@ -72,3 +81,33 @@ class TestReadTextContent:
         assert result["start_line"] == 1
         assert result["content"].startswith("     1\t")
 
+
+class TestImageToDataUri:
+    def test_encodes_bytes_as_data_uri(self, tmp_path: Path):
+        f = tmp_path / "x.png"
+        f.write_bytes(b"\x89PNGbytes")
+
+        uri = image_to_data_uri(f, "image/png")
+
+        assert uri.startswith("data:image/png;base64,")
+        b64 = uri.split(",", 1)[1]
+        assert base64.b64decode(b64) == b"\x89PNGbytes"
+
+
+class TestPdfToDataUris:
+    def test_missing_pdf2image_raises_clear_error(self, tmp_path: Path, monkeypatch):
+        f = tmp_path / "doc.pdf"
+        f.write_bytes(b"%PDF-1.4")
+
+        # Force the lazy `import pdf2image` inside the helper to fail.
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pdf2image":
+                raise ImportError("no pdf2image")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        with pytest.raises(PdfSupportUnavailable):
+            pdf_to_data_uris(f)
