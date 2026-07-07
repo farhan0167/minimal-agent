@@ -129,6 +129,14 @@ class CallResponse:
     latency_ms: int
     usage: dict | None  # Usage.model_dump(); None if backend omitted it
     tool_calls: int  # how many the model requested
+    # The reply body, for a sink that surfaces the model's output (e.g. the
+    # Phoenix exporter's llm.output_messages). These are *copy*, not reference:
+    # the assistant message lands in the transcript, so the audit trail doesn't
+    # need them — they're marked audit-only and kept out of events.jsonl (the
+    # timeline stays a slim reference log). None when there's no text / no
+    # tool calls. tool_calls_detail is [{id, name, arguments}, ...].
+    text: str | None = None
+    tool_calls_detail: list[dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -208,6 +216,19 @@ class Envelope:
     run_id: str | None  # None for session-scoped events
     call_id: str | None  # None for run/session-scoped events
     event: Event
+    # The scope this envelope originated from: a child scope's agent id, or
+    # None at the session root. Lets a cross-scope reader (e.g. the Phoenix
+    # exporter) attach a child scope's spans under the parent's AGENT span —
+    # the child's run.start carries no agent id in its payload, so the
+    # correlation has to live on the envelope. Audit-only; the JSONL sinks
+    # ignore it, so events.jsonl is byte-identical for root-scope sessions.
+    agent_id: str | None = None
+    # The originating scope's directory (session root or agents/<id>/), or None
+    # for an unrecorded (in-memory) scope. Lets a reader that needs the on-disk
+    # artifacts — e.g. the Phoenix exporter reconstructing a call's full input —
+    # find them without threading a path through every producer. Audit-only;
+    # the JSONL sinks ignore it.
+    scope_dir: str | None = None
 
 
 class Sink(Protocol):
@@ -224,7 +245,7 @@ _CALL_SCOPED = {
     EventType.AGENT_END,
 }
 
-_ENVELOPE_VERSION = 1
+_ENVELOPE_VERSION = 2  # v2: envelope carries the originating scope's agent_id
 
 
 def _utc_now() -> str:
@@ -245,8 +266,21 @@ class EventEmitter:
     ids derive from them.
     """
 
-    def __init__(self, sinks: list[Sink]) -> None:
+    def __init__(
+        self,
+        sinks: list[Sink],
+        *,
+        agent_id: str | None = None,
+        scope_dir: str | None = None,
+    ) -> None:
         self._sinks = sinks
+        # The scope this emitter belongs to: a child scope's agent id, or None
+        # at the session root. Stamped onto every envelope so a cross-scope
+        # reader can attach a child's spans under its parent AGENT span.
+        self._agent_id = agent_id
+        # The scope's on-disk directory (None for an unrecorded scope). Stamped
+        # onto every envelope so a reader can find the scope's artifacts.
+        self._scope_dir = scope_dir
         self._run_id: str | None = None
         self._call_no = 0
 
@@ -284,6 +318,8 @@ class EventEmitter:
                 else None
             ),
             event=event,
+            agent_id=self._agent_id,
+            scope_dir=self._scope_dir,
         )
         for sink in self._sinks:
             try:

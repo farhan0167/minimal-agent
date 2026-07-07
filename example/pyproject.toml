@@ -1,0 +1,19 @@
+[project]
+name = "minimal-agent-example"
+version = "0.1.0"
+description = "Runnable example: two agents behind one App, with optional Phoenix tracing."
+requires-python = ">=3.11"
+
+# Depends on the framework with the extras this example uses:
+#   server  → the App / FastAPI / bundled chat UI (app.serve())
+#   phoenix → PhoenixSink, enabled at runtime with PHOENIX=1
+dependencies = [
+    "mini-agent-kit[server,phoenix]",
+]
+
+# Resolve `mini-agent-kit` from the sibling checkout instead of PyPI, and
+# install it editable so local edits to the package are picked up without a
+# reinstall. Point this elsewhere (or delete it) to test against a released
+# wheel from PyPI.
+[tool.uv.sources]
+mini-agent-kit = { path = "../minimal_agent", editable = true }

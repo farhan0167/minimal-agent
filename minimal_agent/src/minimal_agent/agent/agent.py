@@ -329,6 +329,12 @@ class Agent:
                         latency_ms=int((time.monotonic() - call_t0) * 1000),
                         usage=usage.model_dump() if usage else None,
                         tool_calls=len(tool_calls or []),
+                        text=text or None,
+                        tool_calls_detail=(
+                            [tc.model_dump() for tc in tool_calls]
+                            if tool_calls
+                            else None
+                        ),
                     )
                 )
 

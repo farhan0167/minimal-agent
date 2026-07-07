@@ -1,0 +1,5 @@
+# The example resolves mini-agent-kit from the local ../minimal_agent checkout
+# (editable), so its lockfile pins a path dependency + a parent version that
+# churns on every framework bump — not worth tracking for a demo. Delete this
+# line if you want a committed, reproducible lock.
+uv.lock

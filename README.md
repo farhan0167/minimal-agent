@@ -327,6 +327,34 @@ call.messages   # exactly what the model saw, in order
 
 Recording is fire-and-forget — it can never fail or slow a run — and a bare in-memory `Context()` records nothing. Because system prompts and tool schemas are content-addressed, *"the agent behaves differently since yesterday"* is answered by diffing two blobs.
 
+### Ship it to Phoenix
+
+The same event stream that writes the local artifacts can be exported to [Arize Phoenix](https://arize.com/docs/phoenix) as OpenTelemetry spans — the run becomes a `CHAIN` span that owns your LLM calls, tools, and sub-agents, nested exactly as they ran. It's a **sink**, not a redesign: no producer, transcript, or artifact changes, and if you never wire it the framework behaves identically.
+
+```bash
+pip install "mini-agent-kit[phoenix]"
+```
+
+```python
+from minimal_agent import Agent, SessionManager
+from minimal_agent.observability import PhoenixSink
+
+# One provider per process, pointed at a local Phoenix (OTLP → localhost:6006).
+sink = PhoenixSink.for_local(project_name="my-agent")
+
+manager = SessionManager(extra_sinks=[sink])
+agent = Agent(llm, tools, workspace_root=root, sessions=manager)
+
+session = await agent.create_session()
+async for msg in agent.run(session.context):
+    ...
+sink.shutdown()   # flush buffered spans on a clean exit
+```
+
+Spans stream as the run executes, on a background thread via OTel's `BatchSpanProcessor`, so a slow or down collector drops spans rather than stalling the loop. Phoenix is a **convenience mirror, not the source of truth** — under backpressure it may show fewer spans than `events.jsonl` holds; the local session directory is always complete and authoritative.
+
+By default spans carry timing, token counts, and nesting. Pass `PhoenixSink.for_local(..., full=True)` to also reconstruct each call's input (system prompt + messages) from the local artifacts and flatten it onto the `LLM` span — Phoenix then shows the prompt, at the cost of a per-call blob read and sending prompt content off-box. See [the export spec](minimal_agent/.claude/specifications/phoenix-export.md) for the full event → span mapping.
+
 ## Serve it in the browser
 
 Any agent you build can be served over HTTP with a bundled chat web UI — one process, one port, no Node required. Install the server extra:
