@@ -43,6 +43,13 @@ _AUDIT_ONLY: dict[EventType, set[str]] = {
         "injected_call",
         "projected",
     },
+    # The reply body is copy, carried only for sinks that surface the model's
+    # output (Phoenix). The transcript already holds the assistant message, so
+    # the timeline stays a slim reference log.
+    EventType.CALL_RESPONSE: {
+        "text",
+        "tool_calls_detail",
+    },
 }
 
 

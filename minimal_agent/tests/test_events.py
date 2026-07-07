@@ -151,6 +151,6 @@ def test_envelope_stamps_version_and_utc_timestamp():
     emitter.emit(SessionCreated())
 
     env = recorder.envelopes[0]
-    assert env.v == 1
+    assert env.v == 2
     assert env.ts.endswith("Z")
     assert "T" in env.ts

@@ -209,10 +209,15 @@ class RecordedScope:
         root_totals: UsageTotals | None = None,
         store: MessageStore | None = None,
         extra_sinks: list[Sink] | None = None,
+        agent_id: str | None = None,
     ) -> None:
         self._dir = scope_dir
         self._blobs = blobs
         self._session_id = session_id
+        # This scope's agent id (None at the session root). Stamped onto every
+        # envelope this scope emits so a cross-scope reader can nest the child's
+        # spans under the parent's AGENT span.
+        self._agent_id = agent_id
         self._extra_sinks = list(extra_sinks) if extra_sinks else []
         self.totals = UsageTotals()
         # Root scope (root_totals=None): its own totals ARE the session's.
@@ -225,7 +230,9 @@ class RecordedScope:
                 CallLogSink(scope_dir),
                 self._meta_sink,
                 *self._extra_sinks,
-            ]
+            ],
+            agent_id=agent_id,
+            scope_dir=str(scope_dir),
         )
         self.store = (
             store
@@ -294,6 +301,7 @@ class RecordedScope:
             session_id=self._session_id,
             root_totals=self._root_totals,
             extra_sinks=self._extra_sinks,
+            agent_id=agent_id,
         )
         self._spawned.setdefault(tool_call_id, []).append(agent_id)
 

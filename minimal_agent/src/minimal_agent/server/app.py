@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..agent import Agent, SessionManager
 from ..config import settings
+from ..events import Sink
 from .routes import api_router
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -60,6 +61,10 @@ class App(FastAPI):
         sessions_dir: Where sessions are stored. Every registered agent is
             rebound to one SessionManager here, so all sessions live in a
             single consistent store. Defaults to settings.SESSIONS_DIR.
+        extra_sinks: Extra event sinks wired into every session the App
+            creates — e.g. a PhoenixSink to export OpenTelemetry spans. They
+            ride the same seam the local artifacts do and reach every nested
+            agent scope; a failing sink can never break a run.
         **fastapi_kwargs: Passed through to FastAPI (title, version,
             lifespan, ...).
     """
@@ -69,6 +74,7 @@ class App(FastAPI):
         *,
         agents: Agent | dict[str, Agent],
         sessions_dir: str | Path | None = None,
+        extra_sinks: list[Sink] | None = None,
         **fastapi_kwargs,
     ) -> None:
         fastapi_kwargs.setdefault("title", "minimal-agent")
@@ -93,7 +99,9 @@ class App(FastAPI):
 
         self.agents: dict[str, Agent] = _normalize_agents(agents)
         base_dir = Path(sessions_dir) if sessions_dir else Path(settings.SESSIONS_DIR)
-        self.session_manager = SessionManager(base_dir=base_dir)
+        self.session_manager = SessionManager(
+            base_dir=base_dir, extra_sinks=extra_sinks
+        )
         # One store for every agent — sessions created by any of them are
         # listable and resumable through this App.
         for agent in self.agents.values():

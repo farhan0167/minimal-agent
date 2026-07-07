@@ -21,11 +21,15 @@ The UI's new-session dialog shows both agents with their workspace, model, and t
 
 ## Run it
 
-Install the package with the server extra. From a source checkout also build the UI once (`make ui` at the repo root — needs Node); installs from a released wheel ship the UI prebuilt.
+This directory is its own tiny project — [pyproject.toml](pyproject.toml) depends on `mini-agent-kit[server,phoenix]` and resolves it from the sibling checkout (`../minimal_agent`), installed **editable** so your local edits to the framework are picked up without a reinstall. Sync it once:
 
 ```bash
-pip install "mini-agent-kit[server]"
+uv sync          # installs the local package + server & phoenix extras into ./.venv
 ```
+
+From a source checkout also build the UI once (`make ui` at the repo root — needs Node); installs from a released wheel ship the UI prebuilt.
+
+> Prefer plain pip, or testing against a published release instead of the local checkout? Skip the sync and `pip install "mini-agent-kit[server]"` — then run the commands below with `python` instead of `uv run`. To point the example at PyPI instead of the local path, delete the `[tool.uv.sources]` block in `pyproject.toml`.
 
 Configure the LLM via environment variables or a `.env` file in this directory:
 
@@ -41,10 +45,28 @@ Configure the LLM via environment variables or a `.env` file in this directory:
 Then:
 
 ```bash
-python my_app.py
+uv run python my_app.py
 ```
 
 Open `http://localhost:8000`. The API docs live at `/docs`, endpoints under `/api`.
+
+## Phoenix tracing (optional)
+
+The `phoenix` extra is already installed by `uv sync`. Start a local [Phoenix](https://arize.com/docs/phoenix) listening on `:6006`, then set `PHOENIX=1`:
+
+```bash
+PHOENIX=1 uv run python my_app.py
+```
+
+Every run streams to Phoenix as OpenTelemetry spans — a `CHAIN` span per run owning its `LLM` calls, `TOOL` dispatches, and any spawned sub-agents, nested as they ran. Leave `PHOENIX` unset and the app behaves exactly as before (no sink, no extra imports touched). Spans are flushed on a clean exit; Phoenix is a browsable mirror, while the local `.minimal_agent/sessions/` directory stays the source of truth.
+
+By default the spans carry timing, token counts, and nesting — but not the prompt. To also see **what the model saw** (system prompt + messages, reconstructed from the local artifacts and flattened onto each `LLM` span), add `PHOENIX_FULL=1`:
+
+```bash
+PHOENIX=1 PHOENIX_FULL=1 uv run python my_app.py
+```
+
+That costs a per-call blob read and sends prompt content off-box to Phoenix, so it's opt-in.
 
 ## It's just FastAPI
 

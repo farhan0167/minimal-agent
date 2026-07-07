@@ -41,6 +41,15 @@ server = [
 pdf = [
     "pdf2image>=1.17.0",
 ]
+# Ship the session event trace to Arize Phoenix as OpenTelemetry spans
+# (OpenInference semantic conventions). Kept out of core so the framework
+# installs and runs with zero tracing packages — the PhoenixSink module
+# import-guards on these and raises an actionable error if missing.
+phoenix = [
+    "arize-phoenix-otel>=0.6",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp>=1.20",
+]
 
 [build-system]
 requires = ["uv_build>=0.11.5,<0.12"]
@@ -93,4 +102,7 @@ dev = [
     # pdf extra, so the dev env covers PDF reading/attachments end to end
     # (real conversion also needs system poppler).
     "pdf2image>=1.17.0",
+    # otel-sdk so the PhoenixSink tests run in CI. Only the SDK is needed —
+    # the tests use InMemorySpanExporter and never import arize-phoenix.
+    "opentelemetry-sdk>=1.20",
 ]
