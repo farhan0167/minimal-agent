@@ -28,7 +28,7 @@ def image_to_data_uri(file_path: Path, mime: str) -> str:
 def pdf_to_data_uris(file_path: Path) -> list[str]:
     """Rasterize a PDF to one PNG data URI per page.
 
-    Mirrors `example/server`'s attachment handling so read-PDFs and uploaded
+    Mirrors the server's chat-attachment handling so read-PDFs and uploaded
     PDFs reach the model identically. `pdf2image` (and system poppler) is an
     optional dependency — absence raises PdfSupportUnavailable rather than a
     bare ImportError, so the dispatcher surfaces a clear message to the model.
@@ -38,7 +38,8 @@ def pdf_to_data_uris(file_path: Path) -> list[str]:
     except ImportError as e:  # pragma: no cover - exercised via monkeypatch
         raise PdfSupportUnavailable(
             "Reading PDF files requires the 'pdf2image' package (and system "
-            "poppler), which is not installed."
+            "poppler), which is not installed. Install with "
+            'pip install "minimal-agent[pdf]".'
         ) from e
 
     uris: list[str] = []

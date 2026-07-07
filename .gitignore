@@ -4,3 +4,7 @@ __pycache__
 **/.minimal_agent/
 .pytest_cache
 .ruff_cache
+# Built web UI bundle — produced by `make ui`, shipped in the wheel, never committed
+minimal_agent/src/minimal_agent/server/static/
+# uv build output
+minimal_agent/dist/

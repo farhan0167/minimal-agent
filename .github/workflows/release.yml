@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web UI into the package
+        run: make ui
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build sdist and wheel
+        run: uv build
+        working-directory: minimal_agent
+
+      - name: Verify the UI landed in the wheel
+        run: unzip -l minimal_agent/dist/*.whl | grep "minimal_agent/server/static/index.html"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: minimal_agent/dist/
+
+      - name: Attach to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" minimal_agent/dist/* --generate-notes
