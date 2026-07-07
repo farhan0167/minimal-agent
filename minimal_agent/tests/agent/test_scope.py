@@ -146,7 +146,11 @@ def test_child_usage_forwards_to_root_and_agent_end(tmp_path):
     with root.child(spawned_by="t", task="x") as child:
         child.events.emit(
             RunStart(
-                model="child-model", backend="openai", tools_json="[]", store_len=0
+                model="child-model",
+                backend="openai",
+                tools_json="[]",
+                system_prompt=None,
+                store_len=0,
             )
         )
         _report(child, _usage(100))
@@ -192,13 +196,19 @@ async def test_child_blobs_share_the_session_root_store(tmp_path):
         model="m", backend="openai", system_prompt="root sys"
     )
 
-    # Assembling inside the child writes its audit record against root blobs/.
+    # A run inside the child interns its system prompt against root blobs/.
     with session.scope.child(spawned_by="t", task="x") as child:
-        ctx = child.new_context(system_prompt="child sys")
-        ctx.add(Message(role=Role.USER, content="hi"))
-        await ctx.assemble()
+        child.events.emit(
+            RunStart(
+                model="m",
+                backend="openai",
+                tools_json="[]",
+                system_prompt="child sys",
+                store_len=0,
+            )
+        )
 
-    record = json.loads((child.dir / "calls.jsonl").read_text().splitlines()[0])
+    record = json.loads((child.dir / "runs.jsonl").read_text().splitlines()[0])
     digest = record["system_prompt"].removeprefix("sha256:")
     assert (session.session_dir / "blobs" / digest).exists()
     assert not (child.dir / "blobs").exists()

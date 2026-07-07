@@ -1,8 +1,15 @@
 """Built-in event sinks — the session artifacts built on the event seam.
 
 `TraceSink` writes `events.jsonl` (the timeline: every event, slim lines).
-`CallLogSink` writes `calls.jsonl` + `blobs/` (the audit record: one
-provenance record per LLM call). They join on `call_id`.
+`RunLogSink` writes `runs.jsonl` + `blobs/` (one record per run: the agent
+fingerprint — model, backend, tool schemas, stable system prompt — plus the
+run's outcome). `CallLogSink` writes `calls.jsonl` (one record per LLM call:
+only what varies per call — projected ranges, injected blocks, the assembled
+hash). Call records join to their run record on `run_id`.
+
+Run-level facts live on the run record, not repeated per call — the record
+tree (run → call) mirrors the span tree an OTel exporter builds. See
+[.claude/specifications/run-scoped-audit-record.md](../.claude/specifications/run-scoped-audit-record.md).
 
 Sinks are best-effort: file-system failures warn and swallow — the run
 continues, the trail degrades. The emitter catches anything that still
@@ -19,17 +26,19 @@ import os
 from dataclasses import asdict
 from pathlib import Path
 
-from ..events import CallRequest, Envelope, EventType, RunStart
+from ..events import CallRequest, Envelope, EventType, RunEnd, RunStart
 
 logger = logging.getLogger(__name__)
 
-_RECORD_VERSION = 1
+_CALL_RECORD_VERSION = 2  # v2: run-level facts moved to runs.jsonl
+_RUN_RECORD_VERSION = 1
 
-# Fields owned by the audit artifact — never written to the trace.
+# Fields owned by the audit artifacts — never written to the trace.
 _AUDIT_ONLY: dict[EventType, set[str]] = {
-    EventType.RUN_START: {"tools_json"},
+    # System prompt and tool schemas are run-level facts captured by
+    # RunLogSink; the trace records the run happened, not its inputs.
+    EventType.RUN_START: {"tools_json", "system_prompt"},
     EventType.CALL_REQUEST: {
-        "system_prompt",
         "injected_run",
         "injected_call",
         "projected",
@@ -108,42 +117,94 @@ class BlobStore:
         return ref
 
 
-class CallLogSink:
-    """Writes one self-sufficient audit record per LLM call.
+class RunLogSink:
+    """Writes run records to `runs.jsonl` in two phases, span-style.
 
-    Subscribes to `run.start` (remembers the agent fingerprint) and
-    `call.request` (writes the record). Records stay self-sufficient:
-    the fingerprint is stamped into each line even though producers
-    send it once per run.
+    A run's *identity* — model, backend, tool schemas, stable system prompt —
+    is written the moment the run opens (`run.start`), exactly as an OTel span
+    attaches its attributes at open. The *outcome* — status, call count,
+    duration — is appended when the run closes (`run.end`). Two rows per run,
+    joined by `run_id`; the reader merges identity forward and lets the close
+    row's status supersede.
+
+    Writing identity at open (not close) is what keeps a crashed or in-flight
+    run reconstructible: its system prompt and tool schemas are already on disk
+    when `run.start` fires, so a run that never reaches `run.end` still yields
+    a byte-exact reconstruction of every call it made — it just reads as
+    `status: "running"`.
+
+    The tool schemas and system prompt are blob-interned once, at the open row.
     """
 
     def __init__(self, scope_dir: Path, *, blobs: BlobStore | None = None) -> None:
-        self._path = scope_dir / "calls.jsonl"
+        self._path = scope_dir / "runs.jsonl"
         self._blobs = blobs if blobs is not None else BlobStore(scope_dir / "blobs")
-        self._fp: RunStart | None = None
 
     def handle(self, env: Envelope) -> None:
         if isinstance(env.event, RunStart):
-            self._fp = env.event
-            return
+            self._append_open(env, env.event)
+        elif isinstance(env.event, RunEnd):
+            self._append_close(env, env.event)
+
+    def _append_open(self, env: Envelope, e: RunStart) -> None:
+        _append_line(
+            self._path,
+            {
+                "v": _RUN_RECORD_VERSION,
+                "run_id": env.run_id,
+                "phase": "open",
+                "ts_start": env.ts,
+                "model": e.model,
+                "backend": e.backend,
+                "tools": self._blobs.put(e.tools_json),
+                "system_prompt": (
+                    self._blobs.put(e.system_prompt)
+                    if e.system_prompt is not None
+                    else None
+                ),
+                "status": "running",
+            },
+        )
+
+    def _append_close(self, env: Envelope, e: RunEnd) -> None:
+        _append_line(
+            self._path,
+            {
+                "v": _RUN_RECORD_VERSION,
+                "run_id": env.run_id,
+                "phase": "close",
+                "ts_end": env.ts,
+                "status": e.status,
+                "calls": e.calls,
+                "duration_ms": e.duration_ms,
+            },
+        )
+
+
+class CallLogSink:
+    """Writes one audit record per LLM call — only what varies per call.
+
+    Subscribes to `call.request`. Run-level facts (model, backend, tool
+    schemas, system prompt) are not repeated here — they live on the run's
+    `runs.jsonl` record, joined by `run_id`. This record carries the
+    projected store ranges, the injected live blocks, and the assembled
+    hash: everything needed to reconstruct the call *given its run record*.
+    """
+
+    def __init__(self, scope_dir: Path) -> None:
+        self._path = scope_dir / "calls.jsonl"
+
+    def handle(self, env: Envelope) -> None:
         if not isinstance(env.event, CallRequest):
             return
         e = env.event
         _append_line(
             self._path,
             {
-                "v": _RECORD_VERSION,
+                "v": _CALL_RECORD_VERSION,
                 "call_id": env.call_id,
                 "run_id": env.run_id,
                 "ts": env.ts,
-                "model": self._fp.model if self._fp else None,
-                "backend": self._fp.backend if self._fp else None,
-                "tools": self._blobs.put(self._fp.tools_json) if self._fp else None,
-                "system_prompt": (
-                    self._blobs.put(e.system_prompt)
-                    if e.system_prompt is not None
-                    else None
-                ),
                 "projected": e.projected,
                 "store_len": e.store_len,
                 "injected": {

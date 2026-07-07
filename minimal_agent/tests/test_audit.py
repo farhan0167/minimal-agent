@@ -16,7 +16,7 @@ from minimal_agent.audit import (
     session_runs,
 )
 from minimal_agent.context_sources import Placement
-from minimal_agent.events import RunStart
+from minimal_agent.events import RunEnd, RunEndStatus, RunStart
 from minimal_agent.llm.types import (
     GenerateResponse,
     Message,
@@ -37,6 +37,8 @@ class _RunSource:
 
 
 async def _session_with_one_call(tmp_path, **create_overrides):
+    """A session with one recorded call, framed by a real run (run.start emits
+    the fingerprint that reconstruction joins to)."""
     defaults = dict(
         model="test-model",
         backend="openai",
@@ -44,8 +46,19 @@ async def _session_with_one_call(tmp_path, **create_overrides):
     )
     defaults.update(create_overrides)
     session = SessionManager(base_dir=tmp_path).create_session(**defaults)
+    events = session.context.events
+    events.emit(
+        RunStart(
+            model=defaults["model"],
+            backend=defaults["backend"],
+            tools_json="[]",
+            system_prompt=defaults["system_prompt"],
+            store_len=len(session.context.store),
+        )
+    )
     session.context.add(Message(role=Role.USER, content="what changed?"))
     assembled = await session.context.assemble()
+    events.emit(RunEnd(status=RunEndStatus.COMPLETED, calls=1, duration_ms=1))
     return session, assembled
 
 
@@ -62,9 +75,9 @@ async def test_reconstruct_call_matches_assembled_output(tmp_path):
     assert result.messages == assembled
     assert result.verified
     assert result.computed_sha256 == result.recorded_sha256
-    # Direct assemble() with no run.start: fingerprint degrades to null.
-    assert result.model is None
-    assert result.tools is None
+    # Fingerprint joins from the run record (written at run.start).
+    assert result.model == "test-model"
+    assert result.tools == []
 
 
 async def test_reconstruct_call_without_injection(tmp_path):
@@ -114,7 +127,12 @@ async def test_read_events_returns_timeline_in_order(tmp_path):
 
     events = read_events(session.session_dir)
 
-    assert [e["type"] for e in events] == ["session.created", "call.request"]
+    assert [e["type"] for e in events] == [
+        "session.created",
+        "run.start",
+        "call.request",
+        "run.end",
+    ]
 
 
 # ---- session_runs (the holistic view) ---------------------------------------
@@ -201,16 +219,22 @@ async def test_session_runs_joins_everything(tmp_path):
 
 
 async def test_session_runs_degraded_direct_assemble(tmp_path):
-    session, _ = await _session_with_one_call(tmp_path)
+    # A host calling assemble() directly, with no run.start ever emitted.
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", system_prompt="you are helpful"
+    )
+    session.context.add(Message(role=Role.USER, content="what changed?"))
+    await session.context.assemble()
 
     (run,) = session_runs(session.session_dir)
 
-    # No run.start was ever emitted: frame metadata is null but the call
-    # is still present and fully reconstructed.
+    # No run row exists: frame metadata is null, and reconstruction can't
+    # recover the system prompt — the call is unverified but still surfaced.
     assert run.started_at is None
     assert run.status is None
     (call,) = run.calls
-    assert call.input.verified
+    assert not call.input.verified
+    assert call.input.unverified_reason is not None
     assert call.response is None  # no reply was ever stored
     assert call.latency_ms is None
 
@@ -231,6 +255,7 @@ async def test_reconstruct_carries_fingerprint_and_parsed_tools(tmp_path):
             model="test-model",
             backend="openai",
             tools_json='[{"name":"echo"}]',
+            system_prompt=None,
             store_len=0,
         )
     )
@@ -257,8 +282,18 @@ async def test_reconstruct_call_in_child_scope_resolves_root_blobs(tmp_path):
 
     with session.scope.child(spawned_by="t", task="x") as child:
         ctx = child.new_context(system_prompt="child sys")
+        child.events.emit(
+            RunStart(
+                model="test-model",
+                backend="openai",
+                tools_json="[]",
+                system_prompt=ctx.system_prompt,
+                store_len=len(ctx.store),
+            )
+        )
         ctx.add(Message(role=Role.USER, content="hi"))
         assembled = await ctx.assemble()
+        child.events.emit(RunEnd(status=RunEndStatus.COMPLETED, calls=1, duration_ms=1))
 
     assert not (child.dir / "blobs").exists()  # kit has no local blob store
     (record,) = read_call_records(child.dir)
@@ -274,7 +309,13 @@ async def test_session_runs_surfaces_spawned_agents(tmp_path):
     )
     scope = session.scope
     scope.events.emit(
-        RunStart(model="test-model", backend="openai", tools_json="[]", store_len=0)
+        RunStart(
+            model="test-model",
+            backend="openai",
+            tools_json="[]",
+            system_prompt=None,
+            store_len=0,
+        )
     )
     session.context.add(Message(role=Role.USER, content="go"))
     await session.context.assemble()  # call c1
@@ -299,7 +340,13 @@ async def test_tool_end_children_surface_in_tool_executions(tmp_path):
     )
     scope = session.scope
     scope.events.emit(
-        RunStart(model="test-model", backend="openai", tools_json="[]", store_len=0)
+        RunStart(
+            model="test-model",
+            backend="openai",
+            tools_json="[]",
+            system_prompt=None,
+            store_len=0,
+        )
     )
     session.context.add(Message(role=Role.USER, content="go"))
     await session.context.assemble()
@@ -328,8 +375,18 @@ async def test_session_tree_walks_nested_agents(tmp_path):
 
     with session.scope.child(spawned_by="t", task="inner work") as child:
         ctx = child.new_context(system_prompt="child sys")
+        child.events.emit(
+            RunStart(
+                model="test-model",
+                backend="openai",
+                tools_json="[]",
+                system_prompt=ctx.system_prompt,
+                store_len=len(ctx.store),
+            )
+        )
         ctx.add(Message(role=Role.USER, content="hi"))
         await ctx.assemble()
+        child.events.emit(RunEnd(status=RunEndStatus.COMPLETED, calls=1, duration_ms=1))
 
     tree = session_tree(session.session_dir)
     assert tree.agent is None  # session root

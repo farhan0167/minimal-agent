@@ -5,7 +5,7 @@ import pytest
 
 from minimal_agent.agent.context import _merge_into_user
 from minimal_agent.agent.session import SessionConfigMismatchError, SessionManager
-from minimal_agent.events import CallResponse
+from minimal_agent.events import CallResponse, RunEnd, RunEndStatus, RunStart
 from minimal_agent.llm.types import Message, Role, Usage
 
 _MODEL = "gpt-4o-mini"
@@ -17,6 +17,30 @@ def _create(tmp_path, **overrides):
     defaults = dict(model=_MODEL, backend=_BACKEND)
     defaults.update(overrides)
     return SessionManager(base_dir=tmp_path).create_session(**defaults)
+
+
+def _open_run(session, system_prompt=None) -> None:
+    """Emit run.start the way the loop does — this is what interns the run's
+    system-prompt blob and writes its runs.jsonl open row."""
+    session.context.events.emit(
+        RunStart(
+            model=_MODEL,
+            backend=_BACKEND,
+            tools_json="[]",
+            system_prompt=(
+                system_prompt
+                if system_prompt is not None
+                else session.context.system_prompt
+            ),
+            store_len=len(session.context.store),
+        )
+    )
+
+
+def _close_run(session, calls=1) -> None:
+    session.context.events.emit(
+        RunEnd(status=RunEndStatus.COMPLETED, calls=calls, duration_ms=1)
+    )
 
 
 def _load(session_id, tmp_path, **overrides):
@@ -279,6 +303,16 @@ def _calls(session_dir) -> list[dict]:
     ]
 
 
+def _run_open_rows(session_dir) -> list[dict]:
+    """The raw run.start (open) rows from runs.jsonl — one per run, each
+    carrying the fingerprint including the system-prompt blob ref."""
+    rows = [
+        json.loads(line)
+        for line in (session_dir / "runs.jsonl").read_text().splitlines()
+    ]
+    return [r for r in rows if r["phase"] == "open"]
+
+
 def _blob_text(session_dir, ref: str) -> str:
     return (session_dir / "blobs" / ref.removeprefix("sha256:")).read_text()
 
@@ -291,12 +325,16 @@ async def test_create_emits_session_created_and_assemble_writes_artifacts(
 
     assert _events(session_dir)[0]["type"] == "session.created"
 
+    _open_run(session)
     session.context.add(Message(role=Role.USER, content="hi"))
     await session.context.assemble()
 
     assert _events(session_dir)[-1]["type"] == "call.request"
     (record,) = _calls(session_dir)
-    assert _blob_text(session_dir, record["system_prompt"]) == "you are helpful"
+    assert record["v"] == 2
+    # The system prompt is a run-level fact — interned on the run's open row.
+    (run_open,) = _run_open_rows(session_dir)
+    assert _blob_text(session_dir, run_open["system_prompt"]) == "you are helpful"
 
 
 def test_load_emits_session_loaded_with_count_and_healing(tmp_path):
@@ -315,44 +353,55 @@ def test_load_emits_session_loaded_with_count_and_healing(tmp_path):
 
 
 async def test_resume_with_edited_prompt_flips_system_prompt_ref(tmp_path):
-    """'The agent changed between runs' is a one-line scan of calls.jsonl."""
+    """'The agent changed between runs' is a one-line-per-run scan of
+    runs.jsonl — the fingerprint now lives at run granularity."""
     session = _create(tmp_path, system_prompt="prompt v1")
+    _open_run(session)
     session.context.add(Message(role=Role.USER, content="hi"))
     await session.context.assemble()
+    _close_run(session)
     session.context.add(Message(role=Role.ASSISTANT, content="hello"))
     sid = session.session_id
 
     loaded = _load(sid, tmp_path, system_prompt="prompt v2")
+    _open_run(loaded)
     loaded.context.add(Message(role=Role.USER, content="again"))
     await loaded.context.assemble()
+    _close_run(loaded)
 
-    first, second = _calls(tmp_path / sid)
-    assert first["system_prompt"] != second["system_prompt"]
     session_dir = tmp_path / sid
+    first, second = _run_open_rows(session_dir)
+    assert first["system_prompt"] != second["system_prompt"]
     assert _blob_text(session_dir, first["system_prompt"]) == "prompt v1"
+    assert _blob_text(session_dir, second["system_prompt"]) == "prompt v2"
     assert _blob_text(session_dir, second["system_prompt"]) == "prompt v2"
 
 
 def _reconstruct_from_disk(session_dir, call_id: str) -> list[Message]:
-    """The audit recipe from the spec, verbatim: session directory only."""
+    """The audit recipe from the spec, verbatim: session directory only.
+
+    The system prompt is a run-level fact — joined from the call's run open
+    row in runs.jsonl, not read off the call record."""
     rec = next(r for r in _calls(session_dir) if r["call_id"] == call_id)
+    run = next(r for r in _run_open_rows(session_dir) if r["run_id"] == rec["run_id"])
+    system_prompt_ref = run["system_prompt"]
     stored = [
         Message.model_validate_json(line)
         for line in (session_dir / "messages.jsonl").read_text().splitlines()
     ]
 
     msgs: list[Message] = []
-    if rec["system_prompt"]:
+    if system_prompt_ref:
         msgs.append(
             Message(
                 role=Role.SYSTEM,
-                content=_blob_text(session_dir, rec["system_prompt"]),
+                content=_blob_text(session_dir, system_prompt_ref),
             )
         )
     for start, end in rec["projected"]:
         msgs.extend(stored[start:end])
 
-    offset = 1 if rec["system_prompt"] else 0
+    offset = 1 if system_prompt_ref else 0
     run, call = rec["injected"]["run"], rec["injected"]["call"]
     if run:
         i = run["anchor"] + offset
@@ -380,6 +429,7 @@ async def test_audit_record_reconstructs_byte_exactly_from_disk(tmp_path):
         workspace_root=str(ws),
         live_sources=[_RunSource()],
     )
+    _open_run(session)
     session.context.add(Message(role=Role.USER, content="what changed?"))
 
     assembled = await session.context.assemble()

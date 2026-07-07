@@ -44,6 +44,52 @@ def read_call_records(session_dir: Path) -> list[dict]:
     return _read_jsonl(session_dir / "calls.jsonl")
 
 
+def read_run_records(session_dir: Path) -> list[dict]:
+    """The session's run records, merged: one dict per run, in run order.
+
+    `runs.jsonl` holds two raw rows per run — an `open` row (fingerprint, at
+    run.start) and a `close` row (outcome, at run.end). This merges each run's
+    rows into one view: identity from the open row, outcome from the close row.
+    A run with only an open row (in-flight or crashed) reads `status: running`
+    and still carries its full fingerprint, so its calls stay reconstructible.
+    """
+    return list(_merge_run_rows(_read_jsonl(session_dir / "runs.jsonl")).values())
+
+
+def _merge_run_rows(rows: list[dict]) -> dict[str, dict]:
+    """Fold raw open/close rows into one merged record per run_id, in the
+    order each run first appears."""
+    merged: dict[str, dict] = {}
+    for row in rows:
+        run_id = row["run_id"]
+        if run_id not in merged:
+            # Seed with defaults so a close row arriving before/without an open
+            # row (shouldn't happen, but degrade sanely) still yields a dict.
+            merged[run_id] = {
+                "run_id": run_id,
+                "ts_start": None,
+                "ts_end": None,
+                "model": None,
+                "backend": None,
+                "tools": None,
+                "system_prompt": None,
+                "status": None,
+                "calls": None,
+                "duration_ms": None,
+            }
+        # Later rows update present keys; the close row's status supersedes
+        # the open row's "running", and phase is dropped from the merged view.
+        for k, v in row.items():
+            if k != "phase":
+                merged[run_id][k] = v
+    return merged
+
+
+def _run_records_by_id(session_dir: Path) -> dict[str, dict]:
+    """Merged runs.jsonl indexed by run_id, for joining call records to run."""
+    return _merge_run_rows(_read_jsonl(session_dir / "runs.jsonl"))
+
+
 @dataclass(frozen=True)
 class ReconstructedCall:
     """One LLM call's exact input, rebuilt from the session directory.
@@ -63,9 +109,16 @@ class ReconstructedCall:
     messages: list[Message]  # exactly what the model saw, in order
     recorded_sha256: str
     computed_sha256: str
+    # Set when reconstruction is known-incomplete before hashing — e.g. the
+    # run record is missing (the run never reached run.end), so the system
+    # prompt cannot be recovered. None means the recipe ran fully; `verified`
+    # then reflects the hash comparison.
+    unverified_reason: str | None = None
 
     @property
     def verified(self) -> bool:
+        if self.unverified_reason is not None:
+            return False
         return self.computed_sha256 == self.recorded_sha256
 
 
@@ -86,7 +139,8 @@ def reconstruct_call(session_dir: Path, call_id: str) -> ReconstructedCall:
         raise CallRecordNotFoundError(
             f"no call record {call_id!r} in {session_dir / 'calls.jsonl'}"
         )
-    return _rebuild(session_dir, record, _read_stored(session_dir))
+    run = _run_records_by_id(session_dir).get(record["run_id"])
+    return _rebuild(session_dir, record, run, _read_stored(session_dir))
 
 
 def _read_stored(session_dir: Path) -> list[Message]:
@@ -97,47 +151,60 @@ def _read_stored(session_dir: Path) -> list[Message]:
 
 
 def _rebuild(
-    session_dir: Path, record: dict, stored: list[Message]
+    session_dir: Path, record: dict, run: dict | None, stored: list[Message]
 ) -> ReconstructedCall:
-    """Apply the audit recipe to one record against the loaded transcript."""
+    """Apply the audit recipe to one call record against the loaded transcript.
+
+    Run-level facts (system prompt, model, backend, tool schemas) come from
+    the call's `runs.jsonl` record, joined by run_id. A missing run record
+    (the run never reached run.end) leaves the system prompt unrecoverable —
+    the result is returned unverified with a reason rather than silently
+    reconstructing a wrong (prompt-less) input.
+    """
+    unverified_reason: str | None = None
+    if run is None:
+        unverified_reason = (
+            f"no run record for {record['run_id']!r} in runs.jsonl; "
+            "run did not complete, system prompt unrecoverable"
+        )
+    system_prompt_ref = run["system_prompt"] if run else None
+
     msgs: list[Message] = []
-    if record["system_prompt"]:
+    if system_prompt_ref:
         msgs.append(
             Message(
                 role=Role.SYSTEM,
-                content=_read_blob(session_dir, record["system_prompt"]),
+                content=_read_blob(session_dir, system_prompt_ref),
             )
         )
     for start, end in record["projected"]:
         msgs.extend(stored[start:end])
 
-    offset = 1 if record["system_prompt"] else 0
-    run = record["injected"]["run"]
-    call = record["injected"]["call"]
-    if run:
-        i = run["anchor"] + offset
-        msgs[i] = _merge_into_user(msgs[i], run["text"])
-    if call:
-        if call["anchor"] is not None:
-            i = call["anchor"] + offset
-            msgs[i] = _merge_into_user(msgs[i], call["text"])
+    offset = 1 if system_prompt_ref else 0
+    inj_run = record["injected"]["run"]
+    inj_call = record["injected"]["call"]
+    if inj_run:
+        i = inj_run["anchor"] + offset
+        msgs[i] = _merge_into_user(msgs[i], inj_run["text"])
+    if inj_call:
+        if inj_call["anchor"] is not None:
+            i = inj_call["anchor"] + offset
+            msgs[i] = _merge_into_user(msgs[i], inj_call["text"])
         else:
-            msgs.append(Message(role=Role.USER, content=call["text"]))
+            msgs.append(Message(role=Role.USER, content=inj_call["text"]))
 
+    tools_ref = run["tools"] if run else None
     return ReconstructedCall(
         call_id=record["call_id"],
         run_id=record["run_id"],
         ts=record["ts"],
-        model=record["model"],
-        backend=record["backend"],
-        tools=(
-            json.loads(_read_blob(session_dir, record["tools"]))
-            if record["tools"]
-            else None
-        ),
+        model=run["model"] if run else None,
+        backend=run["backend"] if run else None,
+        tools=(json.loads(_read_blob(session_dir, tools_ref)) if tools_ref else None),
         messages=msgs,
         recorded_sha256=record["assembled_sha256"],
         computed_sha256=hash_messages(msgs),
+        unverified_reason=unverified_reason,
     )
 
 
@@ -189,12 +256,23 @@ class CallView:
 
 @dataclass(frozen=True)
 class RunView:
-    """One Agent.run() invocation and every call it made."""
+    """One Agent.run() invocation and every call it made.
+
+    The run owns the run-level facts — model, backend, tool schemas, and the
+    stable system prompt — recorded once per run (they're constant across a
+    run's calls). Per-call detail lives on each CallView; the run-level facts
+    are not repeated there.
+    """
 
     run_id: str
     started_at: str | None  # None for a degraded run (no run.start seen)
     model: str | None
     backend: str | None
+    # Tool schemas the agent offered for this run, and its stable system
+    # prompt — both resolved from the run record's blobs. None for a degraded
+    # run (no run.start) or when the run had no system prompt.
+    tools: list[dict] | None
+    system_prompt: str | None
     # From run.end; all None if the run never finalized (see the spec's
     # abandoned-run caveat) or the run is degraded.
     status: str | None
@@ -213,6 +291,7 @@ def session_runs(session_dir: Path) -> list[RunView]:
     """
     events = read_events(session_dir)
     stored = _read_stored(session_dir)
+    run_records = _run_records_by_id(session_dir)  # run_id -> runs.jsonl record
 
     run_start: dict[str, dict] = {}  # run_id -> run.start envelope
     run_end: dict[str, dict] = {}  # run_id -> run.end payload
@@ -261,7 +340,9 @@ def session_runs(session_dir: Path) -> list[RunView]:
     calls_by_run: dict[str, list[CallView]] = {}
     run_order: list[str] = []
     for record in read_call_records(session_dir):
-        rebuilt = _rebuild(session_dir, record, stored)
+        rebuilt = _rebuild(
+            session_dir, record, run_records.get(record["run_id"]), stored
+        )
         response = (
             stored[record["store_len"]] if record["store_len"] < len(stored) else None
         )
@@ -305,23 +386,44 @@ def session_runs(session_dir: Path) -> list[RunView]:
     for run_id in run_order:
         start = run_start.get(run_id)
         end = run_end.get(run_id, {})
+        record = run_records.get(run_id)  # runs.jsonl: authoritative when present
         first_call = calls_by_run[run_id][0] if calls_by_run[run_id] else None
         runs.append(
             RunView(
                 run_id=run_id,
-                started_at=start["ts"] if start else None,
+                # ts_start from the run record; fall back to the run.start
+                # envelope for a run that never finalized (no runs.jsonl row).
+                started_at=(
+                    record["ts_start"] if record else (start["ts"] if start else None)
+                ),
                 model=(
-                    start["payload"]["model"]
-                    if start
+                    record["model"]
+                    if record
                     else (first_call.input.model if first_call else None)
                 ),
                 backend=(
-                    start["payload"]["backend"]
-                    if start
+                    record["backend"]
+                    if record
                     else (first_call.input.backend if first_call else None)
                 ),
-                status=end.get("status"),
-                duration_ms=end.get("duration_ms"),
+                # Run-level facts resolved from the run record's blobs — the
+                # tool catalog and stable system prompt the model saw all run.
+                tools=(
+                    json.loads(_read_blob(session_dir, record["tools"]))
+                    if record and record["tools"]
+                    else None
+                ),
+                system_prompt=(
+                    _read_blob(session_dir, record["system_prompt"])
+                    if record and record["system_prompt"]
+                    else None
+                ),
+                # Outcome lives on the run record; the run.end event is the
+                # fallback for a run whose row was never written.
+                status=record["status"] if record else end.get("status"),
+                duration_ms=(
+                    record["duration_ms"] if record else end.get("duration_ms")
+                ),
                 calls=calls_by_run[run_id],
             )
         )

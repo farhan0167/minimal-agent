@@ -118,7 +118,13 @@ class CallRecordListResponse(BaseModel):
 
 
 class ReconstructedCallResponse(BaseModel):
-    """One LLM call's exact input, rebuilt from the session directory."""
+    """One LLM call's exact input, rebuilt from the session directory.
+
+    Self-describing: carries the run-level fingerprint (model, backend, tools)
+    inline because the standalone GET /calls/{call_id} endpoint has no run
+    wrapper. When nested under a run (GET /runs, /tree), those run-level facts
+    live on the run object instead — see CallInputResponse.
+    """
 
     call_id: str
     run_id: str | None = None
@@ -136,6 +142,31 @@ class ReconstructedCallResponse(BaseModel):
     tools: list[dict] | None = Field(
         default=None, description="Tool schemas the model was offered."
     )
+    messages: list[MessageResponse] = Field(
+        description="Exactly what the model saw on this call, in order."
+    )
+
+
+class CallInputResponse(BaseModel):
+    """One call's input as nested under a run — per-call facts only.
+
+    The run-level fingerprint (model, backend, tools, system prompt) lives on
+    the enclosing RunViewResponse, not repeated here. `messages` stays
+    byte-exact (system prompt included as message[0]) so per-call verification
+    and the Phoenix `llm.input_messages` mapping stay whole.
+    """
+
+    call_id: str
+    run_id: str | None = None
+    ts: str
+    verified: bool = Field(
+        description=(
+            "Whether the rebuilt messages hash to the recorded value. False "
+            "means unverifiable (e.g. serialization drift), not tampered."
+        )
+    )
+    recorded_sha256: str
+    computed_sha256: str
     messages: list[MessageResponse] = Field(
         description="Exactly what the model saw on this call, in order."
     )
@@ -173,11 +204,15 @@ class SpawnedAgentInfo(BaseModel):
 
 
 class CallViewResponse(BaseModel):
-    """One LLM call, fully expanded: input, response, and tool activity."""
+    """One LLM call, fully expanded: input, response, and tool activity.
+
+    Run-level facts (model, backend, tools, system prompt) are NOT here —
+    they live on the enclosing run. `input` carries only per-call detail.
+    """
 
     call_id: str
     ts: str
-    input: ReconstructedCallResponse
+    input: CallInputResponse
     response: MessageResponse | None = Field(
         default=None,
         description=(
@@ -192,12 +227,24 @@ class CallViewResponse(BaseModel):
 
 
 class RunViewResponse(BaseModel):
-    """One agent run and every LLM call it made."""
+    """One agent run and every LLM call it made.
+
+    Owns the run-level fingerprint — model, backend, tool schemas, and the
+    stable system prompt — recorded once per run and shared by all its calls.
+    """
 
     run_id: str
     started_at: str | None = None
     model: str | None = None
     backend: str | None = None
+    tools: list[dict] | None = Field(
+        default=None,
+        description="Tool schemas the agent offered for this run.",
+    )
+    system_prompt: str | None = Field(
+        default=None,
+        description="The stable system prompt the model saw across this run.",
+    )
     status: str | None = Field(
         default=None,
         description=(

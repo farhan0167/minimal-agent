@@ -275,6 +275,7 @@ class Agent:
                 model=self._llm.model,
                 backend=str(self._llm.backend),
                 tools_json=self._tools_json,
+                system_prompt=context.system_prompt,
                 store_len=len(context.store),
             )
         )
