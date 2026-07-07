@@ -23,9 +23,7 @@ class EditFile(BaseTool[EditFileInput, dict]):
         self.workspace_root = workspace_root.resolve()
         self.read_timestamps = read_timestamps
 
-    async def validate(
-        self, args: EditFileInput, ctx: ToolContext
-    ) -> ValidationResult:
+    async def validate(self, args: EditFileInput, ctx: ToolContext) -> ValidationResult:
         path = Path(args.file_path)
 
         if not path.is_absolute():

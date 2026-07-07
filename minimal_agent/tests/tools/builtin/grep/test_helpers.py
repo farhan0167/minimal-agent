@@ -42,9 +42,7 @@ class TestBuildRipgrepArgs:
         assert "--multiline-dotall" in args
 
     def test_context_lines_in_content_mode(self):
-        inp = GrepInput(
-            pattern="ctx", output_mode="content", context_lines=3
-        )
+        inp = GrepInput(pattern="ctx", output_mode="content", context_lines=3)
         args = build_ripgrep_args(inp)
         idx = args.index("-C")
         assert args[idx + 1] == "3"

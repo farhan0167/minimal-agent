@@ -35,9 +35,7 @@ async def run_ripgrep(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout_bytes, _ = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout_s
-        )
+        stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         if len(stdout_bytes) > MAX_BUFFER_BYTES:
             stdout = stdout[:MAX_BUFFER_BYTES].rsplit("\n", 1)[0]
@@ -85,6 +83,3 @@ def build_ripgrep_args(input: GrepInput) -> list[str]:
     args.append(input.pattern)
 
     return args
-
-
-

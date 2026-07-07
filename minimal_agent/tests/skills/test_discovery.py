@@ -41,7 +41,7 @@ class TestParseFrontmatter:
         assert parse_frontmatter("") == (None, None)
 
     def test_quoted_values(self):
-        content = '---\nname: "my-skill"\ndescription: \'A skill.\'\n---\n'
+        content = "---\nname: \"my-skill\"\ndescription: 'A skill.'\n---\n"
         assert parse_frontmatter(content) == ("my-skill", "A skill.")
 
     def test_extra_fields_ignored(self):
@@ -171,9 +171,7 @@ class TestDiscoverSkills:
         active_names = {s.name for s in active}
         assert active_names == {"commit", "review-pr"}
 
-        project_commit = next(
-            s for s in active if s.name == "commit"
-        )
+        project_commit = next(s for s in active if s.name == "commit")
         assert project_commit.description == "Project commit skill."
         assert project_commit.source == SkillSource.PROJECT
 

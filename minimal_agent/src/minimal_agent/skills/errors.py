@@ -10,9 +10,7 @@ class SkillNotFoundError(Exception):
         self.name = name
         self.available = available
         listing = ", ".join(available) if available else "(none)"
-        super().__init__(
-            f"Skill {name!r} not found. Available skills: {listing}"
-        )
+        super().__init__(f"Skill {name!r} not found. Available skills: {listing}")
 
 
 class SkillValidationError(Exception):

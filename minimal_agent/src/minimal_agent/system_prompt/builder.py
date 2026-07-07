@@ -63,9 +63,7 @@ async def build_context_blocks(
     if not sources:
         return None
 
-    results = await asyncio.gather(
-        *(src.gather(workspace_root) for src in sources)
-    )
+    results = await asyncio.gather(*(src.gather(workspace_root) for src in sources))
 
     blocks: list[str] = []
     for src, content in zip(sources, results, strict=True):
@@ -103,13 +101,9 @@ async def build_system_prompt(
 
     if context_sources:
         session_sources = [
-            s
-            for s in context_sources
-            if source_placement(s) is Placement.SESSION
+            s for s in context_sources if source_placement(s) is Placement.SESSION
         ]
-        context_block = await build_context_blocks(
-            session_sources, workspace_root
-        )
+        context_block = await build_context_blocks(session_sources, workspace_root)
         if context_block:
             parts.append(context_block)
 

@@ -20,17 +20,13 @@ class Glob(BaseTool[GlobInput, dict]):
     def __init__(self, workspace_root: Path) -> None:
         self.workspace_root = workspace_root.resolve()
 
-    async def validate(
-        self, args: GlobInput, ctx: ToolContext
-    ) -> ValidationResult:
+    async def validate(self, args: GlobInput, ctx: ToolContext) -> ValidationResult:
         if not args.pattern.strip():
             return ValidationErr("Pattern cannot be empty.")
 
         if args.path is not None:
             path = Path(args.path)
-            if path.is_absolute() and not is_path_within(
-                path, self.workspace_root
-            ):
+            if path.is_absolute() and not is_path_within(path, self.workspace_root):
                 return ValidationErr(
                     f"Path is outside the workspace root ({self.workspace_root})."
                 )
@@ -44,9 +40,7 @@ class Glob(BaseTool[GlobInput, dict]):
             else self.workspace_root / (args.path or "")
         )
 
-        matches = globlib.glob(
-            args.pattern, root_dir=str(search_root), recursive=True
-        )
+        matches = globlib.glob(args.pattern, root_dir=str(search_root), recursive=True)
 
         # Resolve to absolute paths
         abs_paths = [str(search_root / m) for m in matches]
@@ -65,8 +59,5 @@ class Glob(BaseTool[GlobInput, dict]):
             return "No files found"
         result = "\n".join(out["filenames"])
         if out["truncated"]:
-            result += (
-                "\n(Results truncated. "
-                "Consider a more specific path or pattern.)"
-            )
+            result += "\n(Results truncated. Consider a more specific path or pattern.)"
         return result

@@ -56,9 +56,7 @@ class AgentsMdSource:
             out.append(imported if imported is not None else line)
         return "\n".join(out)
 
-    def _read_import(
-        self, rel_path: str, workspace_root: Path
-    ) -> str | None:
+    def _read_import(self, rel_path: str, workspace_root: Path) -> str | None:
         target = workspace_root / rel_path
         # Root-scoped: never resolve outside the workspace root.
         try:

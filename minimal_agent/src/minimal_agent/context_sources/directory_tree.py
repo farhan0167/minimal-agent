@@ -18,16 +18,19 @@ class DirectoryTreeSource:
         self._walk(workspace_root, "", 0, lines)
         return "\n".join(lines) if lines else None
 
-    def _walk(
-        self, path: Path, prefix: str, depth: int, lines: list[str]
-    ) -> None:
+    def _walk(self, path: Path, prefix: str, depth: int, lines: list[str]) -> None:
         if depth > self._max_depth:
             return
 
         # Skip hidden dirs and common noise
         skip = {
-            ".git", "__pycache__", "node_modules",
-            ".venv", "venv", ".mypy_cache", ".ruff_cache",
+            ".git",
+            "__pycache__",
+            "node_modules",
+            ".venv",
+            "venv",
+            ".mypy_cache",
+            ".ruff_cache",
         }
 
         try:

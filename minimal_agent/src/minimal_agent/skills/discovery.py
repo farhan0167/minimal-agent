@@ -155,9 +155,7 @@ def _warn(msg: str) -> None:
     print(f"[skills] warning: {msg}", file=sys.stderr)
 
 
-def _load_skill_from_dir(
-    skill_dir: Path, source: SkillSource
-) -> SkillMeta | None:
+def _load_skill_from_dir(skill_dir: Path, source: SkillSource) -> SkillMeta | None:
     """Load one skill from a directory. Returns None if invalid (logs warning)."""
     skill_file = skill_dir / SKILL_FILE_NAME
     if not skill_file.is_file():
@@ -185,9 +183,7 @@ def _load_skill_from_dir(
         return None
 
     if len(description) > 1024:
-        _warn(
-            f"{skill_file}: description is {len(description)} chars, max 1024"
-        )
+        _warn(f"{skill_file}: description is {len(description)} chars, max 1024")
         return None
 
     return SkillMeta(

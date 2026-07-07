@@ -26,17 +26,13 @@ class Grep(BaseTool[GrepInput, dict]):
     def __init__(self, workspace_root: Path) -> None:
         self.workspace_root = workspace_root.resolve()
 
-    async def validate(
-        self, args: GrepInput, ctx: ToolContext
-    ) -> ValidationResult:
+    async def validate(self, args: GrepInput, ctx: ToolContext) -> ValidationResult:
         if not args.pattern.strip():
             return ValidationErr("Pattern cannot be empty.")
 
         if args.path is not None:
             path = Path(args.path)
-            if path.is_absolute() and not is_path_within(
-                path, self.workspace_root
-            ):
+            if path.is_absolute() and not is_path_within(path, self.workspace_root):
                 return ValidationErr(
                     f"Path is outside the workspace root ({self.workspace_root})."
                 )
@@ -113,8 +109,7 @@ class Grep(BaseTool[GrepInput, dict]):
             result += "\n".join(filenames)
             if num > MAX_RESULTS:
                 result += (
-                    "\n(Results truncated. "
-                    "Consider a more specific path or pattern.)"
+                    "\n(Results truncated. Consider a more specific path or pattern.)"
                 )
             return result
 

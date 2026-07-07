@@ -129,9 +129,7 @@ class TestMessageToOpenAI:
     def test_file_part_inline_drops_unused_file_id(self, llm: LLM) -> None:
         msg = Message(
             role=Role.USER,
-            content=[
-                FilePart(file=FileData(file_data="JVBER", filename="report.pdf"))
-            ],
+            content=[FilePart(file=FileData(file_data="JVBER", filename="report.pdf"))],
         )
         out = llm._message_to_openai(msg)
         # file_id is None, so exclude_none drops it — leaving the inline branch.
@@ -145,9 +143,7 @@ class TestMessageToOpenAI:
             content=[FilePart(file=FileData(file_id="file-abc123"))],
         )
         out = llm._message_to_openai(msg)
-        assert out["content"] == [
-            {"type": "file", "file": {"file_id": "file-abc123"}}
-        ]
+        assert out["content"] == [{"type": "file", "file": {"file_id": "file-abc123"}}]
 
 
 # ---- _build_messages -------------------------------------------------------

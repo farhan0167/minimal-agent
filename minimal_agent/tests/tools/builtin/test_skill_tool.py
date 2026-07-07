@@ -43,9 +43,7 @@ class TestSkillTool:
     async def test_invoke_passes_through_args(self, tmp_path: Path):
         meta = _make_meta(tmp_path, "commit")
         tool = SkillTool(skills=[meta])
-        out = await tool.invoke(
-            SkillInput(skill="commit", args="#123"), ToolContext()
-        )
+        out = await tool.invoke(SkillInput(skill="commit", args="#123"), ToolContext())
         assert out.args == "#123"
 
     async def test_invoke_normalizes_name(self, tmp_path: Path):
@@ -63,9 +61,7 @@ class TestSkillTool:
     async def test_render_result_includes_prompt(self, tmp_path: Path):
         meta = _make_meta(tmp_path, "commit", body="Do the thing.")
         tool = SkillTool(skills=[meta])
-        out = await tool.invoke(
-            SkillInput(skill="commit", args="x"), ToolContext()
-        )
+        out = await tool.invoke(SkillInput(skill="commit", args="x"), ToolContext())
         rendered = tool.render_result_for_assistant(out)
         assert "Skill: commit" in rendered
         assert "Args: x" in rendered

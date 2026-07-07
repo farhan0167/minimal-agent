@@ -14,9 +14,7 @@ def _make_tool(tmp_path: Path) -> tuple[EditFile, dict[str, float]]:
     return tool, ts
 
 
-def _write_and_mark_read(
-    path: Path, content: str, ts: dict[str, float]
-) -> None:
+def _write_and_mark_read(path: Path, content: str, ts: dict[str, float]) -> None:
     """Write a file and mark it as read (simulating a prior read_file call)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
