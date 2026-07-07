@@ -41,9 +41,7 @@ class _OtherTool(BaseTool[_EmptyInput, str]):
 def _make_llm(text: str = "done") -> AsyncMock:
     """Mock LLM that returns a single text response with no tool calls."""
     llm = AsyncMock()
-    llm.generate = AsyncMock(
-        return_value=GenerateResponse(text=text, tool_calls=None)
-    )
+    llm.generate = AsyncMock(return_value=GenerateResponse(text=text, tool_calls=None))
     return llm
 
 
@@ -127,9 +125,7 @@ async def test_single_agent_returns_result():
     llm = _make_llm(text="The answer is 42.")
     tool = _make_tool(llm=llm)
 
-    args = SpawnAgentsInput(
-        agents=[SubAgentSpec(task="What is 6 * 7?")]
-    )
+    args = SpawnAgentsInput(agents=[SubAgentSpec(task="What is 6 * 7?")])
     result = await tool.invoke(args, ToolContext())
 
     assert "The answer is 42." in result
@@ -143,9 +139,7 @@ async def test_multiple_agents_run_concurrently():
     async def mock_generate(**kwargs):
         nonlocal call_count
         call_count += 1
-        return GenerateResponse(
-            text=f"result-{call_count}", tool_calls=None
-        )
+        return GenerateResponse(text=f"result-{call_count}", tool_calls=None)
 
     llm = AsyncMock()
     llm.generate = AsyncMock(side_effect=mock_generate)
@@ -170,14 +164,10 @@ async def test_multiple_agents_run_concurrently():
 async def test_agent_with_no_output():
     """Sub-agent that produces no text content gets a fallback message."""
     llm = AsyncMock()
-    llm.generate = AsyncMock(
-        return_value=GenerateResponse(text="", tool_calls=None)
-    )
+    llm.generate = AsyncMock(return_value=GenerateResponse(text="", tool_calls=None))
     tool = _make_tool(llm=llm)
 
-    args = SpawnAgentsInput(
-        agents=[SubAgentSpec(task="do nothing")]
-    )
+    args = SpawnAgentsInput(agents=[SubAgentSpec(task="do nothing")])
     result = await tool.invoke(args, ToolContext())
 
     assert "(sub-agent produced no output)" in result
@@ -189,9 +179,7 @@ async def test_agent_error_captured_not_raised():
     llm.generate = AsyncMock(side_effect=RuntimeError("LLM is down"))
     tool = _make_tool(llm=llm)
 
-    args = SpawnAgentsInput(
-        agents=[SubAgentSpec(task="will fail")]
-    )
+    args = SpawnAgentsInput(agents=[SubAgentSpec(task="will fail")])
     result = await tool.invoke(args, ToolContext())
 
     assert "ERROR" in result
@@ -215,9 +203,7 @@ async def test_max_turns_forwarded_to_sub_agent():
     llm.generate = AsyncMock(side_effect=responses)
     tool = _make_tool(llm=llm)
 
-    args = SpawnAgentsInput(
-        agents=[SubAgentSpec(task="loop forever", max_turns=2)]
-    )
+    args = SpawnAgentsInput(agents=[SubAgentSpec(task="loop forever", max_turns=2)])
     await tool.invoke(args, ToolContext())
 
     # Sub-agent should have called generate exactly 2 times (max_turns=2)
@@ -229,9 +215,7 @@ async def test_tool_scoping_passed_to_sub_agent():
     llm = _make_llm(text="used only stub_tool")
     tool = _make_tool(llm=llm)
 
-    args = SpawnAgentsInput(
-        agents=[SubAgentSpec(task="search", tools=["stub_tool"])]
-    )
+    args = SpawnAgentsInput(agents=[SubAgentSpec(task="search", tools=["stub_tool"])])
     result = await tool.invoke(args, ToolContext())
 
     assert "used only stub_tool" in result

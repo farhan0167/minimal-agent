@@ -12,9 +12,7 @@ class GlobInput(BaseModel):
     Returns matching file paths sorted by modification time.
     """
 
-    pattern: str = Field(
-        ..., description="The glob pattern to match files against."
-    )
+    pattern: str = Field(..., description="The glob pattern to match files against.")
     path: Optional[str] = Field(
         None,
         description="The directory to search in. "

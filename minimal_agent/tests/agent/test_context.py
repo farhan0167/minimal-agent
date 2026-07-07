@@ -371,7 +371,6 @@ async def test_assemble_emits_one_call_request_per_call_even_without_sources():
     assert len(reqs) == 2
     assert reqs[0].projected == [(0, 1)]
     assert reqs[0].store_len == 1
-    assert reqs[0].system_prompt == "sys"
     assert reqs[0].injected_run is None and reqs[0].injected_call is None
 
 
@@ -431,15 +430,21 @@ async def test_failing_source_emits_source_failed_and_call_proceeds():
     assert msgs[-1].content == "hi"  # nothing injected, call proceeds
 
 
-def _reconstruct(stored: list[Message], req: CallRequest) -> list[Message]:
-    """The audit recipe from the spec, applied to an in-memory store."""
+def _reconstruct(
+    stored: list[Message], req: CallRequest, system_prompt: str | None
+) -> list[Message]:
+    """The audit recipe from the spec, applied to an in-memory store.
+
+    The system prompt is a run-level fact (it rides run.start, not the
+    call.request), so it's supplied here the way reconstruct_call() joins it
+    from the run record."""
     msgs: list[Message] = []
-    if req.system_prompt is not None:
-        msgs.append(Message(role=Role.SYSTEM, content=req.system_prompt))
+    if system_prompt is not None:
+        msgs.append(Message(role=Role.SYSTEM, content=system_prompt))
     for start, end in req.projected:
         msgs.extend(stored[start:end])
 
-    offset = 1 if req.system_prompt is not None else 0
+    offset = 1 if system_prompt is not None else 0
     if req.injected_run:
         i = req.injected_run.anchor + offset
         msgs[i] = _merge_into_user(msgs[i], req.injected_run.text)
@@ -485,6 +490,6 @@ async def test_round_trip_reconstruction_matches_hash(placements, stored):
     assembled = await ctx.assemble()
 
     (req,) = _call_requests(rec)
-    rebuilt = _reconstruct(ctx.store.messages, req)
+    rebuilt = _reconstruct(ctx.store.messages, req, ctx.system_prompt)
     assert hash_messages(rebuilt) == req.assembled_sha256
     assert rebuilt == assembled

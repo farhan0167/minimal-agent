@@ -47,7 +47,7 @@ from ..events import (
 )
 from ..llm.types import Usage
 from .message_store import MessageStore
-from .sinks import BlobStore, CallLogSink, TraceSink
+from .sinks import BlobStore, CallLogSink, RunLogSink, TraceSink
 
 if TYPE_CHECKING:
     from .context import Context
@@ -221,7 +221,8 @@ class RecordedScope:
         self.events = EventEmitter(
             sinks=[
                 TraceSink(scope_dir),
-                CallLogSink(scope_dir, blobs=blobs),
+                RunLogSink(scope_dir, blobs=blobs),
+                CallLogSink(scope_dir),
                 self._meta_sink,
                 *self._extra_sinks,
             ]

@@ -13,9 +13,7 @@ class RunShellInput(BaseModel):
     Shell state (local variables, subshells) does not persist.
     """
 
-    command: str = Field(
-        ..., description="The shell command to execute."
-    )
+    command: str = Field(..., description="The shell command to execute.")
     timeout: Optional[int] = Field(
         None,
         gt=0,

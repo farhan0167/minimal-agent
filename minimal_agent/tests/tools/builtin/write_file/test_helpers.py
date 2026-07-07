@@ -41,4 +41,3 @@ class TestWriteTextContent:
         result = write_text_content(f, "single line")
 
         assert result["num_lines"] == 1
-

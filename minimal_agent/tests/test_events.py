@@ -33,7 +33,13 @@ class _Exploding:
 
 
 def _run_start(**overrides) -> RunStart:
-    defaults = dict(model="test-model", backend="openai", tools_json="[]", store_len=0)
+    defaults = dict(
+        model="test-model",
+        backend="openai",
+        tools_json="[]",
+        system_prompt=None,
+        store_len=0,
+    )
     defaults.update(overrides)
     return RunStart(**defaults)
 
@@ -42,7 +48,6 @@ def _call_request() -> CallRequest:
     return CallRequest(
         projected=[(0, 1)],
         store_len=1,
-        system_prompt=None,
         injected_run=None,
         injected_call=None,
         assembled_sha256="sha256:0",

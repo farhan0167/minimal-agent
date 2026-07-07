@@ -28,9 +28,7 @@ def truncate_text(
     )
 
 
-def sort_by_mtime(
-    file_paths: list[str], limit: int | None = None
-) -> list[str]:
+def sort_by_mtime(file_paths: list[str], limit: int | None = None) -> list[str]:
     """Sort file paths by modification time (most recent first).
 
     When *limit* is given, only the first *limit* results are returned.

@@ -28,9 +28,7 @@ class TestBasicExecution:
     async def test_stderr_captured(self, tmp_path: Path):
         shell = PersistentShell(cwd=tmp_path)
         try:
-            result = await shell.execute(
-                "echo err >&2", timeout_ms=5_000
-            )
+            result = await shell.execute("echo err >&2", timeout_ms=5_000)
             assert "err" in result.stderr
         finally:
             await shell.close()
@@ -52,12 +50,8 @@ class TestPersistence:
     async def test_env_var_persists(self, tmp_path: Path):
         shell = PersistentShell(cwd=tmp_path)
         try:
-            await shell.execute(
-                "export MY_TEST_VAR=hello123", timeout_ms=5_000
-            )
-            result = await shell.execute(
-                "echo $MY_TEST_VAR", timeout_ms=5_000
-            )
+            await shell.execute("export MY_TEST_VAR=hello123", timeout_ms=5_000)
+            result = await shell.execute("echo $MY_TEST_VAR", timeout_ms=5_000)
             assert result.stdout.strip() == "hello123"
         finally:
             await shell.close()
@@ -89,9 +83,7 @@ class TestSyntaxValidation:
     async def test_syntax_error_caught(self, tmp_path: Path):
         shell = PersistentShell(cwd=tmp_path)
         try:
-            result = await shell.execute(
-                "if then fi done", timeout_ms=5_000
-            )
+            result = await shell.execute("if then fi done", timeout_ms=5_000)
             assert result.exit_code != 0
             assert result.stderr  # Should have an error message
         finally:
@@ -103,7 +95,7 @@ class TestStdinFromDevNull:
         shell = PersistentShell(cwd=tmp_path)
         try:
             result = await shell.execute(
-                "read -t 1 VAR; echo \"exit:$?\"",
+                'read -t 1 VAR; echo "exit:$?"',
                 timeout_ms=5_000,
             )
             # `read` should fail (exit code 1) because stdin is /dev/null.

@@ -96,6 +96,11 @@ class RunStart:
     model: str
     backend: str
     tools_json: str  # canonical JSON: sorted by name, compact separators
+    # The stable system-prompt layer (behavior prompt + SESSION context),
+    # constant for the run's lifetime — a run-level fact. Blob-interned by
+    # RunLogSink. The volatile layer (live injected blocks) rides each
+    # call.request as injected_run/injected_call instead.
+    system_prompt: str | None
     store_len: int  # store size when the run began
 
 
@@ -112,7 +117,7 @@ class CallRequest:
     type: ClassVar[EventType] = EventType.CALL_REQUEST
     projected: list[tuple[int, int]]  # [start, end) store-index ranges
     store_len: int  # ⇒ the reply lands at this index
-    system_prompt: str | None  # raw text; blob-interned by CallLogSink
+    # The system prompt is a run-level fact — it rides run.start, not here.
     injected_run: InjectedBlock | None
     injected_call: InjectedBlock | None
     assembled_sha256: str

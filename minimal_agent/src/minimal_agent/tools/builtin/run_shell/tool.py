@@ -27,17 +27,13 @@ class RunShell(BaseTool[RunShellInput, ShellResult]):
             self._shell = PersistentShell(cwd=self.workspace_root)
         return self._shell
 
-    async def validate(
-        self, args: RunShellInput, ctx: ToolContext
-    ) -> ValidationResult:
+    async def validate(self, args: RunShellInput, ctx: ToolContext) -> ValidationResult:
         if not args.command.strip():
             return ValidationErr("Command cannot be empty.")
 
         return validate_command(args.command, self.workspace_root)
 
-    async def invoke(
-        self, args: RunShellInput, ctx: ToolContext
-    ) -> ShellResult:
+    async def invoke(self, args: RunShellInput, ctx: ToolContext) -> ShellResult:
         shell = self._get_shell()
         timeout = args.timeout or DEFAULT_TIMEOUT_MS
 

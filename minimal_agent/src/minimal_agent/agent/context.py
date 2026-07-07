@@ -122,6 +122,14 @@ class Context:
         return self._scope
 
     @property
+    def system_prompt(self) -> str | None:
+        """The stable system-prompt layer (behavior prompt + SESSION context),
+        constant for the run's lifetime. The Agent reads this to stamp it onto
+        run.start as a run-level fact; the volatile layer (live injected
+        blocks) is recorded separately as injected_run / injected_call."""
+        return self._system_prompt
+
+    @property
     def events(self) -> EventEmitter:
         """The scope's event seam — always present, zero sinks when bare."""
         return self._scope.events
@@ -236,7 +244,6 @@ class Context:
                 # that shapes history replaces this with its actual ranges.
                 projected=[(0, len(self._store))],
                 store_len=len(self._store),
-                system_prompt=self._system_prompt,
                 injected_run=injected_run,
                 injected_call=injected_call,
                 assembled_sha256=hash_messages(msgs),

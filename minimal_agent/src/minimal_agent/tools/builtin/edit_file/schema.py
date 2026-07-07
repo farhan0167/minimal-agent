@@ -8,9 +8,7 @@ class EditFileInput(BaseModel):
     appear exactly once in the file. Provide enough surrounding context in
     old_string to make the match unique."""
 
-    file_path: str = Field(
-        ..., description="Absolute path to the file to edit."
-    )
+    file_path: str = Field(..., description="Absolute path to the file to edit.")
     old_string: str = Field(
         ...,
         description=(

@@ -22,6 +22,7 @@ from ...audit import (
 )
 from ..deps import get_manager
 from ..schemas import (
+    CallInputResponse,
     CallRecordListResponse,
     CallViewResponse,
     EventListResponse,
@@ -45,6 +46,8 @@ def _session_dir(manager: SessionManager, session_id: str):
 
 
 def _reconstructed_response(result: ReconstructedCall) -> ReconstructedCallResponse:
+    """Self-describing single-call payload for GET /calls/{call_id}: the
+    run-level fingerprint is inline because there's no run wrapper here."""
     return ReconstructedCallResponse(
         call_id=result.call_id,
         run_id=result.run_id,
@@ -59,19 +62,35 @@ def _reconstructed_response(result: ReconstructedCall) -> ReconstructedCallRespo
     )
 
 
+def _call_input_response(result: ReconstructedCall) -> CallInputResponse:
+    """Slim per-call input for the nested run view: the run-level fingerprint
+    (model, backend, tools) is on the run object, not repeated here."""
+    return CallInputResponse(
+        call_id=result.call_id,
+        run_id=result.run_id,
+        ts=result.ts,
+        verified=result.verified,
+        recorded_sha256=result.recorded_sha256,
+        computed_sha256=result.computed_sha256,
+        messages=[MessageResponse(**m.model_dump()) for m in result.messages],
+    )
+
+
 def _run_response(run: RunView) -> RunViewResponse:
     return RunViewResponse(
         run_id=run.run_id,
         started_at=run.started_at,
         model=run.model,
         backend=run.backend,
+        tools=run.tools,
+        system_prompt=run.system_prompt,
         status=run.status,
         duration_ms=run.duration_ms,
         calls=[
             CallViewResponse(
                 call_id=call.call_id,
                 ts=call.ts,
-                input=_reconstructed_response(call.input),
+                input=_call_input_response(call.input),
                 response=(
                     MessageResponse(**call.response.model_dump())
                     if call.response
