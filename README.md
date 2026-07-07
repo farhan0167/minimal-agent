@@ -317,60 +317,31 @@ call.messages   # exactly what the model saw, in order
 
 Recording is fire-and-forget — it can never fail or slow a run — and a bare in-memory `Context()` records nothing. Because system prompts and tool schemas are content-addressed, *"the agent behaves differently since yesterday"* is answered by diffing two blobs.
 
-## Example: Full-stack web app
+## Serve it in the browser
 
-The `example/` directory contains a ready-to-run chat application with a **FastAPI backend** and a **React frontend** that demonstrates the agent in action.
-
-```
-example/
-  server/       # FastAPI + SSE streaming
-  web/          # React + Vite + Tailwind
-```
-
-### Prerequisites
-
-- Python 3.11+ with [uv](https://docs.astral.sh/uv/)
-- Node.js 18+
-- An API key for your chosen LLM backend
-
-### 1. Start the server
+Any agent you build can be served over HTTP with a bundled chat web UI — one process, one port, no Node required. Install the server extra:
 
 ```bash
-cd example/server
-uv sync
-cp .env.example .env   # then edit with your API keys
-python main.py         # runs on http://localhost:8000
+pip install "minimal-agent[server]"
 ```
 
-Key env vars in `.env`:
+Then hand your agent to an `App`:
 
-| Variable | Purpose |
-|---|---|
-| `LLM_BACKEND` | `openai`, `anthropic`, `openrouter`, or `localhost` |
-| `LLM_BACKEND_API_KEY` | API key for the chosen backend |
-| `LLM_MODEL` | Model name (e.g. `gpt-4o-mini`) |
-| `TAVILY_API_KEY` | Enables `web_search` and `web_extract` tools |
-| `ALLOWED_WORKSPACES` | Comma-separated paths the agent is allowed to access |
+```python
+# my_app.py
+from minimal_agent import App
 
-### 2. Start the frontend
+app = App(agents=agent)          # or {"swe": swe_agent, "research": research_agent}
 
-```bash
-cd example/web
-npm install
-npm run dev            # runs on http://localhost:5173
+if __name__ == "__main__":
+    app.serve()                  # → http://localhost:8000
 ```
 
-The Vite dev server proxies `/api/*` requests to the backend on port 8000.
+`python my_app.py` serves the chat UI at `/`, the JSON API under `/api`, and interactive docs at `/docs`. Responses stream over SSE, sessions persist to disk and resume across restarts, and with multiple agents registered the UI's new-session dialog lets you pick one.
 
-### 3. Use it
+`App` subclasses `FastAPI`, so routes, middleware, `lifespan`, and `uvicorn my_app:app --reload` all work as usual. The API also exposes each session's observability artifacts: `GET /api/sessions/{id}/events` (the timeline), `/api/sessions/{id}/calls` (raw audit records), `/api/sessions/{id}/calls/{call_id}` (byte-exact input reconstruction), and `/api/sessions/{id}/runs` (every model input and output, by run and call, in one response).
 
-1. Open `http://localhost:5173`
-2. Create a new session (pick a workspace directory)
-3. Chat with the agent — it can read/write/edit files, run shell commands, search the web, and more
-
-The agent streams responses back via Server-Sent Events, and session history is persisted to disk so you can pick up where you left off.
-
-The server also exposes each session's observability artifacts over HTTP: `GET /sessions/{id}/events` (the timeline), `/sessions/{id}/calls` (raw audit records), `/sessions/{id}/calls/{call_id}` (byte-exact input reconstruction), and `/sessions/{id}/runs` (every model input and output, by run and call, in one response).
+A ready-to-run two-agent example lives in [example/my_app.py](example/my_app.py) — see [example/README.md](example/README.md). The UI's source is in [web/](web/); from a source checkout, build it once into the package with `make ui` (needs Node), or hack on it live with `npm run dev` against a running `App`.
 
 ## Development
 

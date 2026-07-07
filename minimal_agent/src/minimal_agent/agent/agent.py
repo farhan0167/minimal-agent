@@ -139,6 +139,27 @@ class Agent:
         """The persistence policy this agent's session factories use."""
         return self._sessions
 
+    @sessions.setter
+    def sessions(self, manager: SessionManager) -> None:
+        """Rebind the persistence policy (e.g. a host consolidating all
+        registered agents onto one store)."""
+        self._sessions = manager
+
+    @property
+    def llm(self) -> LLM:
+        """The LLM this agent runs on."""
+        return self._llm
+
+    @property
+    def tools(self) -> list[BaseTool]:
+        """The agent's tools, including any registered by skill discovery."""
+        return list(self._tools_by_name.values())
+
+    @property
+    def workspace_root(self) -> Path | None:
+        """The workspace this agent was constructed for, if any."""
+        return self._workspace_root
+
     async def create_session(self, workspace_root: Path | None = None) -> Session:
         """Create a new session carrying this agent's identity.
 
