@@ -39,7 +39,7 @@ def pdf_to_data_uris(file_path: Path) -> list[str]:
         raise PdfSupportUnavailable(
             "Reading PDF files requires the 'pdf2image' package (and system "
             "poppler), which is not installed. Install with "
-            'pip install "minimal-agent[pdf]".'
+            'pip install "mini-agent-kit[pdf]".'
         ) from e
 
     uris: list[str] = []

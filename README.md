@@ -6,7 +6,17 @@ A minimal async agent framework in Python. An agent loop drives an LLM that can 
 
 ## Install
 
-Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/).
+Requires Python >= 3.11.
+
+```bash
+pip install mini-agent-kit
+# with the bundled web UI server:
+pip install "mini-agent-kit[server]"
+```
+
+The distribution is named `mini-agent-kit` on PyPI; the import name is `minimal_agent` (`from minimal_agent import Agent`).
+
+To hack on the framework itself, clone the repo and use [uv](https://docs.astral.sh/uv/):
 
 ```bash
 cd minimal_agent
@@ -322,7 +332,7 @@ Recording is fire-and-forget — it can never fail or slow a run — and a bare 
 Any agent you build can be served over HTTP with a bundled chat web UI — one process, one port, no Node required. Install the server extra:
 
 ```bash
-pip install "minimal-agent[server]"
+pip install "mini-agent-kit[server]"
 ```
 
 Then hand your agent to an `App`:

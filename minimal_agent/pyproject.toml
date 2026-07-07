@@ -1,14 +1,33 @@
 [project]
-name = "minimal-agent"
+name = "mini-agent-kit"
 version = "0.1.0"
-description = "Add your description here"
+description = "General purpose agent harness inspired by Claude Code"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ahmad Farhan Ishraq" }]
+keywords = ["agent", "llm", "ai", "tools", "agent-harness"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "openai>=2.30.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.13.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/farhan0167/minimal-agent"
+Repository = "https://github.com/farhan0167/minimal-agent"
+Documentation = "https://github.com/farhan0167/minimal-agent#readme"
 
 [project.optional-dependencies]
 server = [
@@ -26,6 +45,12 @@ pdf = [
 [build-system]
 requires = ["uv_build>=0.11.5,<0.12"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# Distribution name is `mini-agent-kit`, but the import package is
+# `minimal_agent` — tell uv_build not to derive the module name from the
+# distribution name.
+module-name = "minimal_agent"
 
 [tool.ruff.lint]
 # Enable flake8-bugbear (`B`) rules, pycodestyle (`E`/`W`), isort (`I`), and more

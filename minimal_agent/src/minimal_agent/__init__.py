@@ -13,7 +13,7 @@ from .audit import (
 from .config import Settings
 
 _SERVER_EXTRA_HINT = (
-    'App requires the server extra — pip install "minimal-agent[server]"'
+    'App requires the server extra — pip install "mini-agent-kit[server]"'
 )
 
 

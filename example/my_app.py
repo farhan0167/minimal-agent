@@ -1,6 +1,6 @@
 """Two agents, one App, one process.
 
-Run with `python my_app.py` (needs `minimal-agent[server]` installed and an
+Run with `python my_app.py` (needs `mini-agent-kit[server]` installed and an
 API key in the environment or a `.env` file — see the README). Opens an API
 plus the bundled chat UI at http://localhost:8000; the UI's new-session
 dialog lets you pick between the two agents.

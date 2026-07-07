@@ -17,14 +17,14 @@ The UI's new-session dialog shows both agents with their workspace, model, and t
 
 - Python 3.11+
 - An API key for your chosen LLM backend
-- Optional: PDF attachment support needs the `pdf` extra (`pip install "minimal-agent[server,pdf]"`) plus system [Poppler](https://poppler.freedesktop.org/) (`sudo apt-get install poppler-utils` / `brew install poppler`)
+- Optional: PDF attachment support needs the `pdf` extra (`pip install "mini-agent-kit[server,pdf]"`) plus system [Poppler](https://poppler.freedesktop.org/) (`sudo apt-get install poppler-utils` / `brew install poppler`)
 
 ## Run it
 
 Install the package with the server extra. From a source checkout also build the UI once (`make ui` at the repo root — needs Node); installs from a released wheel ship the UI prebuilt.
 
 ```bash
-pip install "minimal-agent[server]"
+pip install "mini-agent-kit[server]"
 ```
 
 Configure the LLM via environment variables or a `.env` file in this directory:

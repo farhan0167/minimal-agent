@@ -40,7 +40,7 @@ except ImportError:
 
 _PDF_UNAVAILABLE = (
     "PDF attachments require the pdf2image package and poppler "
-    '(pip install "minimal-agent[pdf]"; apt/brew install poppler)'
+    '(pip install "mini-agent-kit[pdf]"; apt/brew install poppler)'
 )
 
 router = APIRouter(prefix="/sessions", tags=["chat"])
