@@ -299,24 +299,34 @@ No sessions, directories, or wiring in sight — the child scope allocates its d
 Read it back with the audit API:
 
 ```python
-from minimal_agent import reconstruct_call, session_runs, session_tree
+from minimal_agent import (
+    find_agent_scope,
+    reconstruct_call,
+    run_summaries,
+    single_run,
+)
 
-# The holistic view: session → runs → calls, each call carrying its
-# full input, its response, latency, usage, tool executions, and any
-# sub-agents it spawned.
-for run in session_runs(session.session_dir):
-    print(run.run_id, run.status, f"{run.duration_ms}ms")
-    for call in run.calls:
-        print(f"  {call.call_id}: {call.latency_ms}ms, "
-              f"{len(call.input.messages)} input messages")
-        for agent in call.spawned_agents:
-            print(f"    spawned {agent.agent_id}: {agent.task} → {agent.status}")
+# The cheap index: one summary row per run (id, model, status, calls) —
+# reads runs.jsonl, reconstructs nothing. Pick the run you want, then
+# drill in.
+for s in run_summaries(session.session_dir):
+    print(s.run_id, s.status, f"{s.calls} calls")
 
-# The whole tree: the session root's runs plus every nested agent's,
-# recursively — sub-agents get the same runs view, one directory down.
-tree = session_tree(session.session_dir)
-for node in tree.children:
-    print(node.agent["task"], node.agent["status"], len(node.runs))
+# One run, fully expanded — its calls, each carrying its full input,
+# response, latency, usage, tool executions, and any sub-agents it
+# spawned. Returns None for an unknown run_id.
+run = single_run(session.session_dir, "r-4c7d01ab")
+for call in run.calls:
+    print(f"  {call.call_id}: {call.latency_ms}ms, "
+          f"{len(call.input.messages)} input messages")
+    for agent in call.spawned_agents:
+        print(f"    spawned {agent.agent_id}: {agent.task} → {agent.status}")
+
+# A spawned sub-agent records the same kit under its own scope. Resolve it
+# by id (at any nesting depth) and the same readers apply, one level down.
+scope = find_agent_scope(session.session_dir, "a-1434198a")
+for s in run_summaries(scope):
+    sub_run = single_run(scope, s.run_id)
 
 # Or one call's exact input, verified against its recorded hash. Works
 # on the session root and on any agents/<id>/ directory alike.
