@@ -5,12 +5,14 @@ from typing import TYPE_CHECKING
 from .agent import Agent, Context, Scope, Session, SessionManager
 from .audit import (
     ReconstructedCall,
+    RunSummary,
     RunView,
-    ScopeView,
     SpawnedAgent,
+    find_agent_scope,
     reconstruct_call,
+    run_summaries,
     session_runs,
-    session_tree,
+    single_run,
 )
 from .config import Settings
 
@@ -44,14 +46,16 @@ __all__ = [
     "App",
     "Context",
     "ReconstructedCall",
+    "RunSummary",
     "RunView",
     "Scope",
-    "ScopeView",
     "Session",
     "SessionManager",
     "Settings",
     "SpawnedAgent",
+    "find_agent_scope",
     "reconstruct_call",
+    "run_summaries",
     "session_runs",
-    "session_tree",
+    "single_run",
 ]

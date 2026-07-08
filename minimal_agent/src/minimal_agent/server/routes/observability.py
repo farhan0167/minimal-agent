@@ -4,7 +4,13 @@ Read-only views over the artifacts the framework records next to
 messages.jsonl: the timeline (events.jsonl), the audit records
 (calls.jsonl), on-demand byte-exact reconstruction of what the model saw
 on any recorded call, and the holistic runs view that joins all of it.
+
+A spawned sub-agent records the same artifact kit under its own scope, so
+the runs index and per-run view are also served for any agent by id via
+the `/agents/{agent_id}/...` routes — the same shapes, one scope down.
 """
+
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -13,15 +19,17 @@ from ...audit import (
     CallRecordNotFoundError,
     ReconstructedCall,
     RunView,
-    ScopeView,
+    find_agent_scope,
+    read_agent_meta,
     read_call_records,
     read_events,
     reconstruct_call,
-    session_runs,
-    session_tree,
+    run_summaries,
+    single_run,
 )
 from ..deps import get_manager
 from ..schemas import (
+    AgentRunListResponse,
     CallInputResponse,
     CallRecordListResponse,
     CallViewResponse,
@@ -29,8 +37,8 @@ from ..schemas import (
     MessageResponse,
     ReconstructedCallResponse,
     RunListResponse,
+    RunSummaryResponse,
     RunViewResponse,
-    ScopeViewResponse,
     SpawnedAgentInfo,
     ToolExecutionInfo,
 )
@@ -38,11 +46,49 @@ from ..schemas import (
 router = APIRouter(prefix="/sessions", tags=["observability"])
 
 
-def _session_dir(manager: SessionManager, session_id: str):
+def _session_dir(manager: SessionManager, session_id: str) -> Path:
     session_dir = manager.base_dir / session_id
     if not session_dir.is_dir():
         raise HTTPException(status_code=404, detail="Session not found")
     return session_dir
+
+
+def _agent_dir(manager: SessionManager, session_id: str, agent_id: str) -> Path:
+    """The recording scope of a spawned agent, resolved by id anywhere in the
+    session's tree. 404 if the session or the agent is unknown."""
+    scope_dir = find_agent_scope(_session_dir(manager, session_id), agent_id)
+    if scope_dir is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return scope_dir
+
+
+def _runs_index(scope_dir: Path) -> list[RunSummaryResponse]:
+    """The cheap per-run index for any scope (session root or a sub-agent)."""
+    return [
+        RunSummaryResponse(
+            run_id=s.run_id,
+            started_at=s.started_at,
+            model=s.model,
+            backend=s.backend,
+            status=s.status,
+            calls=s.calls,
+            duration_ms=s.duration_ms,
+        )
+        for s in run_summaries(scope_dir)
+    ]
+
+
+def _one_run(scope_dir: Path, run_id: str) -> RunViewResponse:
+    """One run's full view for any scope; 404 unknown, 422 unreconstructible."""
+    try:
+        run = single_run(scope_dir, run_id)
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=422, detail=f"Run not reconstructible: {e}"
+        ) from e
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _run_response(run)
 
 
 def _reconstructed_response(result: ReconstructedCall) -> ReconstructedCallResponse:
@@ -126,14 +172,6 @@ def _run_response(run: RunView) -> RunViewResponse:
     )
 
 
-def _scope_response(scope: ScopeView) -> ScopeViewResponse:
-    return ScopeViewResponse(
-        agent=scope.agent,
-        runs=[_run_response(run) for run in scope.runs],
-        children=[_scope_response(child) for child in scope.children],
-    )
-
-
 @router.get("/{session_id}/events", response_model=EventListResponse)
 async def list_events_route(
     session_id: str, manager: SessionManager = Depends(get_manager)
@@ -157,37 +195,61 @@ async def list_calls_route(
 async def list_runs_route(
     session_id: str, manager: SessionManager = Depends(get_manager)
 ):
-    """The holistic view: every model input and output, by run and call.
-
-    Each call carries its full reconstructed input, its response, latency,
-    usage, and tool executions. Deliberately eager — this is a cold-path
-    debug read, so everything comes back in one response.
+    """The runs index: one summary row per run — id, model, outcome — in run
+    order. Cheap by design (reads runs.jsonl, reconstructs nothing); fetch a
+    run's full calls with GET /runs/{run_id}.
     """
-    try:
-        runs = session_runs(_session_dir(manager, session_id))
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=422, detail=f"Session not reconstructible: {e}"
-        ) from e
-
-    return RunListResponse(runs=[_run_response(run) for run in runs])
+    return RunListResponse(runs=_runs_index(_session_dir(manager, session_id)))
 
 
-@router.get("/{session_id}/tree", response_model=ScopeViewResponse)
-async def session_tree_route(
-    session_id: str, manager: SessionManager = Depends(get_manager)
+@router.get("/{session_id}/runs/{run_id}", response_model=RunViewResponse)
+async def get_run_route(
+    session_id: str,
+    run_id: str,
+    manager: SessionManager = Depends(get_manager),
 ):
-    """The whole recording tree: the session root's runs plus every nested
-    agent's, recursively — the complete record of everything every agent
-    in the session did."""
-    try:
-        tree = session_tree(_session_dir(manager, session_id))
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=422, detail=f"Session not reconstructible: {e}"
-        ) from e
+    """One run's holistic view — every model input and output for a single
+    run_id, joined like /runs but scoped to one run.
 
-    return _scope_response(tree)
+    Built for large sessions: reconstructing every run's calls to read just
+    one is the slow path this avoids. Prefer this over /runs when you already
+    know the run you want.
+    """
+    return _one_run(_session_dir(manager, session_id), run_id)
+
+
+@router.get(
+    "/{session_id}/agents/{agent_id}/runs", response_model=AgentRunListResponse
+)
+async def list_agent_runs_route(
+    session_id: str,
+    agent_id: str,
+    manager: SessionManager = Depends(get_manager),
+):
+    """The runs index for a spawned sub-agent, by id — the same cheap per-run
+    summary as GET /runs, one scope down. The agent's parentage and outcome
+    ride along in `agent`. Fetch a run's full calls with
+    GET /agents/{agent_id}/runs/{run_id}.
+    """
+    scope_dir = _agent_dir(manager, session_id, agent_id)
+    return AgentRunListResponse(
+        agent=read_agent_meta(scope_dir), runs=_runs_index(scope_dir)
+    )
+
+
+@router.get(
+    "/{session_id}/agents/{agent_id}/runs/{run_id}",
+    response_model=RunViewResponse,
+)
+async def get_agent_run_route(
+    session_id: str,
+    agent_id: str,
+    run_id: str,
+    manager: SessionManager = Depends(get_manager),
+):
+    """One run inside a spawned sub-agent — the same holistic per-run view as
+    GET /runs/{run_id}, scoped to the agent's own recording."""
+    return _one_run(_agent_dir(manager, session_id, agent_id), run_id)
 
 
 @router.get(

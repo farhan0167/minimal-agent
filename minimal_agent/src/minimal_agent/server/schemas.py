@@ -122,8 +122,8 @@ class ReconstructedCallResponse(BaseModel):
 
     Self-describing: carries the run-level fingerprint (model, backend, tools)
     inline because the standalone GET /calls/{call_id} endpoint has no run
-    wrapper. When nested under a run (GET /runs, /tree), those run-level facts
-    live on the run object instead — see CallInputResponse.
+    wrapper. When nested under a run (GET /runs, /runs/{run_id}), those
+    run-level facts live on the run object instead — see CallInputResponse.
     """
 
     call_id: str
@@ -256,19 +256,40 @@ class RunViewResponse(BaseModel):
     calls: list[CallViewResponse]
 
 
+class RunSummaryResponse(BaseModel):
+    """A run's identity and outcome, without its calls — one row of the
+    /runs index. Drill into a run with GET /runs/{run_id}."""
+
+    run_id: str
+    started_at: str | None = None
+    model: str | None = None
+    backend: str | None = None
+    status: str | None = Field(
+        default=None,
+        description=(
+            "completed | max_turns | abandoned | error; null if the run "
+            "never finalized or was recorded without a run frame."
+        ),
+    )
+    calls: int | None = Field(
+        default=None, description="Number of LLM calls the run made."
+    )
+    duration_ms: int | None = None
+
+
 class RunListResponse(BaseModel):
-    """The holistic view: every model input and output, by run and call."""
+    """The /runs index: one summary row per run, in run order. Each carries
+    its id and outcome; fetch a run's full calls via GET /runs/{run_id}."""
 
-    runs: list[RunViewResponse]
+    runs: list[RunSummaryResponse]
 
 
-class ScopeViewResponse(BaseModel):
-    """One node of the session's recording tree: the session root
-    (agent=null) or a nested agent, each with the same runs view."""
+class AgentRunListResponse(BaseModel):
+    """A spawned sub-agent's runs index: the same per-run summaries as
+    /runs, plus the agent's own `agent.json` (spawner, task, parentage)."""
 
     agent: dict | None = Field(
         default=None,
-        description="agent.json of a nested agent; null at the session root.",
+        description="The agent's agent.json — spawner, task, parent linkage.",
     )
-    runs: list[RunViewResponse]
-    children: list["ScopeViewResponse"] = Field(default_factory=list)
+    runs: list[RunSummaryResponse]

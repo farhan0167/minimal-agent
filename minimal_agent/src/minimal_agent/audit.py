@@ -3,8 +3,9 @@
 The write side (`events.py`, `agent/sinks.py`, `agent/scope.py`) records;
 this module answers. `read_events()` returns the timeline,
 `read_call_records()` the audit records, `reconstruct_call()` rebuilds —
-byte-exactly — what the model saw on any recorded LLM call, and
-`session_tree()` walks the whole recording tree, nested agents included.
+byte-exactly — what the model saw on any recorded LLM call, `session_runs()`
+joins it all into the holistic session view, and `single_run()` answers the
+same for one run without paying for the rest of the session.
 
 Every function here takes a *scope* directory: the session root or any
 `agents/<agent-id>/` directory under it — child scopes carry the identical
@@ -280,26 +281,88 @@ class RunView:
     calls: list[CallView]
 
 
-def session_runs(session_dir: Path) -> list[RunView]:
-    """The holistic view: every model input and output, by run and call.
+@dataclass(frozen=True)
+class RunSummary:
+    """A run's identity and outcome, without its calls — the cheap index row.
 
-    Joins the three artifacts — run/call frames and latencies from
-    events.jsonl, byte-exact inputs from calls.jsonl + blobs/, responses
-    from messages.jsonl via the store_len correlation — into one tree,
-    in emission order. Calls recorded without a run.start (a host calling
-    assemble() directly) appear as degraded runs with null metadata.
+    Everything here comes from `runs.jsonl` alone (no message-store
+    reconstruction, no blob resolution), so listing every run in a long
+    session stays fast. `count` fields (`calls`, `duration_ms`) are None for a
+    run that never finalized. A degraded run recorded without a run frame (a
+    host calling assemble() directly) still appears, with null metadata.
     """
-    events = read_events(session_dir)
-    stored = _read_stored(session_dir)
-    run_records = _run_records_by_id(session_dir)  # run_id -> runs.jsonl record
 
-    run_start: dict[str, dict] = {}  # run_id -> run.start envelope
-    run_end: dict[str, dict] = {}  # run_id -> run.end payload
-    responses: dict[str, dict] = {}  # call_id -> call.response payload
-    tools: dict[str, list[ToolExecution]] = {}  # call_id -> executions
+    run_id: str
+    started_at: str | None
+    model: str | None
+    backend: str | None
+    status: str | None
+    calls: int | None  # number of LLM calls, from run.end
+    duration_ms: int | None
+
+
+def run_summaries(session_dir: Path) -> list[RunSummary]:
+    """Every run's id and outcome, in run order — the index for `/runs`.
+
+    The cheap counterpart to `session_runs()`: it reads `runs.jsonl` for the
+    per-run facts and unions in any run_id seen only in `calls.jsonl` (a
+    degraded run recorded without a run frame), so the index lists exactly the
+    runs `single_run()` can resolve. It never reconstructs a call or resolves a
+    blob — drill into one run with `single_run(session_dir, run_id)`.
+    """
+    records = _run_records_by_id(session_dir)
+    summaries: dict[str, RunSummary] = {
+        run_id: RunSummary(
+            run_id=run_id,
+            started_at=record["ts_start"],
+            model=record["model"],
+            backend=record["backend"],
+            status=record["status"],
+            calls=record["calls"],
+            duration_ms=record["duration_ms"],
+        )
+        for run_id, record in records.items()
+    }
+    # Degraded runs (direct assemble(), no run frame) leave a call record but
+    # no runs.jsonl row — surface them so the index matches session_runs().
+    for record in read_call_records(session_dir):
+        run_id = record["run_id"]
+        if run_id not in summaries:
+            summaries[run_id] = RunSummary(
+                run_id=run_id,
+                started_at=None,
+                model=None,
+                backend=None,
+                status=None,
+                calls=None,
+                duration_ms=None,
+            )
+    return list(summaries.values())
+
+
+@dataclass(frozen=True)
+class _EventIndex:
+    """Everything the timeline (events.jsonl) contributes to the runs view,
+    folded into lookup tables in one pass. `run_id`-keyed maps drive the run
+    frame; `call_id`-keyed maps annotate each call."""
+
+    run_start: dict[str, dict]  # run_id -> run.start envelope
+    run_end: dict[str, dict]  # run_id -> run.end payload
+    responses: dict[str, dict]  # call_id -> call.response payload
+    tools: dict[str, list[ToolExecution]]  # call_id -> executions
+    spawns: dict[str, list[dict]]  # call_id -> agent.spawn payloads
+    agent_end: dict[str, dict]  # agent_id -> agent.end payload
+
+
+def _index_events(events: list[dict]) -> _EventIndex:
+    """Fold the timeline into the lookup tables the runs view joins against."""
+    run_start: dict[str, dict] = {}
+    run_end: dict[str, dict] = {}
+    responses: dict[str, dict] = {}
+    tools: dict[str, list[ToolExecution]] = {}
     tool_open: dict[tuple[str, str], dict] = {}  # (call_id, tc_id) -> start
-    spawns: dict[str, list[dict]] = {}  # call_id -> agent.spawn payloads
-    agent_end: dict[str, dict] = {}  # agent_id -> agent.end payload
+    spawns: dict[str, list[dict]] = {}
+    agent_end: dict[str, dict] = {}
     for env in events:
         etype, payload = env["type"], env["payload"]
         if etype == "run.start":
@@ -336,39 +399,120 @@ def session_runs(session_dir: Path) -> list[RunView]:
                 duration_ms=None,
             )
         )
+    return _EventIndex(run_start, run_end, responses, tools, spawns, agent_end)
+
+
+def _build_call_view(
+    session_dir: Path,
+    record: dict,
+    run_record: dict | None,
+    stored: list[Message],
+    idx: _EventIndex,
+) -> CallView:
+    """Expand one call record into a CallView, joining its response and tool
+    activity from the event index."""
+    rebuilt = _rebuild(session_dir, record, run_record, stored)
+    response = (
+        stored[record["store_len"]] if record["store_len"] < len(stored) else None
+    )
+    resp_event = idx.responses.get(record["call_id"], {})
+    return CallView(
+        call_id=record["call_id"],
+        ts=record["ts"],
+        input=rebuilt,
+        response=response,
+        latency_ms=resp_event.get("latency_ms"),
+        usage=resp_event.get("usage"),
+        tool_executions=idx.tools.get(record["call_id"], []),
+        spawned_agents=[
+            SpawnedAgent(
+                agent_id=s["agent_id"],
+                spawned_by=s["spawned_by"],
+                task=s["task"],
+                tool_call_id=s.get("tool_call_id"),
+                # agent.end may be absent: the scope never closed
+                # (crash before __exit__ could write, or a dropped line).
+                status=idx.agent_end.get(s["agent_id"], {}).get("status"),
+                duration_ms=idx.agent_end.get(s["agent_id"], {}).get("duration_ms"),
+                usage=idx.agent_end.get(s["agent_id"], {}).get("usage"),
+            )
+            for s in idx.spawns.get(record["call_id"], [])
+        ],
+    )
+
+
+def _build_run_view(
+    session_dir: Path,
+    run_id: str,
+    calls: list[CallView],
+    run_record: dict | None,
+    idx: _EventIndex,
+) -> RunView:
+    """Assemble one RunView from its calls and the run-level facts, preferring
+    the authoritative runs.jsonl record and falling back to the run.start /
+    run.end events for a run whose row was never written."""
+    start = idx.run_start.get(run_id)
+    end = idx.run_end.get(run_id, {})
+    record = run_record  # runs.jsonl: authoritative when present
+    first_call = calls[0] if calls else None
+    return RunView(
+        run_id=run_id,
+        # ts_start from the run record; fall back to the run.start
+        # envelope for a run that never finalized (no runs.jsonl row).
+        started_at=(
+            record["ts_start"] if record else (start["ts"] if start else None)
+        ),
+        model=(
+            record["model"]
+            if record
+            else (first_call.input.model if first_call else None)
+        ),
+        backend=(
+            record["backend"]
+            if record
+            else (first_call.input.backend if first_call else None)
+        ),
+        # Run-level facts resolved from the run record's blobs — the
+        # tool catalog and stable system prompt the model saw all run.
+        tools=(
+            json.loads(_read_blob(session_dir, record["tools"]))
+            if record and record["tools"]
+            else None
+        ),
+        system_prompt=(
+            _read_blob(session_dir, record["system_prompt"])
+            if record and record["system_prompt"]
+            else None
+        ),
+        # Outcome lives on the run record; the run.end event is the
+        # fallback for a run whose row was never written.
+        status=record["status"] if record else end.get("status"),
+        duration_ms=(record["duration_ms"] if record else end.get("duration_ms")),
+        calls=calls,
+    )
+
+
+def session_runs(session_dir: Path) -> list[RunView]:
+    """The holistic view: every model input and output, by run and call.
+
+    Joins the three artifacts — run/call frames and latencies from
+    events.jsonl, byte-exact inputs from calls.jsonl + blobs/, responses
+    from messages.jsonl via the store_len correlation — into one tree,
+    in emission order. Calls recorded without a run.start (a host calling
+    assemble() directly) appear as degraded runs with null metadata.
+
+    Reads the whole session; for one run, prefer `single_run()`, which does
+    the same join scoped to a single run_id.
+    """
+    stored = _read_stored(session_dir)
+    run_records = _run_records_by_id(session_dir)  # run_id -> runs.jsonl record
+    idx = _index_events(read_events(session_dir))
 
     calls_by_run: dict[str, list[CallView]] = {}
     run_order: list[str] = []
     for record in read_call_records(session_dir):
-        rebuilt = _rebuild(
-            session_dir, record, run_records.get(record["run_id"]), stored
-        )
-        response = (
-            stored[record["store_len"]] if record["store_len"] < len(stored) else None
-        )
-        resp_event = responses.get(record["call_id"], {})
-        view = CallView(
-            call_id=record["call_id"],
-            ts=record["ts"],
-            input=rebuilt,
-            response=response,
-            latency_ms=resp_event.get("latency_ms"),
-            usage=resp_event.get("usage"),
-            tool_executions=tools.get(record["call_id"], []),
-            spawned_agents=[
-                SpawnedAgent(
-                    agent_id=s["agent_id"],
-                    spawned_by=s["spawned_by"],
-                    task=s["task"],
-                    tool_call_id=s.get("tool_call_id"),
-                    # agent.end may be absent: the scope never closed
-                    # (crash before __exit__ could write, or a dropped line).
-                    status=agent_end.get(s["agent_id"], {}).get("status"),
-                    duration_ms=agent_end.get(s["agent_id"], {}).get("duration_ms"),
-                    usage=agent_end.get(s["agent_id"], {}).get("usage"),
-                )
-                for s in spawns.get(record["call_id"], [])
-            ],
+        view = _build_call_view(
+            session_dir, record, run_records.get(record["run_id"]), stored, idx
         )
         run_id = record["run_id"]
         if run_id not in calls_by_run:
@@ -377,107 +521,88 @@ def session_runs(session_dir: Path) -> list[RunView]:
         calls_by_run[run_id].append(view)
 
     # Runs that started but made no recorded call still appear.
-    for run_id in run_start:
+    for run_id in idx.run_start:
         if run_id not in calls_by_run:
             calls_by_run[run_id] = []
             run_order.append(run_id)
 
-    runs: list[RunView] = []
-    for run_id in run_order:
-        start = run_start.get(run_id)
-        end = run_end.get(run_id, {})
-        record = run_records.get(run_id)  # runs.jsonl: authoritative when present
-        first_call = calls_by_run[run_id][0] if calls_by_run[run_id] else None
-        runs.append(
-            RunView(
-                run_id=run_id,
-                # ts_start from the run record; fall back to the run.start
-                # envelope for a run that never finalized (no runs.jsonl row).
-                started_at=(
-                    record["ts_start"] if record else (start["ts"] if start else None)
-                ),
-                model=(
-                    record["model"]
-                    if record
-                    else (first_call.input.model if first_call else None)
-                ),
-                backend=(
-                    record["backend"]
-                    if record
-                    else (first_call.input.backend if first_call else None)
-                ),
-                # Run-level facts resolved from the run record's blobs — the
-                # tool catalog and stable system prompt the model saw all run.
-                tools=(
-                    json.loads(_read_blob(session_dir, record["tools"]))
-                    if record and record["tools"]
-                    else None
-                ),
-                system_prompt=(
-                    _read_blob(session_dir, record["system_prompt"])
-                    if record and record["system_prompt"]
-                    else None
-                ),
-                # Outcome lives on the run record; the run.end event is the
-                # fallback for a run whose row was never written.
-                status=record["status"] if record else end.get("status"),
-                duration_ms=(
-                    record["duration_ms"] if record else end.get("duration_ms")
-                ),
-                calls=calls_by_run[run_id],
-            )
+    return [
+        _build_run_view(
+            session_dir, run_id, calls_by_run[run_id], run_records.get(run_id), idx
         )
-    return runs
+        for run_id in run_order
+    ]
 
 
-# --- The whole tree: session → nested agents, recursively --------------------
+def single_run(session_dir: Path, run_id: str) -> RunView | None:
+    """The holistic view for one run — the same join as `session_runs()`,
+    scoped to a single run_id.
 
+    Built for the read path on large sessions: rather than reconstructing
+    every call and resolving every run's blobs, it expands only the calls
+    belonging to `run_id`. It still scans events.jsonl and reads the message
+    store once (call reconstruction slices it), but skips the per-call rebuild
+    for every other run — the dominant cost on a long session.
 
-@dataclass(frozen=True)
-class ScopeView:
-    """One node of the session's recording tree.
-
-    The session root has `agent=None`; every nested node carries its
-    agent.json (who spawned it, task, status, usage, model) and the same
-    runs view as the root — the artifact kit is identical at every level.
+    Returns None when no such run exists (neither a call record nor a
+    run.start bears the id). Raises FileNotFoundError if a referenced blob is
+    missing (a dangling ref from a failed write), matching `session_runs()`.
     """
+    stored = _read_stored(session_dir)
+    run_record = _run_records_by_id(session_dir).get(run_id)
+    idx = _index_events(read_events(session_dir))
 
-    scope_dir: Path
-    agent: dict | None  # agent.json contents; None at the session root
-    runs: list[RunView]
-    children: list["ScopeView"]
+    calls = [
+        _build_call_view(session_dir, record, run_record, stored, idx)
+        for record in read_call_records(session_dir)
+        if record["run_id"] == run_id
+    ]
+
+    # A run with no calls is still real if it opened a run frame. Absent both,
+    # the id is unknown to this session.
+    if not calls and run_id not in idx.run_start and run_record is None:
+        return None
+
+    return _build_run_view(session_dir, run_id, calls, run_record, idx)
 
 
-def session_tree(session_dir: Path) -> ScopeView:
-    """The whole-tree holistic view: this scope's runs plus every nested
-    agent's, recursively, in spawn order.
+# --- Nested agents: resolve a spawned agent's own recording scope -------------
 
-    `session_runs()` answers for one scope; this walks `agents/` and
-    answers for all of them — the complete record of everything every
-    agent in the session did.
+
+def find_agent_scope(session_dir: Path, agent_id: str) -> Path | None:
+    """The scope directory of a spawned agent, found by id anywhere in the
+    session's recording tree.
+
+    A sub-agent records its whole run tree under `agents/<agent_id>/` with the
+    identical artifact kit, and sub-agents nest — so the target may live any
+    number of levels deep (`agents/a-X/agents/a-Y/`). This walks the tree and
+    returns the first scope whose `agent.json` bears `agent_id`, so the same
+    readers (`run_summaries`, `single_run`, `session_runs`, `reconstruct_call`)
+    apply to it directly. Returns None if no such agent exists in the session.
     """
-    return _scope_view(session_dir, agent=None)
-
-
-def _scope_view(scope_dir: Path, agent: dict | None) -> ScopeView:
-    children: list[tuple[str, ScopeView]] = []
-    agents_dir = scope_dir / "agents"
-    if agents_dir.is_dir():
+    stack = [session_dir]
+    while stack:
+        agents_dir = stack.pop() / "agents"
+        if not agents_dir.is_dir():
+            continue
         for child_dir in agents_dir.iterdir():
             if not child_dir.is_dir():
                 continue
             meta_path = child_dir / "agent.json"
-            meta = json.loads(meta_path.read_text()) if meta_path.exists() else None
-            spawned_at = (meta or {}).get("created_at") or ""
-            children.append((spawned_at, _scope_view(child_dir, agent=meta)))
-    children.sort(key=lambda pair: pair[0])  # spawn order; ids are random
+            meta = (
+                json.loads(meta_path.read_text()) if meta_path.exists() else {}
+            )
+            if meta.get("agent_id") == agent_id:
+                return child_dir
+            stack.append(child_dir)  # search this agent's own sub-agents
+    return None
 
-    return ScopeView(
-        scope_dir=scope_dir,
-        agent=agent,
-        runs=session_runs(scope_dir),
-        children=[view for _, view in children],
-    )
+
+def read_agent_meta(scope_dir: Path) -> dict | None:
+    """The `agent.json` for a scope (spawner, task, parentage, timestamps), or
+    None at the session root, which has no such file."""
+    meta_path = scope_dir / "agent.json"
+    return json.loads(meta_path.read_text()) if meta_path.exists() else None
 
 
 def _read_lines(path: Path) -> list[str]:

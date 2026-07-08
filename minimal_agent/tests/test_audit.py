@@ -10,10 +10,13 @@ from minimal_agent.agent import Agent
 from minimal_agent.agent.session import SessionManager
 from minimal_agent.audit import (
     CallRecordNotFoundError,
+    find_agent_scope,
     read_call_records,
     read_events,
     reconstruct_call,
+    run_summaries,
     session_runs,
+    single_run,
 )
 from minimal_agent.context_sources import Placement
 from minimal_agent.events import RunEnd, RunEndStatus, RunStart
@@ -366,36 +369,134 @@ async def test_tool_end_children_surface_in_tool_executions(tmp_path):
     assert execution.children == ["a-11112222"]
 
 
-async def test_session_tree_walks_nested_agents(tmp_path):
-    from minimal_agent.audit import session_tree
-
+async def test_single_run_scopes_to_one_run(tmp_path):
+    """single_run returns exactly the run asked for, matching what
+    session_runs produces for that id — across a session with two runs."""
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="root sys"
+        model="test-model", backend="openai", system_prompt="sys"
     )
+    scope = session.scope
 
-    with session.scope.child(spawned_by="t", task="inner work") as child:
-        ctx = child.new_context(system_prompt="child sys")
-        child.events.emit(
+    run_ids = []
+    for turn in ("first", "second"):
+        scope.events.emit(
             RunStart(
                 model="test-model",
                 backend="openai",
                 tools_json="[]",
-                system_prompt=ctx.system_prompt,
-                store_len=len(ctx.store),
+                system_prompt=None,
+                store_len=len(session.context.store),
             )
         )
-        ctx.add(Message(role=Role.USER, content="hi"))
-        await ctx.assemble()
-        child.events.emit(RunEnd(status=RunEndStatus.COMPLETED, calls=1, duration_ms=1))
+        run_ids.append(scope.events.run_id)
+        session.context.add(Message(role=Role.USER, content=turn))
+        await session.context.assemble()
+        scope.events.emit(RunEnd(status=RunEndStatus.COMPLETED, calls=1, duration_ms=1))
 
-    tree = session_tree(session.session_dir)
-    assert tree.agent is None  # session root
-    (node,) = tree.children
-    assert node.agent["task"] == "inner work"
-    assert node.agent["status"] == "completed"
-    # The child's calls reconstruct through the same view, one level down.
-    (run,) = node.runs
+    all_runs = {r.run_id: r for r in session_runs(session.session_dir)}
+    assert set(all_runs) == set(run_ids)
+
+    for run_id in run_ids:
+        one = single_run(session.session_dir, run_id)
+        assert one == all_runs[run_id]
+
+
+def test_single_run_unknown_id_returns_none(tmp_path):
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", system_prompt="sys"
+    )
+    assert single_run(session.session_dir, "r-does-not-exist") is None
+
+
+async def test_run_summaries_index_matches_session_runs(tmp_path):
+    """run_summaries lists exactly the runs single_run can resolve, in order,
+    with outcome facts — but without reconstructing any call."""
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", system_prompt="sys"
+    )
+    scope = session.scope
+    run_ids = []
+    for turn in ("first", "second"):
+        scope.events.emit(
+            RunStart(
+                model="test-model",
+                backend="openai",
+                tools_json="[]",
+                system_prompt=None,
+                store_len=len(session.context.store),
+            )
+        )
+        run_ids.append(scope.events.run_id)
+        session.context.add(Message(role=Role.USER, content=turn))
+        await session.context.assemble()
+        scope.events.emit(RunEnd(status=RunEndStatus.COMPLETED, calls=1, duration_ms=1))
+
+    summaries = run_summaries(session.session_dir)
+    assert [s.run_id for s in summaries] == run_ids  # run order preserved
+    first = summaries[0]
+    assert first.model == "test-model"
+    assert first.backend == "openai"
+    assert first.status == "completed"
+    assert first.calls == 1
+    # The index lists exactly what single_run() can resolve.
+    for s in summaries:
+        assert single_run(session.session_dir, s.run_id) is not None
+
+
+async def test_run_summaries_includes_degraded_run(tmp_path):
+    """A run recorded without a run frame (direct assemble()) has no
+    runs.jsonl row but still shows up in the index with null metadata."""
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", system_prompt="sys"
+    )
+    session.context.add(Message(role=Role.USER, content="go"))
+    await session.context.assemble()  # no RunStart emitted → degraded run
+
+    (summary,) = run_summaries(session.session_dir)
+    assert summary.status is None
+    assert summary.model is None
+    # Still resolvable through the per-run reader.
+    assert single_run(session.session_dir, summary.run_id) is not None
+
+
+async def test_find_agent_scope_resolves_nested_agent_by_id(tmp_path):
+    """A spawned agent's scope is findable by id at any depth, and the same
+    per-run readers apply to it directly."""
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", system_prompt="root sys"
+    )
+
+    # root → child → grandchild, each recording one run.
+    with session.scope.child(spawned_by="t", task="child work") as child:
+        with child.child(spawned_by="t", task="grandchild work") as grandchild:
+            ctx = grandchild.new_context(system_prompt="gc sys")
+            grandchild.events.emit(
+                RunStart(
+                    model="test-model",
+                    backend="openai",
+                    tools_json="[]",
+                    system_prompt=ctx.system_prompt,
+                    store_len=len(ctx.store),
+                )
+            )
+            ctx.add(Message(role=Role.USER, content="hi"))
+            await ctx.assemble()
+            grandchild.events.emit(
+                RunEnd(status=RunEndStatus.COMPLETED, calls=1, duration_ms=1)
+            )
+            gc_id = grandchild.dir.name  # scope dir is named a-<id>
+        child_id = child.dir.name
+
+    # Both agents resolve by id, wherever they sit in the tree.
+    assert find_agent_scope(session.session_dir, child_id) == child.dir
+    gc_dir = find_agent_scope(session.session_dir, gc_id)
+    assert gc_dir == grandchild.dir
+
+    # The nested agent's own run reconstructs through the same readers.
+    (summary,) = run_summaries(gc_dir)
+    run = single_run(gc_dir, summary.run_id)
     (call,) = run.calls
     assert call.input.verified
-    assert call.input.messages[0].content == "child sys"
-    assert node.children == []
+    assert call.input.messages[0].content == "gc sys"
+
+    assert find_agent_scope(session.session_dir, "a-nope") is None
