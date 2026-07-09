@@ -210,6 +210,15 @@
   display: none;
 }
 
+/* Icon buttons (edit pencil, branch-picker chevrons, copy…) hold a
+   position:absolute screen-reader label, but .aui-button itself isn't
+   positioned — the label anchors to the document, escapes the thread
+   viewport's clipping, and can land below the window, stretching the page
+   into a second window-level scrollbar. Anchor labels to their button. */
+.aui-button {
+  position: relative;
+}
+
 /* Composer — match Claude's centered rounded input */
 .aui-composer-root {
   background-color: hsl(var(--claude-composer));

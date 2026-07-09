@@ -59,13 +59,19 @@ function normalizeSvg(root: ShadowRoot) {
     }
   }
 
-  // Relative sizing has nothing meaningful to resolve against here; scale
-  // the (now viewBoxed) drawing to the card instead.
+  // Relative sizing (width="100%") has nothing meaningful to resolve
+  // against here. Give the svg intrinsic dimensions from its viewBox so the
+  // host CSS can scale it down to fit the card, exactly like an <img>.
   if (!isAbsoluteLength(width) || !isAbsoluteLength(height)) {
-    svg.removeAttribute("width");
-    svg.removeAttribute("height");
-    svg.style.width = "100%";
-    svg.style.height = "auto";
+    const vb = svg.viewBox.baseVal;
+    if (vb && vb.width > 0 && vb.height > 0) {
+      svg.setAttribute("width", String(vb.width));
+      svg.setAttribute("height", String(vb.height));
+    } else {
+      // No viewBox could be derived — fall back to the browser default size.
+      svg.removeAttribute("width");
+      svg.removeAttribute("height");
+    }
   }
 }
 
@@ -78,17 +84,15 @@ function ShadowSvg({ markup }: { markup: string }) {
     (node: HTMLDivElement | null) => {
       if (!node) return;
       const root = node.shadowRoot ?? node.attachShadow({ mode: "open" });
-      root.innerHTML = `<style>:host{display:block}svg{display:block;margin:auto;max-width:100%;height:auto;overflow:hidden}</style>${markup}`;
+      // max-width/max-height with auto dimensions = scale down to fit while
+      // keeping the aspect ratio (an image would behave the same) — the
+      // drawing is always fully visible, never scrolled.
+      root.innerHTML = `<style>:host{display:block}svg{display:block;margin:auto;width:auto;height:auto;max-width:100%;max-height:min(24rem,55vh);overflow:hidden}</style>${markup}`;
       normalizeSvg(root);
     },
     [markup],
   );
-  return (
-    <div
-      ref={ref}
-      className="p-4 bg-white rounded-b-lg max-h-[min(26rem,60vh)] overflow-auto"
-    />
-  );
+  return <div ref={ref} className="p-4 bg-white rounded-b-lg" />;
 }
 
 /**

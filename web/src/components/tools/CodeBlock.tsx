@@ -11,8 +11,11 @@ export function CodeBlock({
   code: string;
   language: string;
 }) {
+  // No max-height here: the .shiki-wrapper inside owns vertical scrolling
+  // (index.css). A second cap on this wrapper would nest two scroll
+  // containers and show double scrollbars.
   return (
-    <div className="text-sm rounded-lg overflow-hidden max-h-80 overflow-y-auto bg-[hsl(var(--claude-code-bg))] border border-[hsl(var(--claude-border))]">
+    <div className="text-sm rounded-lg overflow-hidden bg-[hsl(var(--claude-code-bg))] border border-[hsl(var(--claude-border))]">
       <ShikiSyntaxHighlighter
         language={language}
         code={code}
