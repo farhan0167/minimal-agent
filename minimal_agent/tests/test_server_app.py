@@ -224,6 +224,81 @@ def test_chat_streams_reasoning_and_persists(tmp_path):
         assert messages[1]["reasoning"] == "Let me think."
 
 
+class ToolCallStubLLM(StubLLM):
+    """Streams a tool call in argument fragments, then answers with text.
+
+    Mimics OpenAI's wire shape: the first fragment carries id + name, the
+    rest carry incremental JSON string chunks of the arguments.
+    """
+
+    async def stream(self, *, messages, tools=None, tool_choice=None):
+        from minimal_agent.llm.types import ToolCallDelta
+
+        # First turn: emit a tool call. Second turn (after the tool result
+        # lands in history): emit the final answer.
+        if not any(m.role.value == "tool" for m in messages):
+            yield StreamChunk(
+                tool_calls=[ToolCallDelta(index=0, id="call_1", name="echo")]
+            )
+            yield StreamChunk(tool_calls=[ToolCallDelta(index=0, arguments='{"tex')])
+            yield StreamChunk(
+                tool_calls=[ToolCallDelta(index=0, arguments='t": "hi"}')]
+            )
+            yield StreamChunk(finish_reason="tool_calls", usage=self._usage())
+        else:
+            yield StreamChunk(text=self.text)
+            yield StreamChunk(finish_reason="stop", usage=self._usage())
+
+
+def test_chat_streams_tool_call_deltas(tmp_path):
+    from typing import ClassVar
+
+    from pydantic import BaseModel
+
+    from minimal_agent.tools.base import BaseTool
+    from minimal_agent.tools.context import ToolContext
+
+    class EchoInput(BaseModel):
+        text: str
+
+    class EchoTool(BaseTool[EchoInput, str]):
+        name: ClassVar[str] = "echo"
+        input_schema: ClassVar[type[BaseModel]] = EchoInput
+
+        async def invoke(self, args: EchoInput, ctx: ToolContext) -> str:
+            return args.text
+
+    agent = Agent(
+        llm=ToolCallStubLLM(),
+        tools=[EchoTool()],
+        prompt="You are a test agent.",
+        context_sources=[],
+        workspace_root=tmp_path / "ws",
+    )
+    app = make_app(tmp_path, agents=agent)
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions", json={}).json()["session_id"]
+
+        resp = client.post(f"/api/sessions/{session_id}/chat", json={"message": "hi"})
+        events = parse_sse(resp.text)
+
+        # Argument fragments stream on their own channel, in order.
+        deltas = [d["tool_calls"] for e, d in events if e == "tool_call_delta"]
+        assert deltas == [
+            [{"index": 0, "id": "call_1", "name": "echo"}],
+            [{"index": 0, "arguments": '{"tex'}],
+            [{"index": 0, "arguments": 't": "hi"}'}],
+        ]
+
+        # The committed assistant message carries the assembled call, and the
+        # fragments concatenate to exactly its argument JSON.
+        first_assistant = next(d for e, d in events if e == "assistant")
+        assert first_assistant["tool_calls"][0]["arguments"] == {"text": "hi"}
+
+        (tool_result,) = [d for e, d in events if e == "tool_result"]
+        assert tool_result["content"] == "hi"
+
+
 def test_chat_routes_to_session_agent(tmp_path):
     agents = {
         "alpha": make_agent(tmp_path / "ws", text="I am alpha."),

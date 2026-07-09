@@ -189,6 +189,22 @@ async def _stream_agent(
                 if item.text:
                     pending_text += item.text
                     yield {"event": "delta", "data": json.dumps({"text": item.text})}
+                # Tool-call argument fragments, forwarded as-is (keyed by
+                # index; arguments are incremental JSON string chunks).
+                # Clients accumulate them to preview in-flight calls; the
+                # committed assistant message that follows is authoritative.
+                if item.tool_calls:
+                    yield {
+                        "event": "tool_call_delta",
+                        "data": json.dumps(
+                            {
+                                "tool_calls": [
+                                    tcd.model_dump(exclude_none=True)
+                                    for tcd in item.tool_calls
+                                ]
+                            }
+                        ),
+                    }
             elif item.role == Role.ASSISTANT:
                 # This turn's assistant message is now committed by agent.run();
                 # reset the pending buffer so we don't double-commit it.
