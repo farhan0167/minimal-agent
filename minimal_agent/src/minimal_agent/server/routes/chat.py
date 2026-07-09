@@ -110,6 +110,8 @@ def _serialize_message(msg: Message) -> str:
         data["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
     if msg.tool_call_id:
         data["tool_call_id"] = msg.tool_call_id
+    if msg.reasoning:
+        data["reasoning"] = msg.reasoning
     return json.dumps(data)
 
 
@@ -177,6 +179,13 @@ async def _stream_agent(
             # follows and carries the full text (clients should treat it as
             # authoritative and replace, not append).
             if isinstance(item, StreamChunk):
+                # Reasoning arrives before the answer text; stream it on its own
+                # channel so clients keep it separate from the committed content.
+                if item.reasoning:
+                    yield {
+                        "event": "reasoning",
+                        "data": json.dumps({"text": item.reasoning}),
+                    }
                 if item.text:
                     pending_text += item.text
                     yield {"event": "delta", "data": json.dumps({"text": item.text})}
@@ -252,6 +261,7 @@ async def messages_route(
                     if msg.tool_calls
                     else None
                 ),
+                "reasoning": msg.reasoning,
             }
             for msg in messages
         ]

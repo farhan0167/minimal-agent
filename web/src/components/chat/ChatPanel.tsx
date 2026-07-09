@@ -6,6 +6,7 @@ import { useChatRuntime } from "../../hooks/use-chat-runtime";
 import { getTools } from "../../api/tools";
 import { buildToolUIs } from "../tools";
 import { ShikiSyntaxHighlighter } from "./ShikiHighlighter";
+import { makeAssistantMessage } from "./AssistantMessage";
 
 const MarkdownText = makeMarkdownText({
   remarkPlugins: [remarkGfm],
@@ -13,6 +14,10 @@ const MarkdownText = makeMarkdownText({
     SyntaxHighlighter: ShikiSyntaxHighlighter,
   },
 });
+
+// Custom assistant message so reasoning parts get rendered (the prebuilt
+// Thread's default message has no reasoning slot). Text still uses markdown.
+const AssistantMessage = makeAssistantMessage(MarkdownText);
 
 interface ChatPanelProps {
   sessionId: string;
@@ -43,7 +48,7 @@ export function ChatPanel({ sessionId, agent }: ChatPanelProps) {
         <ToolUI key={i} />
       ))}
 
-      <Thread assistantMessage={{ components: { Text: MarkdownText } }} />
+      <Thread components={{ AssistantMessage }} />
     </AssistantRuntimeProvider>
   );
 }

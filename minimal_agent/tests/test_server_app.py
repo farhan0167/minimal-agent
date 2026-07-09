@@ -182,6 +182,48 @@ def test_chat_streams_and_persists(tmp_path):
         assert messages[1]["content"] == "Hello from stub."
 
 
+class ReasoningStubLLM(StubLLM):
+    """Streams a thinking trace ahead of the answer, then commits both."""
+
+    async def stream(self, *, messages, tools=None, tool_choice=None):
+        yield StreamChunk(reasoning="Let me ")
+        yield StreamChunk(reasoning="think.")
+        mid = len(self.text) // 2
+        yield StreamChunk(text=self.text[:mid])
+        yield StreamChunk(text=self.text[mid:])
+        yield StreamChunk(finish_reason="stop", usage=self._usage())
+
+
+def test_chat_streams_reasoning_and_persists(tmp_path):
+    agent = Agent(
+        llm=ReasoningStubLLM(),
+        tools=[],
+        prompt="You are a test agent.",
+        context_sources=[],
+        workspace_root=tmp_path / "ws",
+    )
+    app = make_app(tmp_path, agents=agent)
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions", json={}).json()["session_id"]
+
+        resp = client.post(f"/api/sessions/{session_id}/chat", json={"message": "hi"})
+        events = parse_sse(resp.text)
+
+        # Reasoning streams on its own channel, ahead of the answer deltas.
+        reasoning = "".join(d["text"] for e, d in events if e == "reasoning")
+        assert reasoning == "Let me think."
+        deltas = "".join(d["text"] for e, d in events if e == "delta")
+        assert deltas == "Hello from stub."
+
+        # The committed assistant message carries the full trace.
+        (assistant,) = [d for e, d in events if e == "assistant"]
+        assert assistant["reasoning"] == "Let me think."
+
+        # History round-trips the trace.
+        messages = client.get(f"/api/sessions/{session_id}/messages").json()["messages"]
+        assert messages[1]["reasoning"] == "Let me think."
+
+
 def test_chat_routes_to_session_agent(tmp_path):
     agents = {
         "alpha": make_agent(tmp_path / "ws", text="I am alpha."),

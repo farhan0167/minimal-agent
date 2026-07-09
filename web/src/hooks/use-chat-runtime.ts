@@ -119,6 +119,7 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
     // Or just: assistant(text) alone.
     const parts: (
       | { type: "text"; text: string }
+      | { type: "reasoning"; text: string }
       | {
           type: "tool-call";
           toolCallId: string;
@@ -147,6 +148,12 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
             role: "assistant",
             content: parts.splice(0) as ThreadMessageLike["content"],
           });
+        }
+
+        // Reasoning leads the turn — surface it before this message's tool
+        // calls and text, matching the order the model produced it.
+        if (m.reasoning) {
+          parts.push({ type: "reasoning", text: m.reasoning });
         }
 
         if (hasToolCalls) {
@@ -262,8 +269,19 @@ export function useChatRuntime(sessionId: string) {
         if (!userText && attachments.length === 0) return;
 
         let currentText = "";
+        let reasoningText = "";
         const toolCalls: ContentPart[] = [];
         const toolCallIndex = new Map<string, number>();
+
+        // Prepend the reasoning trace (when present) so it renders above the
+        // tool calls and answer, matching the order the model produced it.
+        const withReasoning = (parts: ContentPart[]): ContentPart[] =>
+          reasoningText
+            ? [
+                { type: "reasoning" as const, text: reasoningText } as ContentPart,
+                ...parts,
+              ]
+            : parts;
 
         for await (const event of sendMessage(
           sessionId,
@@ -272,14 +290,31 @@ export function useChatRuntime(sessionId: string) {
           attachments.length > 0 ? attachments : undefined,
         )) {
           switch (event.type) {
+            case "reasoning": {
+              // Thinking token — accumulate and yield a snapshot so the
+              // reasoning block fills in live above the (still empty) answer.
+              reasoningText += event.data.text;
+              yield {
+                content: withReasoning(
+                  currentText
+                    ? [
+                        ...toolCalls,
+                        { type: "text" as const, text: currentText },
+                      ]
+                    : [...toolCalls],
+                ),
+              };
+              break;
+            }
+
             case "delta": {
               // Live token — append and yield a cumulative snapshot.
               currentText += event.data.text;
               yield {
-                content: [
+                content: withReasoning([
                   ...toolCalls,
                   { type: "text" as const, text: currentText },
-                ],
+                ]),
               };
               break;
             }
@@ -291,6 +326,9 @@ export function useChatRuntime(sessionId: string) {
               // text rather than append (deltas already built it up).
               if (msg.content) {
                 currentText = msg.content as string;
+              }
+              if (msg.reasoning) {
+                reasoningText = msg.reasoning;
               }
 
               if (msg.tool_calls) {
@@ -307,12 +345,12 @@ export function useChatRuntime(sessionId: string) {
               }
 
               yield {
-                content: [
+                content: withReasoning([
                   ...toolCalls,
                   ...(currentText
                     ? [{ type: "text" as const, text: currentText }]
                     : []),
-                ],
+                ]),
               };
               break;
             }
@@ -330,12 +368,12 @@ export function useChatRuntime(sessionId: string) {
               }
 
               yield {
-                content: [
+                content: withReasoning([
                   ...toolCalls,
                   ...(currentText
                     ? [{ type: "text" as const, text: currentText }]
                     : []),
-                ],
+                ]),
               };
               break;
             }
@@ -343,7 +381,9 @@ export function useChatRuntime(sessionId: string) {
             case "error": {
               currentText += `\n\n**Error:** ${event.data.detail}`;
               yield {
-                content: [{ type: "text" as const, text: currentText }],
+                content: withReasoning([
+                  { type: "text" as const, text: currentText },
+                ]),
               };
               break;
             }

@@ -25,6 +25,8 @@ export interface Message {
   content: string | ContentPart[] | null;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
+  /** Provider "thinking" trace, when the agent was configured for reasoning. */
+  reasoning?: string | null;
 }
 
 export interface MessageHistoryResponse {
@@ -34,6 +36,7 @@ export interface MessageHistoryResponse {
 /** SSE event types emitted by POST /sessions/{id}/chat */
 export type SSEEvent =
   | { type: "delta"; data: { text: string } }
+  | { type: "reasoning"; data: { text: string } }
   | { type: "assistant"; data: Message }
   | { type: "tool_result"; data: Message }
   | { type: "error"; data: { detail: string; traceback?: string } }
