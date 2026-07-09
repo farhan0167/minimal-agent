@@ -234,6 +234,44 @@ An optional class-level `placement` (from `minimal_agent.context_sources`) decla
 
 Use `SESSION` for stable facts, and `RUN` for volatile state that changes between user turns — the built-in `GitStatusSource` is RUN-placed, so the model sees the working tree as of the current turn, not session start. Reserve `CALL` for state that must track the agent's own mid-run side effects; its content is re-sent (uncached) on every call. RUN/CALL content is never written to the transcript, and it reaches the conversation only for sessions created through `agent.create_session()` / `agent.load_session()`.
 
+### 6. Reasoning
+
+To turn on a model's reasoning ("thinking"), give the agent a `ReasoningConfig`. Providers differ on how you enable reasoning and what field the trace comes back on, so you supply both:
+
+```python
+from minimal_agent.llm import ReasoningConfig
+
+agent = Agent(
+    llm=llm,
+    tools=[...],
+    reasoning=ReasoningConfig(
+        request_params={"reasoning_effort": "high"},  # how to turn thinking on
+        response_field="reasoning",                   # where the trace comes back
+    ),
+)
+```
+
+The reasoning trace then rides on each assistant message as `message.reasoning` (and on streamed chunks as `chunk.reasoning`, arriving before the answer):
+
+```python
+async for message in agent.run(session.context):
+    if message.role == Role.ASSISTANT:
+        if message.reasoning:
+            print("thinking:", message.reasoning)
+        print("answer:", message.content)
+```
+
+Settings for common providers:
+
+| Provider | `request_params` | `response_field` |
+|---|---|---|
+| OpenAI reasoning models (o-series, gpt-5.x) | `{"reasoning_effort": "high"}` | `"reasoning"` |
+| OpenRouter | `{"reasoning": {"effort": "high"}}` | `"reasoning"` |
+| Qwen (DashScope) | `{"enable_thinking": True}` | `"reasoning_content"` |
+| Local llama.cpp | `{}` — many models think by default | `"reasoning_content"` |
+
+If `message.reasoning` comes back empty, the `response_field` usually doesn't match what your provider returns — try `reasoning_content` instead of `reasoning`, or vice versa.
+
 ### Built-in tools
 
 `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell`, `spawn_agents`, `web_search`, `web_extract`, `get_weather` (stub)

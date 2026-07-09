@@ -47,6 +47,7 @@ from .types import (
     GenerateResponse,
     LLMTool,
     Message,
+    ReasoningConfig,
     StreamChunk,
     StructuredResponse,
     ToolCall,
@@ -72,6 +73,7 @@ class LLM:
         model: str,
         *,
         backend: Backend = Backend.OPENAI,
+        reasoning: Optional[ReasoningConfig] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: Optional[float] = None,
@@ -80,6 +82,7 @@ class LLM:
     ) -> None:
         self.model = model
         self.backend: Backend = backend
+        self._reasoning = reasoning
         client_kwargs: Dict[str, Any] = {}
         if api_key is not None:
             client_kwargs["api_key"] = api_key
@@ -132,6 +135,30 @@ class LLM:
     def raw(self) -> AsyncOpenAI:
         return self._client
 
+    def with_reasoning(self, reasoning: ReasoningConfig) -> "LLM":
+        """Return this client configured to request/read reasoning traces.
+
+        Cheap: reuses the underlying AsyncOpenAI client rather than rebuilding
+        it. `Agent` uses this to attach its reasoning config to a bare LLM.
+        """
+        clone = object.__new__(LLM)
+        clone.model = self.model
+        clone.backend = self.backend
+        clone._reasoning = reasoning
+        clone._client = self._client
+        return clone
+
+    def _extract_reasoning(self, obj: Any) -> Optional[str]:
+        """Read the provider's reasoning trace off an SDK message/delta.
+
+        The field name is configured (reasoning_content | reasoning | ...),
+        never hardcoded. Returns None when reasoning is not configured or the
+        provider didn't emit the field on this object.
+        """
+        if self._reasoning is None:
+            return None
+        return getattr(obj, self._reasoning.response_field, None) or None
+
     # ---- request building --------------------------------------------------
 
     def _message_to_openai(self, m: Message) -> Dict[str, Any]:
@@ -156,6 +183,10 @@ class LLM:
                 ]
             else:
                 out["content"] = m.content
+        # NOTE: m.reasoning is intentionally NOT emitted. It is persisted for
+        # display/audit but never replayed to the model — most providers reject
+        # a `reasoning` key on input messages, and re-sending prior thinking is
+        # wasteful. See reasoning-support.md (strip-on-send invariant).
         if m.tool_call_id is not None:
             out["tool_call_id"] = m.tool_call_id
         if m.tool_calls:
@@ -270,6 +301,15 @@ class LLM:
             params["user"] = user
         if response_format is not None:
             params["response_format"] = response_format
+        if self._reasoning is not None and self._reasoning.request_params:
+            # Reasoning knobs go through `extra_body`, NOT as top-level kwargs.
+            # The SDK only forwards keys it doesn't model when they're nested
+            # under extra_body; a bare kwarg like `enable_thinking` is rejected
+            # by create()'s typed signature before it reaches the wire. Native
+            # keys (e.g. reasoning_effort) reach the server identically this way,
+            # so one rule covers every provider — no native/extension guessing.
+            existing_body = params.get("extra_body") or {}
+            params["extra_body"] = {**existing_body, **self._reasoning.request_params}
         if extra:
             # Last-resort passthrough for anything we haven't surfaced.
             params.update(extra)
@@ -285,10 +325,14 @@ class LLM:
         """
         if raw_usage is None:
             return None
+        details = getattr(raw_usage, "completion_tokens_details", None)
         return Usage(
             prompt_tokens=getattr(raw_usage, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(raw_usage, "completion_tokens", 0) or 0,
             total_tokens=getattr(raw_usage, "total_tokens", 0) or 0,
+            reasoning_tokens=(
+                getattr(details, "reasoning_tokens", None) if details else None
+            ),
         )
 
     def _parse_tool_calls(self, message: Any) -> Optional[List[ToolCall]]:
@@ -360,6 +404,7 @@ class LLM:
         choice = completion.choices[0]
         return GenerateResponse(
             text=choice.message.content or "",
+            reasoning=self._extract_reasoning(choice.message),
             tool_calls=self._parse_tool_calls(choice.message),
             finish_reason=choice.finish_reason,
             usage=self._parse_usage(getattr(completion, "usage", None)),
@@ -429,6 +474,7 @@ class LLM:
         message = choice.message
         return StructuredResponse[T](
             text=message.content or "",
+            reasoning=self._extract_reasoning(message),
             parsed=getattr(message, "parsed", None),
             refusal=getattr(message, "refusal", None),
             finish_reason=choice.finish_reason,
@@ -508,6 +554,7 @@ class LLM:
                 ]
             yield StreamChunk(
                 text=delta.content or "",
+                reasoning=self._extract_reasoning(delta) or "",
                 tool_calls=tool_call_deltas,
                 finish_reason=choice.finish_reason,
                 # OpenAI sends usage as a dedicated trailing chunk with empty
@@ -532,6 +579,7 @@ class StreamAccumulator:
 
     def __init__(self) -> None:
         self._text_parts: List[str] = []
+        self._reasoning_parts: List[str] = []
         # index -> {id, name, arguments_str}
         self._acc: Dict[int, Dict[str, Any]] = {}
 
@@ -539,6 +587,8 @@ class StreamAccumulator:
         """Fold a single chunk into the running state."""
         if chunk.text:
             self._text_parts.append(chunk.text)
+        if chunk.reasoning:
+            self._reasoning_parts.append(chunk.reasoning)
         if chunk.tool_calls:
             for tcd in chunk.tool_calls:
                 slot = self._acc.setdefault(
@@ -554,6 +604,10 @@ class StreamAccumulator:
     @property
     def text(self) -> str:
         return "".join(self._text_parts)
+
+    @property
+    def reasoning(self) -> str:
+        return "".join(self._reasoning_parts)
 
     def tool_calls(self) -> List[ToolCall]:
         """Build the completed tool calls from accumulated fragments.

@@ -60,6 +60,30 @@ def test_from_file_round_trip(tmp_path):
     assert loaded.messages[1].content == "a"
 
 
+def test_reasoning_survives_round_trip_but_never_replays(tmp_path):
+    """Reasoning is persisted for display, but stripped on the way to the model.
+
+    See reasoning-support.md: stored + shown, never replayed.
+    """
+    from minimal_agent.llm.llm import LLM
+
+    path = tmp_path / "messages.jsonl"
+    store = MessageStore(path=path)
+    store.append(
+        Message(role=Role.ASSISTANT, content="answer", reasoning="my thinking")
+    )
+
+    # Persisted to disk and reloads with the trace intact.
+    loaded = MessageStore.from_file(path)
+    assert loaded.messages[0].reasoning == "my thinking"
+    assert loaded.messages[0].content == "answer"
+
+    # But the reloaded message, sent to the model, carries no `reasoning` key.
+    llm = LLM(model="test-model", api_key="sk-test")
+    wire = llm._message_to_openai(loaded.messages[0])
+    assert "reasoning" not in wire
+
+
 def test_from_file_nonexistent_path(tmp_path):
     path = tmp_path / "does_not_exist.jsonl"
     store = MessageStore.from_file(path)
