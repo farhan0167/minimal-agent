@@ -130,13 +130,17 @@
 .aui-md li { margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; line-height: 1.5; }
 .aui-md li p { margin: 0; }
 .aui-md hr { margin-top: 0.625rem; margin-bottom: 0.625rem; border-color: hsl(var(--claude-border)); }
-/* Code blocks — warm off-white with visible contrast against page */
+/* Code blocks — warm off-white with visible contrast against page.
+   Long blocks scroll internally (the header bar above stays put) instead of
+   stretching the message and hijacking the chat scroll. */
 .aui-md-pre {
   font-size: 0.8rem;
   margin-top: 0.375rem;
   margin-bottom: 0.375rem;
   background-color: hsl(var(--claude-code-bg)) !important;
   border: 1px solid hsl(var(--claude-border));
+  max-height: min(26rem, 60vh);
+  overflow-y: auto;
 }
 .aui-md-pre code {
   font-size: 0.8rem;
@@ -165,6 +169,8 @@
 .shiki-wrapper {
   background-color: hsl(var(--claude-code-bg));
   border-radius: 0 0 var(--aui-radius) var(--aui-radius);
+  max-height: min(26rem, 60vh);
+  overflow-y: auto;
 }
 /* Shiki syntax highlighter — dual theme support */
 .shiki {
@@ -184,7 +190,7 @@
   color: var(--shiki-dark) !important;
 }
 
-.aui-md table { font-size: 0.175rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; }
+.aui-md table { font-size: 0.875rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; }
 .aui-md th, .aui-md td { padding: 0.5rem 0.5rem; }
 .aui-md th { font-weight: 600; }
 .aui-md tr { border-bottom: 1px solid hsl(var(--claude-border-subtle)); }

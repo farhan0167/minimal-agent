@@ -93,9 +93,12 @@ function parseSSEBlock(block: string): SSEEvent | null {
       case "done":
         return { type: "done", data: data as { usage: Usage } };
       default:
+        // Likely a newer server emitting events this client doesn't know yet.
+        console.warn(`Ignoring unknown SSE event type: ${eventType}`);
         return null;
     }
-  } catch {
+  } catch (err) {
+    console.warn(`Dropping malformed SSE "${eventType}" event:`, err, dataStr);
     return null;
   }
 }

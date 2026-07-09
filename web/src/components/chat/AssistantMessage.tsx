@@ -4,7 +4,7 @@ import {
   BranchPicker,
   AssistantMessage as DefaultAssistantMessage,
 } from "@assistant-ui/react-ui";
-import { ReasoningPart } from "./ReasoningPart";
+import { makeReasoningPart } from "./ReasoningPart";
 
 /**
  * Custom assistant message body.
@@ -20,6 +20,8 @@ import { ReasoningPart } from "./ReasoningPart";
  * model context), exactly as they did under the default message.
  */
 export function makeAssistantMessage(Text: React.ComponentType) {
+  // Reasoning renders through the same markdown component as answer text.
+  const Reasoning = makeReasoningPart(Text);
   return function AssistantMessage() {
     return (
       <DefaultAssistantMessage.Root>
@@ -28,7 +30,7 @@ export function makeAssistantMessage(Text: React.ComponentType) {
           <MessagePrimitive.Content
             components={{
               Text: Text as never,
-              Reasoning: ReasoningPart,
+              Reasoning,
             }}
           />
         </div>

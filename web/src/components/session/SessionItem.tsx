@@ -1,5 +1,6 @@
 import type { Session } from "../../types/session";
 import { formatTimestamp } from "../../lib/format";
+import { useSessionTitle } from "../../lib/session-titles";
 import { Trash2, FolderOpen } from "lucide-react";
 
 interface SessionItemProps {
@@ -17,11 +18,15 @@ export function SessionItem({
   onSelect,
   onDelete,
 }: SessionItemProps) {
+  // Derived from the first user message; falls back to the raw id for
+  // sessions that have no messages yet.
+  const title = useSessionTitle(session.session_id) ?? session.session_id;
+
   if (isCollapsed) {
     return (
       <button
         onClick={onSelect}
-        title={session.session_id}
+        title={title}
         className={`
           flex items-center justify-center w-full p-2 rounded-md transition-colors
           ${isActive ? "bg-[hsl(var(--claude-active))]" : "hover:bg-[hsl(var(--claude-hover))]"}
@@ -42,8 +47,11 @@ export function SessionItem({
       `}
     >
       <div className="min-w-0 flex-1">
-        <div className="truncate font-medium text-xs font-serif">
-          {session.session_id}
+        <div
+          className="truncate font-medium text-xs font-serif"
+          title={session.session_id}
+        >
+          {title}
         </div>
         <code
           onClick={(e) => {

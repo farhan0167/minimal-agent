@@ -7,10 +7,16 @@ import {
   type ChatModelRunResult,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import type { AttachmentAdapter } from "@assistant-ui/react";
+import type {
+  AttachmentAdapter,
+  CompleteAttachment,
+  PendingAttachment,
+} from "@assistant-ui/react";
 import { sendMessage, getMessages } from "../api/chat";
 import type { FileAttachment } from "../api/chat";
 import type { Message } from "../types/message";
+import { isAbortError } from "../lib/abort";
+import { getSessionTitle, setSessionTitle } from "../lib/session-titles";
 
 type ContentPart = NonNullable<ChatModelRunResult["content"]>[number];
 
@@ -40,17 +46,16 @@ class PdfAttachmentAdapter implements AttachmentAdapter {
     };
   }
 
-  async send(attachment: { file: File; [key: string]: unknown }) {
+  async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
     return {
       ...attachment,
       status: { type: "complete" as const },
       content: [
         {
           type: "file" as const,
-          file: {
-            data: await getFileDataURL(attachment.file),
-            mimeType: "application/pdf",
-          },
+          filename: attachment.name,
+          data: await getFileDataURL(attachment.file),
+          mimeType: "application/pdf",
         },
       ],
     };
@@ -59,6 +64,35 @@ class PdfAttachmentAdapter implements AttachmentAdapter {
   async remove() {
     // noop
   }
+}
+
+/**
+ * End the event stream quietly when it is torn down. A stopped stream
+ * (cancel button, navigation, dropped connection) is not an error — the
+ * server commits the partial turn, and the snapshot yielded so far stays on
+ * screen. Real failures propagate.
+ */
+async function* ignoreAborts<T>(events: AsyncGenerator<T>): AsyncGenerator<T> {
+  try {
+    yield* events;
+  } catch (err) {
+    if (!isAbortError(err)) throw err;
+  }
+}
+
+/** Extract the display text of the first user message, for session titles. */
+function firstUserText(messages: Message[]): string | null {
+  const first = messages.find((m) => m.role === "user");
+  if (!first) return null;
+  if (typeof first.content === "string") return first.content;
+  if (Array.isArray(first.content)) {
+    const text = first.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(" ");
+    return text || null;
+  }
+  return null;
 }
 
 /**
@@ -208,6 +242,8 @@ export function useChatRuntime(sessionId: string) {
       .then((data) => {
         if (cancelled) return;
         setInitialMessages(toThreadMessages(data.messages));
+        const title = firstUserText(data.messages);
+        if (title) setSessionTitle(sessionId, title);
       })
       .catch(() => {
         if (cancelled) return;
@@ -251,13 +287,11 @@ export function useChatRuntime(sessionId: string) {
             }
             if (
               part.type === "file" &&
-              "file" in part &&
-              (part as { file: { mimeType: string } }).file.mimeType ===
-                "application/pdf"
+              (part as { mimeType?: string }).mimeType === "application/pdf"
             ) {
               return [
                 {
-                  data: (part as { file: { data: string } }).file.data,
+                  data: (part as { data: string }).data,
                   mime_type: "application/pdf",
                 },
               ];
@@ -267,6 +301,11 @@ export function useChatRuntime(sessionId: string) {
         );
 
         if (!userText && attachments.length === 0) return;
+
+        // First message in a fresh session names it in the sidebar.
+        if (userText && !getSessionTitle(sessionId)) {
+          setSessionTitle(sessionId, userText);
+        }
 
         let currentText = "";
         let reasoningText = "";
@@ -283,11 +322,13 @@ export function useChatRuntime(sessionId: string) {
               ]
             : parts;
 
-        for await (const event of sendMessage(
-          sessionId,
-          userText,
-          abortSignal,
-          attachments.length > 0 ? attachments : undefined,
+        for await (const event of ignoreAborts(
+          sendMessage(
+            sessionId,
+            userText,
+            abortSignal,
+            attachments.length > 0 ? attachments : undefined,
+          ),
         )) {
           switch (event.type) {
             case "reasoning": {
@@ -379,6 +420,13 @@ export function useChatRuntime(sessionId: string) {
             }
 
             case "error": {
+              // Full traceback goes to the console for debugging; the chat
+              // shows the one-line detail.
+              console.error(
+                "Agent error:",
+                event.data.detail,
+                event.data.traceback ?? "",
+              );
               currentText += `\n\n**Error:** ${event.data.detail}`;
               yield {
                 content: withReasoning([
