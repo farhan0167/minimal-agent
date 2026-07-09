@@ -1,4 +1,4 @@
-import type { SSEEvent, Message } from "../types/message";
+import type { SSEEvent, Message, ToolCallDelta } from "../types/message";
 import type { Usage } from "../types/session";
 
 /**
@@ -81,6 +81,11 @@ function parseSSEBlock(block: string): SSEEvent | null {
         return { type: "delta", data: data as { text: string } };
       case "reasoning":
         return { type: "reasoning", data: data as { text: string } };
+      case "tool_call_delta":
+        return {
+          type: "tool_call_delta",
+          data: data as { tool_calls: ToolCallDelta[] },
+        };
       case "assistant":
         return { type: "assistant", data: data as Message };
       case "tool_result":

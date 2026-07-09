@@ -12,6 +12,7 @@ import type {
   CompleteAttachment,
   PendingAttachment,
 } from "@assistant-ui/react";
+import { parsePartialJsonObject } from "assistant-stream/utils";
 import { sendMessage, getMessages } from "../api/chat";
 import type { FileAttachment } from "../api/chat";
 import type { Message } from "../types/message";
@@ -312,6 +313,35 @@ export function useChatRuntime(sessionId: string) {
         const toolCalls: ContentPart[] = [];
         const toolCallIndex = new Map<string, number>();
 
+        // Tool calls the model is still generating, keyed by the provider's
+        // fragment index. The first fragment carries id + name; later ones
+        // append incremental JSON string chunks to argsText. Cleared when
+        // the committed assistant message arrives (it is authoritative).
+        const partialToolCalls = new Map<
+          number,
+          { id: string | null; name: string | null; argsText: string }
+        >();
+
+        // Render in-flight tool calls as tool-call parts with best-effort
+        // parsed args, so renderers can preview them (e.g. write_file
+        // content filling in) before the call is complete. Fragments
+        // missing their opening (id + name) can't be keyed or routed to a
+        // renderer yet, so they stay hidden until it arrives.
+        const partialParts = (): ContentPart[] =>
+          [...partialToolCalls.entries()]
+            .sort(([a], [b]) => a - b)
+            .filter(([, p]) => p.id !== null && p.name !== null)
+            .map(
+              ([, p]) =>
+                ({
+                  type: "tool-call",
+                  toolCallId: p.id!,
+                  toolName: p.name!,
+                  argsText: p.argsText,
+                  args: (parsePartialJsonObject(p.argsText) ?? {}) as never,
+                }) as ContentPart,
+            );
+
         // Prepend the reasoning trace (when present) so it renders above the
         // tool calls and answer, matching the order the model produced it.
         const withReasoning = (parts: ContentPart[]): ContentPart[] =>
@@ -321,6 +351,18 @@ export function useChatRuntime(sessionId: string) {
                 ...parts,
               ]
             : parts;
+
+        // Cumulative snapshot of the whole turn: committed tool calls, then
+        // in-flight ones, then the answer text (matching commit order).
+        const snapshot = (): ChatModelRunResult => ({
+          content: withReasoning([
+            ...toolCalls,
+            ...partialParts(),
+            ...(currentText
+              ? [{ type: "text" as const, text: currentText }]
+              : []),
+          ]),
+        });
 
         for await (const event of ignoreAborts(
           sendMessage(
@@ -335,28 +377,32 @@ export function useChatRuntime(sessionId: string) {
               // Thinking token — accumulate and yield a snapshot so the
               // reasoning block fills in live above the (still empty) answer.
               reasoningText += event.data.text;
-              yield {
-                content: withReasoning(
-                  currentText
-                    ? [
-                        ...toolCalls,
-                        { type: "text" as const, text: currentText },
-                      ]
-                    : [...toolCalls],
-                ),
-              };
+              yield snapshot();
               break;
             }
 
             case "delta": {
               // Live token — append and yield a cumulative snapshot.
               currentText += event.data.text;
-              yield {
-                content: withReasoning([
-                  ...toolCalls,
-                  { type: "text" as const, text: currentText },
-                ]),
-              };
+              yield snapshot();
+              break;
+            }
+
+            case "tool_call_delta": {
+              // Argument fragments of an in-flight tool call — fold them in
+              // and yield so the tool card appears (and its args fill in)
+              // while the model is still generating the call.
+              for (const tcd of event.data.tool_calls) {
+                let slot = partialToolCalls.get(tcd.index);
+                if (!slot) {
+                  slot = { id: null, name: null, argsText: "" };
+                  partialToolCalls.set(tcd.index, slot);
+                }
+                if (tcd.id) slot.id = tcd.id;
+                if (tcd.name) slot.name = tcd.name;
+                if (tcd.arguments) slot.argsText += tcd.arguments;
+              }
+              yield snapshot();
               break;
             }
 
@@ -372,6 +418,10 @@ export function useChatRuntime(sessionId: string) {
                 reasoningText = msg.reasoning;
               }
 
+              // The committed message carries the assembled tool calls —
+              // drop the partial mirror built from deltas.
+              partialToolCalls.clear();
+
               if (msg.tool_calls) {
                 for (const tc of msg.tool_calls) {
                   toolCallIndex.set(tc.id, toolCalls.length);
@@ -385,14 +435,7 @@ export function useChatRuntime(sessionId: string) {
                 }
               }
 
-              yield {
-                content: withReasoning([
-                  ...toolCalls,
-                  ...(currentText
-                    ? [{ type: "text" as const, text: currentText }]
-                    : []),
-                ]),
-              };
+              yield snapshot();
               break;
             }
 
@@ -408,14 +451,7 @@ export function useChatRuntime(sessionId: string) {
                 } as ContentPart;
               }
 
-              yield {
-                content: withReasoning([
-                  ...toolCalls,
-                  ...(currentText
-                    ? [{ type: "text" as const, text: currentText }]
-                    : []),
-                ]),
-              };
+              yield snapshot();
               break;
             }
 

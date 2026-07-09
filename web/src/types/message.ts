@@ -33,10 +33,25 @@ export interface MessageHistoryResponse {
   messages: Message[];
 }
 
+/**
+ * A fragment of an in-flight tool call, streamed while the model is still
+ * generating it. Fragments are keyed by `index`: the first one carries `id`
+ * and `name`, later ones carry `arguments` as incremental JSON string chunks
+ * to concatenate. The committed `assistant` event that follows is
+ * authoritative and replaces whatever was accumulated.
+ */
+export interface ToolCallDelta {
+  index: number;
+  id?: string;
+  name?: string;
+  arguments?: string;
+}
+
 /** SSE event types emitted by POST /sessions/{id}/chat */
 export type SSEEvent =
   | { type: "delta"; data: { text: string } }
   | { type: "reasoning"; data: { text: string } }
+  | { type: "tool_call_delta"; data: { tool_calls: ToolCallDelta[] } }
   | { type: "assistant"; data: Message }
   | { type: "tool_result"; data: Message }
   | { type: "error"; data: { detail: string; traceback?: string } }
