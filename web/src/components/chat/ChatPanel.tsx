@@ -22,7 +22,7 @@ const MarkdownText = makeMarkdownText({
     html: { CodeHeader: HtmlCodeHeader },
     svg: { CodeHeader: NullCodeHeader, SyntaxHighlighter: SvgBlock },
     xml: { CodeHeader: NullCodeHeader, SyntaxHighlighter: SvgBlock },
-    mermaid: { SyntaxHighlighter: MermaidBlock },
+    mermaid: { CodeHeader: NullCodeHeader, SyntaxHighlighter: MermaidBlock },
   },
 });
 

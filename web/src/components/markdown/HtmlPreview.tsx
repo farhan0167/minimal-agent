@@ -1,8 +1,9 @@
-import { useEffect, useState, type FC } from "react";
-import { createPortal } from "react-dom";
-import { PlayIcon, XIcon } from "lucide-react";
+import { useRef, useState, type FC } from "react";
+import { PlayIcon } from "lucide-react";
 import type { CodeHeaderProps } from "@assistant-ui/react-markdown";
 import { CodeHeaderBar, HeaderButton } from "./CodeHeaderBar";
+import { PreviewDialog, ZoomControls } from "./PreviewDialog";
+import { useWheelZoom, useZoom } from "./use-zoom";
 
 /**
  * Code-block header for `html` fences: the standard language label + copy
@@ -27,11 +28,9 @@ export const HtmlCodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
           Preview
         </HeaderButton>
       </CodeHeaderBar>
-      {isOpen &&
-        createPortal(
-          <HtmlPreviewDialog code={code} onClose={() => setIsOpen(false)} />,
-          document.body,
-        )}
+      {isOpen && (
+        <HtmlPreviewDialog code={code} onClose={() => setIsOpen(false)} />
+      )}
     </>
   );
 };
@@ -43,42 +42,35 @@ function HtmlPreviewDialog({
   code: string;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  const zoom = useZoom();
+  const paneRef = useRef<HTMLDivElement>(null);
+  // Catches ctrl/meta+wheel over the dialog chrome; wheel events over the
+  // iframe itself go to the sandboxed document and can't be intercepted —
+  // the header buttons always work.
+  useWheelZoom(paneRef, zoom.zoomBy);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
+    <PreviewDialog
+      title="HTML preview"
+      controls={<ZoomControls {...zoom} />}
+      onClose={onClose}
     >
-      <div
-        className="flex flex-col w-full max-w-5xl h-[85vh] rounded-xl overflow-hidden bg-[hsl(var(--aui-background))] border border-[hsl(var(--claude-border))] shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[hsl(var(--claude-border))]">
-          <span className="text-sm font-medium text-[hsl(var(--aui-foreground))]">
-            HTML preview
-          </span>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded hover:bg-[hsl(var(--claude-hover))] transition-colors"
-            title="Close (Esc)"
-          >
-            <XIcon className="w-4 h-4" />
-          </button>
-        </div>
+      <div ref={paneRef} className="flex-1 overflow-hidden bg-white">
+        {/* Scale + inverse size emulates browser zoom: zooming out gives the
+            page a wider viewport to lay out in, like a real zoomed browser. */}
         <iframe
           sandbox="allow-scripts"
           srcDoc={code}
           title="HTML preview"
-          className="flex-1 w-full bg-white"
+          className="border-0 bg-white"
+          style={{
+            transform: `scale(${zoom.zoom})`,
+            transformOrigin: "0 0",
+            width: `${100 / zoom.zoom}%`,
+            height: `${100 / zoom.zoom}%`,
+          }}
         />
       </div>
-    </div>
+    </PreviewDialog>
   );
 }

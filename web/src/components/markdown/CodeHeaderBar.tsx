@@ -29,7 +29,7 @@ export function CodeHeaderBar({
   return (
     <div className="aui-code-header-root flex items-center justify-between gap-2 px-4 py-1.5 text-sm font-sans rounded-t-lg">
       <span className="aui-code-header-language lowercase">{language}</span>
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-3">
         {children}
         <button
           onClick={onCopy}

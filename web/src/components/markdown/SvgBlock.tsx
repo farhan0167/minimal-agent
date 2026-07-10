@@ -1,12 +1,14 @@
 import { useCallback, useState, type FC } from "react";
 import DOMPurify from "dompurify";
-import { CodeIcon, ImageIcon } from "lucide-react";
+import { CodeIcon, ImageIcon, Maximize2Icon } from "lucide-react";
 import type {
   CodeHeaderProps,
   SyntaxHighlighterProps,
 } from "@assistant-ui/react-markdown";
 import { ShikiSyntaxHighlighter } from "../chat/ShikiHighlighter";
 import { CodeHeaderBar, HeaderButton } from "./CodeHeaderBar";
+import { PreviewDialog, ZoomControls, ZoomPane } from "./PreviewDialog";
+import { useZoom } from "./use-zoom";
 
 const MAX_SVG_BYTES = 256 * 1024;
 
@@ -75,24 +77,59 @@ function normalizeSvg(root: ShadowRoot) {
   }
 }
 
+// "card": scale down to fit the chat card (max-width/max-height with auto
+// dimensions keeps the aspect ratio, like an image) — always fully visible.
+// "natural": intrinsic size, for the preview dialog where a ZoomPane owns
+// scaling and scrolling.
+const SHADOW_STYLE = {
+  card: ":host{display:block}svg{display:block;margin:auto;width:auto;height:auto;max-width:100%;max-height:min(24rem,55vh);overflow:hidden}",
+  natural: ":host{display:block}svg{display:block;margin:auto;overflow:hidden}",
+} as const;
+
 /**
  * Mount sanitized markup inside a shadow root so the SVG's ids, classes and
  * <style> rules can't collide with (or restyle) the app.
  */
-function ShadowSvg({ markup }: { markup: string }) {
+function ShadowSvg({
+  markup,
+  fit = "card",
+}: {
+  markup: string;
+  fit?: keyof typeof SHADOW_STYLE;
+}) {
   const ref = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return;
       const root = node.shadowRoot ?? node.attachShadow({ mode: "open" });
-      // max-width/max-height with auto dimensions = scale down to fit while
-      // keeping the aspect ratio (an image would behave the same) — the
-      // drawing is always fully visible, never scrolled.
-      root.innerHTML = `<style>:host{display:block}svg{display:block;margin:auto;width:auto;height:auto;max-width:100%;max-height:min(24rem,55vh);overflow:hidden}</style>${markup}`;
+      root.innerHTML = `<style>${SHADOW_STYLE[fit]}</style>${markup}`;
       normalizeSvg(root);
     },
-    [markup],
+    [markup, fit],
   );
-  return <div ref={ref} className="p-4 bg-white rounded-b-lg" />;
+  return (
+    <div ref={ref} className={fit === "card" ? "p-4 bg-white rounded-b-lg" : ""} />
+  );
+}
+
+function SvgPreviewDialog({
+  markup,
+  onClose,
+}: {
+  markup: string;
+  onClose: () => void;
+}) {
+  const zoom = useZoom();
+  return (
+    <PreviewDialog
+      title="SVG preview"
+      controls={<ZoomControls {...zoom} />}
+      onClose={onClose}
+    >
+      <ZoomPane zoom={zoom.zoom} zoomBy={zoom.zoomBy} className="bg-white">
+        <ShadowSvg markup={markup} fit="natural" />
+      </ZoomPane>
+    </PreviewDialog>
+  );
 }
 
 /**
@@ -111,6 +148,7 @@ export const NullCodeHeader: FC<CodeHeaderProps> = () => null;
 export const SvgBlock: FC<SyntaxHighlighterProps> = (props) => {
   const { code, language } = props;
   const [showSource, setShowSource] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   const isCompleteSvg = /<svg[\s>]/i.test(code) && /<\/svg>/i.test(code);
   const sanitized = isCompleteSvg ? sanitizeSvg(code) : null;
@@ -120,28 +158,43 @@ export const SvgBlock: FC<SyntaxHighlighterProps> = (props) => {
     <div>
       <CodeHeaderBar language={language} code={code}>
         {sanitized !== null && (
-          <HeaderButton
-            onClick={() => setShowSource(!showSource)}
-            title={showSource ? "Show rendered SVG" : "Show source"}
-          >
-            {showSource ? (
-              <>
-                <ImageIcon className="w-3.5 h-3.5" />
-                Rendered
-              </>
-            ) : (
-              <>
-                <CodeIcon className="w-3.5 h-3.5" />
-                Source
-              </>
-            )}
-          </HeaderButton>
+          <>
+            <HeaderButton
+              onClick={() => setIsPreviewOpen(true)}
+              title="Enlarge in a zoomable preview"
+            >
+              <Maximize2Icon className="w-3.5 h-3.5" />
+              Preview
+            </HeaderButton>
+            <HeaderButton
+              onClick={() => setShowSource(!showSource)}
+              title={showSource ? "Show rendered SVG" : "Show source"}
+            >
+              {showSource ? (
+                <>
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  Rendered
+                </>
+              ) : (
+                <>
+                  <CodeIcon className="w-3.5 h-3.5" />
+                  Source
+                </>
+              )}
+            </HeaderButton>
+          </>
         )}
       </CodeHeaderBar>
       {showRendered ? (
         <ShadowSvg markup={sanitized} />
       ) : (
         <ShikiSyntaxHighlighter {...props} language="xml" />
+      )}
+      {isPreviewOpen && sanitized !== null && (
+        <SvgPreviewDialog
+          markup={sanitized}
+          onClose={() => setIsPreviewOpen(false)}
+        />
       )}
     </div>
   );

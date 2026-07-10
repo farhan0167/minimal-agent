@@ -60,6 +60,11 @@ fence languages to custom renderers in `src/components/markdown/`:
   still streaming a placeholder shows; invalid diagrams fall back to
   highlighted source.
 
+All three open in a shared zoomable modal (`PreviewDialog.tsx` +
+`use-zoom.ts`): SVG and Mermaid headers get their own **Preview** button once
+rendered, and every dialog supports `+`/`−`/reset controls plus ctrl/⌘+wheel
+(the browser's zoom gesture, including trackpad pinch).
+
 To add a renderer for another fence language, build a component that accepts
 assistant-ui's `SyntaxHighlighterProps` (or `CodeHeaderProps` to change only
 the header) and register it in the `componentsByLanguage` map. Always keep a
