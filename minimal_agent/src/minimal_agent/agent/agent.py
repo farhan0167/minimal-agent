@@ -22,7 +22,7 @@ from ..context_sources import (
 )
 from ..events import CallResponse, RunEnd, RunEndStatus, RunStart
 from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
-from ..llm.types import ContentPart, LLMTool, ReasoningConfig, Usage
+from ..llm.types import ContentPart, LLMTool, ReasoningConfig, ReasoningEffort, Usage
 from ..skills import discover_skills
 from ..system_prompt import build_system_prompt, load_prompt
 from ..tools import ToolContext, dispatch
@@ -63,7 +63,7 @@ class Agent:
         llm: LLM,
         tools: list[BaseTool],
         *,
-        reasoning: ReasoningConfig | None = None,
+        reasoning_config: ReasoningConfig | None = None,
         prompt: Union[str, Path, None] = None,
         context_sources: list[ContextSource] | None = None,
         max_turns: int = 10,
@@ -72,9 +72,14 @@ class Agent:
         sessions: SessionManager | None = None,
     ) -> None:
         # Reasoning is agent-level config: attach the provider contract to the
-        # LLM so every generate/stream carries it. Passing reasoning=... here is
-        # equivalent to constructing LLM(..., reasoning=...) yourself.
-        self._llm = llm.with_reasoning(reasoning) if reasoning is not None else llm
+        # LLM so every generate/stream carries it. Passing reasoning_config=...
+        # here is equivalent to constructing LLM(..., reasoning_config=...)
+        # yourself. (`reasoning` the name is reserved for run()'s per-run bool.)
+        self._llm = (
+            llm.construct_with_reasoning(reasoning_config)
+            if reasoning_config is not None
+            else llm
+        )
         # Identity lives here; persistence policy lives in the manager.
         # The default manager records under .minimal_agent/sessions.
         self._sessions = sessions if sessions is not None else SessionManager()
@@ -242,6 +247,8 @@ class Agent:
         stream: bool = False,
         on_usage: Optional[OnUsageCallback] = None,
         permission_callback: Optional[PermissionCallback] = None,
+        reasoning: bool = True,
+        effort: ReasoningEffort | None = None,
     ) -> AsyncGenerator[Union[Message, StreamChunk], None]:
         """Run the agent loop, yielding each message as it's produced.
 
@@ -265,6 +272,17 @@ class Agent:
         Callbacks:
             on_usage: Called with the Usage from each LLM API call.
             permission_callback: Called when a tool requires user confirmation.
+
+        Reasoning (per-run, not per-agent):
+            reasoning: Whether to request a reasoning/thinking trace for this
+                run. Defaults to True (backward compatible). No-op unless the
+                agent was built with a reasoning_config — that config is the
+                contract for *how*; this flag is the per-run trigger for
+                *whether*.
+            effort: The reasoning effort level for this run (none|minimal|low|
+                medium|high|xhigh). Written to the config's effort_param key
+                (default: "reasoning_effort"); ignored when reasoning=False
+                or effort is None.
 
         The run is traced through the context's scope: run.start/run.end
         frame it (run.end fires from a finally, so even an abandoned or
@@ -304,6 +322,8 @@ class Agent:
                         messages=messages,
                         tools=self._llm_tools,
                         tool_choice="auto",
+                        reasoning=reasoning,
+                        effort=effort,
                     ):
                         acc.add(chunk)
                         yield chunk
@@ -315,19 +335,21 @@ class Agent:
                             if on_usage:
                                 on_usage(chunk.usage)
                     text = acc.text
-                    reasoning = acc.reasoning or None
+                    reasoning_trace = acc.reasoning or None
                     tool_calls = acc.tool_calls()
                 else:
                     resp = await self._llm.generate(
                         messages=messages,
                         tools=self._llm_tools,
                         tool_choice="auto",
+                        reasoning=reasoning,
+                        effort=effort,
                     )
                     usage = resp.usage
                     if on_usage and resp.usage:
                         on_usage(resp.usage)
                     text = resp.text
-                    reasoning = resp.reasoning
+                    reasoning_trace = resp.reasoning
                     tool_calls = resp.tool_calls
 
                 events.emit(
@@ -341,7 +363,7 @@ class Agent:
                 assistant_msg = Message(
                     role=Role.ASSISTANT,
                     content=text,
-                    reasoning=reasoning,
+                    reasoning=reasoning_trace,
                     tool_calls=tool_calls,
                 )
                 context.add(assistant_msg)

@@ -174,6 +174,8 @@ async def _stream_agent(
             stream=True,
             on_usage=on_usage,
             permission_callback=auto_approve,
+            reasoning=req.reasoning,
+            effort=req.effort,
         ):
             # Token deltas arrive first; the committed assistant Message
             # follows and carries the full text (clients should treat it as

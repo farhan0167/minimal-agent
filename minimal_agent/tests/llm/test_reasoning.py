@@ -36,7 +36,7 @@ def llm_reasoning() -> LLM:
     return LLM(
         model="test-model",
         api_key="sk-test",
-        reasoning=ReasoningConfig(
+        reasoning_config=ReasoningConfig(
             request_params={"enable_thinking": True},
             response_field="reasoning_content",
         ),
@@ -68,13 +68,114 @@ class TestExtractReasoning:
         or_llm = LLM(
             model="m",
             api_key="sk-test",
-            reasoning=ReasoningConfig(response_field="reasoning"),
+            reasoning_config=ReasoningConfig(response_field="reasoning"),
         )
         obj = SimpleNamespace(reasoning="via openrouter")
         assert or_llm._extract_reasoning(obj) == "via openrouter"
 
+    def test_per_call_reasoning_false_suppresses_read(self, llm_reasoning: LLM) -> None:
+        # Even with a configured field present, reasoning=False reads nothing.
+        obj = SimpleNamespace(reasoning_content="step by step")
+        assert llm_reasoning._extract_reasoning(obj, reasoning=False) is None
+        # ...and reasoning=True still reads it (the default path).
+        assert llm_reasoning._extract_reasoning(obj, reasoning=True) == "step by step"
+
 
 # ---- request-param merge ---------------------------------------------------
+
+
+def _params(llm: LLM, **overrides):
+    """Call _completion_params with the boilerplate all-None args filled in.
+
+    Only the reasoning-relevant knobs (and `extra`) are worth varying here, so
+    everything else defaults to None and can be overridden by keyword.
+    """
+    base = dict(
+        messages=[Message(role=Role.USER, content="hi")],
+        system=None,
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+        response_format=None,
+        max_tokens=None,
+        temperature=None,
+        top_p=None,
+        frequency_penalty=None,
+        presence_penalty=None,
+        stop=None,
+        n=None,
+        seed=None,
+        logprobs=None,
+        top_logprobs=None,
+        user=None,
+        extra=None,
+    )
+    base.update(overrides)
+    return llm._completion_params(**base)
+
+
+class TestPerRunReasoningGate:
+    def test_reasoning_false_drops_request_params(self, llm_reasoning: LLM) -> None:
+        # Config is present, but this run opts out — no reasoning body at all.
+        params = _params(llm_reasoning, reasoning=False)
+        assert "extra_body" not in params
+        assert "enable_thinking" not in params
+
+    def test_reasoning_true_is_the_default(self, llm_reasoning: LLM) -> None:
+        # Omitting the flag behaves as before (backward compatible).
+        assert _params(llm_reasoning)["extra_body"] == {"enable_thinking": True}
+
+    def test_effort_lands_on_default_key(self) -> None:
+        # Default key is the flat OpenAI spelling, which OpenRouter also
+        # accepts as a first-class alias — one spelling covers the backends.
+        cfg_llm = LLM(model="m", api_key="sk-test", reasoning_config=ReasoningConfig())
+        params = _params(cfg_llm, effort="high")
+        assert params["extra_body"] == {"reasoning_effort": "high"}
+
+    def test_effort_param_overrides_default_key(self) -> None:
+        # A config-declared key beats the default (LOCALHOST dialects).
+        cfg_llm = LLM(
+            model="m",
+            api_key="sk-test",
+            reasoning_config=ReasoningConfig(effort_param="thinking_budget"),
+        )
+        params = _params(cfg_llm, effort="medium")
+        assert params["extra_body"] == {"thinking_budget": "medium"}
+
+    def test_per_run_effort_overrides_static_default(self) -> None:
+        # A static same-key default in request_params loses to the per-run
+        # level — and only for that call; the config itself is untouched.
+        cfg = ReasoningConfig(request_params={"reasoning_effort": "low"})
+        cfg_llm = LLM(model="m", api_key="sk-test", reasoning_config=cfg)
+        assert _params(cfg_llm, effort="high")["extra_body"] == {
+            "reasoning_effort": "high"
+        }
+        assert cfg.request_params == {"reasoning_effort": "low"}
+        assert _params(cfg_llm)["extra_body"] == {"reasoning_effort": "low"}
+
+    def test_effort_preserves_sibling_keys(self) -> None:
+        # A static on-switch sibling survives the effort write untouched.
+        cfg_llm = LLM(
+            model="m",
+            api_key="sk-test",
+            reasoning_config=ReasoningConfig(request_params={"enable_thinking": True}),
+        )
+        params = _params(cfg_llm, effort="minimal")
+        assert params["extra_body"] == {
+            "reasoning_effort": "minimal",
+            "enable_thinking": True,
+        }
+
+    def test_effort_ignored_when_reasoning_false(self) -> None:
+        cfg_llm = LLM(model="m", api_key="sk-test", reasoning_config=ReasoningConfig())
+        params = _params(cfg_llm, reasoning=False, effort="high")
+        assert "extra_body" not in params
+
+    def test_effort_ignored_without_config(self, llm: LLM) -> None:
+        # No ReasoningConfig — effort has nowhere to land, stays off the wire.
+        params = _params(llm, effort="high")
+        assert "extra_body" not in params
+        assert "reasoning_effort" not in params
 
 
 class TestRequestParamMerge:
@@ -110,7 +211,7 @@ class TestRequestParamMerge:
         cfg_llm = LLM(
             model="m",
             api_key="sk-test",
-            reasoning=ReasoningConfig(
+            reasoning_config=ReasoningConfig(
                 request_params={"reasoning_effort": "low"},
             ),
         )
@@ -218,17 +319,17 @@ class TestStreamAccumulatorReasoning:
         assert acc.reasoning == ""
 
 
-# ---- with_reasoning helper -------------------------------------------------
+# ---- construct_with_reasoning helper -----------------------------------------
 
 
-class TestWithReasoning:
+class TestConstructWithReasoning:
     def test_attaches_config_and_reuses_client(self, llm: LLM) -> None:
         cfg = ReasoningConfig(response_field="reasoning")
-        clone = llm.with_reasoning(cfg)
-        assert clone._reasoning is cfg
+        clone = llm.construct_with_reasoning(cfg)
+        assert clone._reasoning_config is cfg
         # Reuses the underlying client rather than rebuilding it.
         assert clone.raw is llm.raw
         assert clone.model == llm.model
         assert clone.backend == llm.backend
         # Original is untouched.
-        assert llm._reasoning is None
+        assert llm._reasoning_config is None
