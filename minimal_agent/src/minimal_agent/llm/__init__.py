@@ -10,6 +10,7 @@ from .types import (
     InputAudio,
     LLMTool,
     Message,
+    ReasoningConfig,
     Role,
     StreamChunk,
     StructuredResponse,
@@ -22,6 +23,7 @@ from .types import (
 __all__ = [
     "LLM",
     "Message",
+    "ReasoningConfig",
     "Role",
     "LLMTool",
     "ToolCall",

@@ -25,7 +25,7 @@ This is a React + TypeScript chat frontend for the `minimal-agent` project. It u
 - **`lib/sse.ts`** — Pure async generator that parses raw SSE text streams into typed `SSEEvent` objects (event types: `delta`, `assistant`, `tool_result`, `error`, `done`). `delta` carries streamed assistant text token-by-token; the following `assistant` event carries the committed full text (authoritative).
 - **`hooks/use-chat-runtime.ts`** — The central integration layer. Converts flat server message history into assistant-ui's `ThreadMessageLike` format (merging assistant+tool messages into single turns), and wires up the SSE streaming adapter for `useLocalRuntime`.
 - **`hooks/use-sessions.ts`** — Session state management (list, create, select, delete).
-- **`components/tools/`** — Tool call rendering system. `index.tsx` registers a `makeAssistantToolUI` for each known tool name. To add a new tool, append its name to the `TOOL_NAMES` array. `ToolCallRenderer` is the fallback collapsible JSON viewer for args/results.
+- **`components/tools/`** — Tool call rendering system. `index.tsx` registers a `makeAssistantToolUI` for each tool name fetched from `GET /tools`. `registry.ts` maps tool names to dedicated renderers (file, shell, search, web tools); `ToolCallRenderer` is the generic fallback. All renderers compose the `ToolCallCard` shell. See `README.md` — "Writing a renderer for a new tool".
 - **`types/`** — Shared TypeScript interfaces mirroring the backend API schema (`Message`, `Session`, `SSEEvent`, etc.).
 
 ### Styling

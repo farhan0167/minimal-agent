@@ -21,11 +21,15 @@ The UI's new-session dialog shows both agents with their workspace, model, and t
 
 ## Run it
 
-Install the package with the server extra. From a source checkout also build the UI once (`make ui` at the repo root — needs Node); installs from a released wheel ship the UI prebuilt.
+This directory is a small uv project ([pyproject.toml](pyproject.toml)) that depends on the sibling package `../minimal_agent`, installed **editable** — so changes to the library are picked up without reinstalling. Sync the environment:
 
 ```bash
-pip install "mini-agent-kit[server]"
+uv sync
 ```
+
+From a source checkout also build the UI once (`make ui` at the repo root — needs Node) before serving the chat UI; installs from a released wheel ship the UI prebuilt.
+
+> Prefer plain pip / the PyPI release instead? `pip install "mini-agent-kit[server]"` also works — the scripts only import the installed package.
 
 Configure the LLM via environment variables or a `.env` file in this directory:
 
@@ -41,7 +45,7 @@ Configure the LLM via environment variables or a `.env` file in this directory:
 Then:
 
 ```bash
-python my_app.py
+uv run my_app.py
 ```
 
 Open `http://localhost:8000`. The API docs live at `/docs`, endpoints under `/api`.

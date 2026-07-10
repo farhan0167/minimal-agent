@@ -211,6 +211,7 @@ async def test_session_runs_joins_everything(tmp_path):
         "prompt_tokens": 10,
         "completion_tokens": 5,
         "total_tokens": 15,
+        "reasoning_tokens": None,
     }
     # The tool round rides the first call.
     (execution,) = first.tool_executions

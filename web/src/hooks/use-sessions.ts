@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CreateSessionRequest, Session } from "../types/session";
 import * as sessionsApi from "../api/sessions";
+import { removeSessionTitle } from "../lib/session-titles";
+
+const ACTIVE_SESSION_KEY = "minimal-agent.active-session";
 
 interface UseSessionsReturn {
   sessions: Session[];
@@ -15,9 +18,20 @@ interface UseSessionsReturn {
 
 export function useSessions(): UseSessionsReturn {
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() =>
+    localStorage.getItem(ACTIVE_SESSION_KEY),
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Survive page refreshes: remember the selection across visits.
+  useEffect(() => {
+    if (activeSessionId) {
+      localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId);
+    } else {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+    }
+  }, [activeSessionId]);
 
   const activeSession =
     sessions.find((s) => s.session_id === activeSessionId) ?? null;
@@ -27,6 +41,10 @@ export function useSessions(): UseSessionsReturn {
       setError(null);
       const list = await sessionsApi.listSessions();
       setSessions(list);
+      // Drop a restored selection that no longer exists server-side.
+      setActiveSessionId((prev) =>
+        prev && list.some((s) => s.session_id === prev) ? prev : null,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load sessions");
     } finally {
@@ -58,6 +76,7 @@ export function useSessions(): UseSessionsReturn {
       setSessions((prev) =>
         prev.filter((s) => s.session_id !== sessionId),
       );
+      removeSessionTitle(sessionId);
       if (activeSessionId === sessionId) {
         setActiveSessionId(null);
       }

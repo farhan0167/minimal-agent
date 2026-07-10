@@ -21,6 +21,26 @@ class Role(StrEnum):
     TOOL = "tool"
 
 
+class ReasoningConfig(BaseModel):
+    """How reasoning is requested from, and read back off, a provider.
+
+    Reasoning ("thinking") is non-standard across OpenAI-compatible providers,
+    so the caller declares the provider's contract once at Agent-definition
+    time. See the reasoning-support.md specification for the full design.
+
+    - `request_params`: merged verbatim into the request body. This is where
+      every request-side knob goes, whether it's OpenAI's native
+      `reasoning_effort` or a provider extension like Qwen's `enable_thinking`.
+      The SDK forwards unknown keys via `extra_body`, so we don't distinguish.
+    - `response_field`: the (extra, non-standard) attribute the trace comes back
+      on. "reasoning_content" for Qwen/DeepSeek, "reasoning" for OpenRouter.
+      Read defensively with getattr — absent on providers that don't reason.
+    """
+
+    request_params: Dict[str, Any] = Field(default_factory=dict)
+    response_field: str = "reasoning_content"
+
+
 class TextPart(BaseModel):
     """A text segment in a multimodal message."""
 
@@ -108,6 +128,10 @@ class Message(BaseModel):
 
     role: Role
     content: Union[str, List[ContentPart], None] = None
+    # The model's reasoning/thinking trace. Persisted and shown (web/CLI
+    # history), but stripped in _message_to_openai — never replayed to the
+    # model. See reasoning-support.md.
+    reasoning: Optional[str] = None
     tool_call_id: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None
 
@@ -178,6 +202,9 @@ class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    # Reasoning models bill thinking tokens here (from the SDK's
+    # completion_tokens_details). None when the provider doesn't report it.
+    reasoning_tokens: Optional[int] = None
 
 
 class GenerateResponse(BaseModel):
@@ -186,6 +213,9 @@ class GenerateResponse(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     text: str
+    # Neutral reasoning trace, read off the provider's configured response
+    # field. None when reasoning is unconfigured or the provider didn't emit it.
+    reasoning: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None
     finish_reason: Optional[str] = None
     usage: Optional[Usage] = None
@@ -204,6 +234,7 @@ class StructuredResponse(BaseModel, Generic[T]):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     text: str
+    reasoning: Optional[str] = None
     parsed: Optional[T] = None
     refusal: Optional[str] = None
     finish_reason: Optional[str] = None
@@ -232,6 +263,9 @@ class StreamChunk(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     text: str = ""
+    # Neutral reasoning trace DELTA — a fragment, concatenated by the
+    # StreamAccumulator exactly like `text`.
+    reasoning: str = ""
     tool_calls: Optional[List[ToolCallDelta]] = None
     finish_reason: Optional[str] = None
     # Only present on the final chunk when the caller requests it via

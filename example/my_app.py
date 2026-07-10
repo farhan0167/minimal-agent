@@ -4,13 +4,23 @@ Run with `python my_app.py` (needs `mini-agent-kit[server]` installed and an
 API key in the environment or a `.env` file — see the README). Opens an API
 plus the bundled chat UI at http://localhost:8000; the UI's new-session
 dialog lets you pick between the two agents.
+
+Reasoning ("thinking") is opt-in and provider-specific. Set the three
+REASONING_* vars in your .env to match your backend and both agents will
+stream their thinking trace to the chat UI (rendered as a collapsible
+"Reasoning" block above each answer). Leave them unset for no reasoning.
 """
 
+import json
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from minimal_agent import Agent, App
 from minimal_agent.config import settings
 from minimal_agent.llm import LLM
+from minimal_agent.llm.types import ReasoningConfig
 from minimal_agent.tools.builtin.edit_file import EditFile
 from minimal_agent.tools.builtin.glob import Glob
 from minimal_agent.tools.builtin.grep import Grep
@@ -21,6 +31,11 @@ from minimal_agent.tools.builtin.web_extract import WebExtract
 from minimal_agent.tools.builtin.web_search import WebSearch
 from minimal_agent.tools.builtin.write_file import WriteFile
 
+# Load .env into the process environment so the REASONING_* vars below are
+# visible to os.environ (pydantic-settings reads .env into `settings`, but not
+# into os.environ, and these vars are app-level rather than framework config).
+load_dotenv()
+
 workspace = Path.cwd()
 
 llm = LLM(
@@ -29,6 +44,45 @@ llm = LLM(
     timeout=settings.OPENAI_TIMEOUT,
     max_retries=settings.OPENAI_MAX_RETRIES,
 )
+
+
+def build_reasoning() -> ReasoningConfig | None:
+    """Build a ReasoningConfig from the REASONING_* env vars, or None.
+
+    Reasoning is opt-in and provider-specific, so the request toggle and the
+    response field are declared by you, the builder — not hard-coded here.
+
+      REASONING_REQUEST_KEY    the request param the provider expects
+                               (e.g. "enable_thinking", "reasoning")
+      REASONING_REQUEST_VALUE  its value; parsed as JSON so nested objects
+                               work (e.g. {"effort":"high"}), falling back to
+                               the raw string
+      REASONING_RESPONSE_FIELD the field the trace comes back on
+                               (e.g. "reasoning_content", "reasoning")
+
+    Unset REASONING_RESPONSE_FIELD → reasoning off (returns None).
+    """
+    response_field = os.environ.get("REASONING_RESPONSE_FIELD")
+    if not response_field:
+        return None
+
+    request_params: dict = {}
+    key = os.environ.get("REASONING_REQUEST_KEY")
+    if key:
+        raw = os.environ.get("REASONING_REQUEST_VALUE", "")
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            value = raw
+        request_params[key] = value
+
+    return ReasoningConfig(
+        request_params=request_params,
+        response_field=response_field,
+    )
+
+
+reasoning = build_reasoning()
 
 
 def build_swe_agent() -> Agent:
@@ -49,7 +103,12 @@ def build_swe_agent() -> Agent:
         available_tools={t.name: t for t in tools},
         workspace_root=workspace,
     )
-    return Agent(llm=llm, tools=[*tools, spawn_agents], workspace_root=workspace)
+    return Agent(
+        llm=llm,
+        tools=[*tools, spawn_agents],
+        workspace_root=workspace,
+        reasoning=reasoning,
+    )
 
 
 def build_research_agent() -> Agent:
@@ -61,7 +120,12 @@ def build_research_agent() -> Agent:
         WebSearch(),
         WebExtract(),
     ]
-    return Agent(llm=llm, tools=tools, workspace_root=workspace)
+    return Agent(
+        llm=llm,
+        tools=tools,
+        workspace_root=workspace,
+        reasoning=reasoning,
+    )
 
 
 app = App(

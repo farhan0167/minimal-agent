@@ -22,7 +22,7 @@ from ..context_sources import (
 )
 from ..events import CallResponse, RunEnd, RunEndStatus, RunStart
 from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
-from ..llm.types import ContentPart, LLMTool, Usage
+from ..llm.types import ContentPart, LLMTool, ReasoningConfig, Usage
 from ..skills import discover_skills
 from ..system_prompt import build_system_prompt, load_prompt
 from ..tools import ToolContext, dispatch
@@ -63,6 +63,7 @@ class Agent:
         llm: LLM,
         tools: list[BaseTool],
         *,
+        reasoning: ReasoningConfig | None = None,
         prompt: Union[str, Path, None] = None,
         context_sources: list[ContextSource] | None = None,
         max_turns: int = 10,
@@ -70,7 +71,10 @@ class Agent:
         enable_skills: bool = True,
         sessions: SessionManager | None = None,
     ) -> None:
-        self._llm = llm
+        # Reasoning is agent-level config: attach the provider contract to the
+        # LLM so every generate/stream carries it. Passing reasoning=... here is
+        # equivalent to constructing LLM(..., reasoning=...) yourself.
+        self._llm = llm.with_reasoning(reasoning) if reasoning is not None else llm
         # Identity lives here; persistence policy lives in the manager.
         # The default manager records under .minimal_agent/sessions.
         self._sessions = sessions if sessions is not None else SessionManager()
@@ -311,6 +315,7 @@ class Agent:
                             if on_usage:
                                 on_usage(chunk.usage)
                     text = acc.text
+                    reasoning = acc.reasoning or None
                     tool_calls = acc.tool_calls()
                 else:
                     resp = await self._llm.generate(
@@ -322,6 +327,7 @@ class Agent:
                     if on_usage and resp.usage:
                         on_usage(resp.usage)
                     text = resp.text
+                    reasoning = resp.reasoning
                     tool_calls = resp.tool_calls
 
                 events.emit(
@@ -335,6 +341,7 @@ class Agent:
                 assistant_msg = Message(
                     role=Role.ASSISTANT,
                     content=text,
+                    reasoning=reasoning,
                     tool_calls=tool_calls,
                 )
                 context.add(assistant_msg)

@@ -1,14 +1,6 @@
 import { type FC, useEffect, useState } from "react";
 import { type Highlighter, createHighlighter } from "shiki";
-
-interface ShikiHighlighterProps {
-  language: string;
-  code: string;
-  components: {
-    Pre: FC<React.ComponentPropsWithoutRef<"pre">>;
-    Code: FC<React.ComponentPropsWithoutRef<"code">>;
-  };
-}
+import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 
@@ -41,7 +33,7 @@ function getHighlighter() {
   return highlighterPromise;
 }
 
-export const ShikiSyntaxHighlighter: FC<ShikiHighlighterProps> = ({
+export const ShikiSyntaxHighlighter: FC<SyntaxHighlighterProps> = ({
   language,
   code,
   components: { Code },

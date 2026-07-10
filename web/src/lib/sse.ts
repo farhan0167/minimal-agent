@@ -1,4 +1,4 @@
-import type { SSEEvent, Message } from "../types/message";
+import type { SSEEvent, Message, ToolCallDelta } from "../types/message";
 import type { Usage } from "../types/session";
 
 /**
@@ -79,6 +79,13 @@ function parseSSEBlock(block: string): SSEEvent | null {
     switch (eventType) {
       case "delta":
         return { type: "delta", data: data as { text: string } };
+      case "reasoning":
+        return { type: "reasoning", data: data as { text: string } };
+      case "tool_call_delta":
+        return {
+          type: "tool_call_delta",
+          data: data as { tool_calls: ToolCallDelta[] },
+        };
       case "assistant":
         return { type: "assistant", data: data as Message };
       case "tool_result":
@@ -91,9 +98,12 @@ function parseSSEBlock(block: string): SSEEvent | null {
       case "done":
         return { type: "done", data: data as { usage: Usage } };
       default:
+        // Likely a newer server emitting events this client doesn't know yet.
+        console.warn(`Ignoring unknown SSE event type: ${eventType}`);
         return null;
     }
-  } catch {
+  } catch (err) {
+    console.warn(`Dropping malformed SSE "${eventType}" event:`, err, dataStr);
     return null;
   }
 }

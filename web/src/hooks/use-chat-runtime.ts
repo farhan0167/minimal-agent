@@ -7,10 +7,17 @@ import {
   type ChatModelRunResult,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import type { AttachmentAdapter } from "@assistant-ui/react";
+import type {
+  AttachmentAdapter,
+  CompleteAttachment,
+  PendingAttachment,
+} from "@assistant-ui/react";
+import { parsePartialJsonObject } from "assistant-stream/utils";
 import { sendMessage, getMessages } from "../api/chat";
 import type { FileAttachment } from "../api/chat";
 import type { Message } from "../types/message";
+import { isAbortError } from "../lib/abort";
+import { getSessionTitle, setSessionTitle } from "../lib/session-titles";
 
 type ContentPart = NonNullable<ChatModelRunResult["content"]>[number];
 
@@ -40,17 +47,16 @@ class PdfAttachmentAdapter implements AttachmentAdapter {
     };
   }
 
-  async send(attachment: { file: File; [key: string]: unknown }) {
+  async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
     return {
       ...attachment,
       status: { type: "complete" as const },
       content: [
         {
           type: "file" as const,
-          file: {
-            data: await getFileDataURL(attachment.file),
-            mimeType: "application/pdf",
-          },
+          filename: attachment.name,
+          data: await getFileDataURL(attachment.file),
+          mimeType: "application/pdf",
         },
       ],
     };
@@ -59,6 +65,35 @@ class PdfAttachmentAdapter implements AttachmentAdapter {
   async remove() {
     // noop
   }
+}
+
+/**
+ * End the event stream quietly when it is torn down. A stopped stream
+ * (cancel button, navigation, dropped connection) is not an error — the
+ * server commits the partial turn, and the snapshot yielded so far stays on
+ * screen. Real failures propagate.
+ */
+async function* ignoreAborts<T>(events: AsyncGenerator<T>): AsyncGenerator<T> {
+  try {
+    yield* events;
+  } catch (err) {
+    if (!isAbortError(err)) throw err;
+  }
+}
+
+/** Extract the display text of the first user message, for session titles. */
+function firstUserText(messages: Message[]): string | null {
+  const first = messages.find((m) => m.role === "user");
+  if (!first) return null;
+  if (typeof first.content === "string") return first.content;
+  if (Array.isArray(first.content)) {
+    const text = first.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(" ");
+    return text || null;
+  }
+  return null;
 }
 
 /**
@@ -119,6 +154,7 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
     // Or just: assistant(text) alone.
     const parts: (
       | { type: "text"; text: string }
+      | { type: "reasoning"; text: string }
       | {
           type: "tool-call";
           toolCallId: string;
@@ -147,6 +183,12 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
             role: "assistant",
             content: parts.splice(0) as ThreadMessageLike["content"],
           });
+        }
+
+        // Reasoning leads the turn — surface it before this message's tool
+        // calls and text, matching the order the model produced it.
+        if (m.reasoning) {
+          parts.push({ type: "reasoning", text: m.reasoning });
         }
 
         if (hasToolCalls) {
@@ -201,6 +243,8 @@ export function useChatRuntime(sessionId: string) {
       .then((data) => {
         if (cancelled) return;
         setInitialMessages(toThreadMessages(data.messages));
+        const title = firstUserText(data.messages);
+        if (title) setSessionTitle(sessionId, title);
       })
       .catch(() => {
         if (cancelled) return;
@@ -244,13 +288,11 @@ export function useChatRuntime(sessionId: string) {
             }
             if (
               part.type === "file" &&
-              "file" in part &&
-              (part as { file: { mimeType: string } }).file.mimeType ===
-                "application/pdf"
+              (part as { mimeType?: string }).mimeType === "application/pdf"
             ) {
               return [
                 {
-                  data: (part as { file: { data: string } }).file.data,
+                  data: (part as { data: string }).data,
                   mime_type: "application/pdf",
                 },
               ];
@@ -261,26 +303,106 @@ export function useChatRuntime(sessionId: string) {
 
         if (!userText && attachments.length === 0) return;
 
+        // First message in a fresh session names it in the sidebar.
+        if (userText && !getSessionTitle(sessionId)) {
+          setSessionTitle(sessionId, userText);
+        }
+
         let currentText = "";
+        let reasoningText = "";
         const toolCalls: ContentPart[] = [];
         const toolCallIndex = new Map<string, number>();
 
-        for await (const event of sendMessage(
-          sessionId,
-          userText,
-          abortSignal,
-          attachments.length > 0 ? attachments : undefined,
+        // Tool calls the model is still generating, keyed by the provider's
+        // fragment index. The first fragment carries id + name; later ones
+        // append incremental JSON string chunks to argsText. Cleared when
+        // the committed assistant message arrives (it is authoritative).
+        const partialToolCalls = new Map<
+          number,
+          { id: string | null; name: string | null; argsText: string }
+        >();
+
+        // Render in-flight tool calls as tool-call parts with best-effort
+        // parsed args, so renderers can preview them (e.g. write_file
+        // content filling in) before the call is complete. Fragments
+        // missing their opening (id + name) can't be keyed or routed to a
+        // renderer yet, so they stay hidden until it arrives.
+        const partialParts = (): ContentPart[] =>
+          [...partialToolCalls.entries()]
+            .sort(([a], [b]) => a - b)
+            .filter(([, p]) => p.id !== null && p.name !== null)
+            .map(
+              ([, p]) =>
+                ({
+                  type: "tool-call",
+                  toolCallId: p.id!,
+                  toolName: p.name!,
+                  argsText: p.argsText,
+                  args: (parsePartialJsonObject(p.argsText) ?? {}) as never,
+                }) as ContentPart,
+            );
+
+        // Prepend the reasoning trace (when present) so it renders above the
+        // tool calls and answer, matching the order the model produced it.
+        const withReasoning = (parts: ContentPart[]): ContentPart[] =>
+          reasoningText
+            ? [
+                { type: "reasoning" as const, text: reasoningText } as ContentPart,
+                ...parts,
+              ]
+            : parts;
+
+        // Cumulative snapshot of the whole turn: committed tool calls, then
+        // in-flight ones, then the answer text (matching commit order).
+        const snapshot = (): ChatModelRunResult => ({
+          content: withReasoning([
+            ...toolCalls,
+            ...partialParts(),
+            ...(currentText
+              ? [{ type: "text" as const, text: currentText }]
+              : []),
+          ]),
+        });
+
+        for await (const event of ignoreAborts(
+          sendMessage(
+            sessionId,
+            userText,
+            abortSignal,
+            attachments.length > 0 ? attachments : undefined,
+          ),
         )) {
           switch (event.type) {
+            case "reasoning": {
+              // Thinking token — accumulate and yield a snapshot so the
+              // reasoning block fills in live above the (still empty) answer.
+              reasoningText += event.data.text;
+              yield snapshot();
+              break;
+            }
+
             case "delta": {
               // Live token — append and yield a cumulative snapshot.
               currentText += event.data.text;
-              yield {
-                content: [
-                  ...toolCalls,
-                  { type: "text" as const, text: currentText },
-                ],
-              };
+              yield snapshot();
+              break;
+            }
+
+            case "tool_call_delta": {
+              // Argument fragments of an in-flight tool call — fold them in
+              // and yield so the tool card appears (and its args fill in)
+              // while the model is still generating the call.
+              for (const tcd of event.data.tool_calls) {
+                let slot = partialToolCalls.get(tcd.index);
+                if (!slot) {
+                  slot = { id: null, name: null, argsText: "" };
+                  partialToolCalls.set(tcd.index, slot);
+                }
+                if (tcd.id) slot.id = tcd.id;
+                if (tcd.name) slot.name = tcd.name;
+                if (tcd.arguments) slot.argsText += tcd.arguments;
+              }
+              yield snapshot();
               break;
             }
 
@@ -292,6 +414,13 @@ export function useChatRuntime(sessionId: string) {
               if (msg.content) {
                 currentText = msg.content as string;
               }
+              if (msg.reasoning) {
+                reasoningText = msg.reasoning;
+              }
+
+              // The committed message carries the assembled tool calls —
+              // drop the partial mirror built from deltas.
+              partialToolCalls.clear();
 
               if (msg.tool_calls) {
                 for (const tc of msg.tool_calls) {
@@ -306,14 +435,7 @@ export function useChatRuntime(sessionId: string) {
                 }
               }
 
-              yield {
-                content: [
-                  ...toolCalls,
-                  ...(currentText
-                    ? [{ type: "text" as const, text: currentText }]
-                    : []),
-                ],
-              };
+              yield snapshot();
               break;
             }
 
@@ -329,21 +451,23 @@ export function useChatRuntime(sessionId: string) {
                 } as ContentPart;
               }
 
-              yield {
-                content: [
-                  ...toolCalls,
-                  ...(currentText
-                    ? [{ type: "text" as const, text: currentText }]
-                    : []),
-                ],
-              };
+              yield snapshot();
               break;
             }
 
             case "error": {
+              // Full traceback goes to the console for debugging; the chat
+              // shows the one-line detail.
+              console.error(
+                "Agent error:",
+                event.data.detail,
+                event.data.traceback ?? "",
+              );
               currentText += `\n\n**Error:** ${event.data.detail}`;
               yield {
-                content: [{ type: "text" as const, text: currentText }],
+                content: withReasoning([
+                  { type: "text" as const, text: currentText },
+                ]),
               };
               break;
             }

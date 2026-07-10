@@ -1,67 +1,63 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  ToolCallCard,
+  ArgsSection,
+  ResultSection,
+  type ToolStatus,
+} from "./ToolCallCard";
+
+export type { ToolStatus };
+
+const DATA_URI_IMAGE =
+  /data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+/g;
+
+/**
+ * Pull data-URI images out of a result string so they render as inline
+ * previews instead of base64 walls of text.
+ */
+function extractImages(result: unknown): { display: unknown; images: string[] } {
+  if (typeof result !== "string") return { display: result, images: [] };
+  const images = result.match(DATA_URI_IMAGE) ?? [];
+  if (images.length === 0) return { display: result, images: [] };
+  return { display: result.replace(DATA_URI_IMAGE, "[image]"), images };
+}
 
 interface ToolCallRendererProps {
   name: string;
   args: Record<string, unknown>;
   result: unknown;
-  status: "running" | "complete" | "error";
+  status: ToolStatus;
 }
 
+/**
+ * Generic fallback renderer for tools without a dedicated entry in
+ * registry.ts: pretty-printed args plus the raw result, with any embedded
+ * data-URI images shown as previews.
+ */
 export function ToolCallRenderer({
   name,
   args,
   result,
   status,
 }: ToolCallRendererProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const { display, images } = extractImages(result);
 
   return (
-    <div className="my-2 border border-[hsl(var(--claude-border))] rounded-lg overflow-hidden">
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-2 w-full px-4 py-2.5 bg-[hsl(var(--claude-hover))] hover:bg-[hsl(var(--claude-active))] transition-colors text-left"
-      >
-        {isExpanded ? (
-          <ChevronDown className="w-4 h-4 text-[hsl(var(--aui-muted-foreground))]" />
-        ) : (
-          <ChevronRight className="w-4 h-4 text-[hsl(var(--aui-muted-foreground))]" />
-        )}
-        <span className="font-mono text-sm font-medium text-[hsl(var(--aui-foreground))]">
-          {name}
-        </span>
-        {status === "running" && (
-          <span className="ml-auto text-sm text-[hsl(var(--aui-primary))] animate-pulse">
-            running...
-          </span>
-        )}
-        {status === "error" && (
-          <span className="ml-auto text-sm text-[hsl(var(--aui-destructive))]">error</span>
-        )}
-      </button>
-
-      {isExpanded && (
-        <div className="px-4 py-3 space-y-3">
-          <div>
-            <div className="text-xs font-medium text-[hsl(var(--aui-muted-foreground))] mb-1">Args</div>
-            <pre className="text-sm bg-[hsl(var(--claude-hover))] p-3 rounded-lg overflow-x-auto font-mono">
-              {JSON.stringify(args, null, 2)}
-            </pre>
-          </div>
-          {result !== undefined && (
-            <div>
-              <div className="text-xs font-medium text-[hsl(var(--aui-muted-foreground))] mb-1">
-                Result
-              </div>
-              <pre className="text-sm bg-[hsl(var(--claude-hover))] p-3 rounded-lg overflow-x-auto max-h-64 overflow-y-auto font-mono">
-                {typeof result === "string"
-                  ? result
-                  : JSON.stringify(result, null, 2)}
-              </pre>
-            </div>
-          )}
+    <ToolCallCard name={name} status={status}>
+      <ArgsSection args={args} />
+      <ResultSection result={display} status={status} />
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {images.map((src, i) => (
+            <img
+              key={i}
+              src={src}
+              alt={`tool result ${i + 1}`}
+              loading="lazy"
+              className="max-w-full max-h-64 rounded-lg border border-[hsl(var(--claude-border))]"
+            />
+          ))}
         </div>
       )}
-    </div>
+    </ToolCallCard>
   );
 }
