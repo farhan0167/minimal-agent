@@ -1,8 +1,67 @@
 # minimal_agent: User Guide
 
-This is the full reference guide to building with `minimal_agent`. For installation, backend setup, and a five-minute quickstart, see the [root README](../README.md) first — this file picks up from there and covers everything the library can do.
+This is the full reference guide to building with `minimal_agent` — everything the library can do. If you're just getting started, the [Install](#install) and [Quickstart](#quickstart) sections below get you to a working agent; the rest of the guide picks up from there.
 
 Built on top of the OpenAI SDK (works with any OpenAI-compatible API), Pydantic for schemas, and `asyncio` for concurrency.
+
+## Install
+
+Requires Python >= 3.11.
+
+```bash
+pip install mini-agent-kit
+# with the bundled web UI server:
+pip install "mini-agent-kit[server]"
+```
+
+The distribution is named `mini-agent-kit` on PyPI; the import name is `minimal_agent` (`from minimal_agent import Agent`).
+
+Set your provider and API key — either as environment variables or in a `.env` file in the working directory (see [Configuring providers](#configuring-providers)):
+
+```bash
+LLM_BACKEND=openai
+LLM_BACKEND_API_KEY=sk-...
+```
+
+## Quickstart
+
+Create a project that depends on `minimal_agent`, wire up the tools you want, and run the agent loop:
+
+```python
+# my_app.py
+from pathlib import Path
+
+from minimal_agent import Agent, App, Settings
+from minimal_agent.llm import LLM
+from minimal_agent.tools.builtin.read_file import ReadFile
+from minimal_agent.tools.builtin.run_shell import RunShell
+
+settings = Settings()
+workspace = Path.cwd()
+
+llm = LLM(
+    model=settings.LLM_MODEL,
+    backend=settings.LLM_BACKEND,
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[
+        ReadFile(workspace_root=workspace, read_timestamps={}),
+        RunShell(workspace_root=workspace),
+    ],
+    workspace_root=workspace,
+)
+
+app = App(agents=agent)          # or {"swe": swe_agent, "research": research_agent}
+
+if __name__ == "__main__":
+    app.serve()                  # → http://localhost:8000
+```
+
+That's a working agent served over HTTP with a bundled chat web UI — one process, one port, no Node required. `App` needs the server extra (`pip install "mini-agent-kit[server]"`). Run `python my_app.py` and it serves the chat UI at `/`, the JSON API under `/api`, and interactive docs at `/docs`. Responses stream over SSE, and sessions persist to disk and resume across restarts (see [Resuming a session](#resuming-a-session)).
+
+`App` subclasses `FastAPI`, so routes, middleware, `lifespan`, and `uvicorn my_app:app --reload` all work as usual. Prefer to drive the agent loop yourself instead of serving it? See [Streaming responses](#streaming-responses) for the `async for message in agent.run(...)` pattern.
 
 ## Configuring providers
 
