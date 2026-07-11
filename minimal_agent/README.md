@@ -4,6 +4,53 @@ This is the full reference guide to building with `minimal_agent`. For installat
 
 Built on top of the OpenAI SDK (works with any OpenAI-compatible API), Pydantic for schemas, and `asyncio` for concurrency.
 
+## Configuring providers
+
+The LLM facade talks to any OpenAI-compatible provider through one `Backend` enum. You pick the backend and model on the `LLM`, and supply credentials through environment variables (a `.env` file in the working directory works too — see [.env.example](.env.example)).
+
+```python
+from minimal_agent.llm import LLM
+from minimal_agent.config import Backend
+
+llm = LLM(model="gpt-4o-mini", backend=Backend.OPENAI)
+```
+
+### Environment variables
+
+Config is loaded once into `settings` ([config.py](src/minimal_agent/config.py)) via `pydantic-settings`, reading process env vars first, then `.env`. The `LLM` reads these as defaults when the corresponding constructor argument isn't passed.
+
+| Variable | Purpose |
+|---|---|
+| `LLM_BACKEND` | Which provider: `openai` (default), `openrouter`, `anthropic`, or `localhost` |
+| `LLM_BACKEND_API_KEY` | API key for the active backend |
+| `LLM_BACKEND_BASE_URL` | Override the provider's base URL. **Required** for `localhost` |
+| `LLM_MODEL` | Default model name (default `gpt-4o-mini`) |
+| `LLM_BACKEND_SITE_URL` / `LLM_BACKEND_APP_NAME` | OpenRouter leaderboard attribution — ignored by other backends |
+| `OPENAI_TIMEOUT` / `OPENAI_MAX_RETRIES` | Per-request timeout (seconds) and SDK retry count |
+
+Each backend sets a sensible default base URL — OpenRouter and Anthropic point at their OpenAI-compatible endpoints, OpenAI uses the SDK default. An explicit `LLM_BACKEND_BASE_URL` (or `base_url=` on `LLM`) always wins.
+
+**API key resolution.** Set `LLM_BACKEND_API_KEY` and it's used for whatever backend is active. If it's unset, the active backend falls back to its conventional key — `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `ANTHROPIC_API_KEY` — so existing `.env` files keep working. The `localhost` backend needs no key (it sends `not-needed`).
+
+### Per backend
+
+| Backend | Key | `LLM_MODEL` examples | Notes |
+|---|---|---|---|
+| `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` | Default backend |
+| `openrouter` | `OPENROUTER_API_KEY` | `anthropic/claude-opus-4-5`, `openai/gpt-4o-mini` | Any model on OpenRouter |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-opus-4-6`, `claude-sonnet-4-6` | Anthropic's OpenAI-compat layer silently ignores `response_format`, `seed`, and some other params |
+| `localhost` | none | whatever your server expects | For vLLM, llama.cpp, LM Studio, Ollama — you **must** set `LLM_BACKEND_BASE_URL` (e.g. `http://localhost:8000/v1`) |
+
+A minimal `.env` for, say, OpenRouter:
+
+```bash
+LLM_BACKEND=openrouter
+LLM_BACKEND_API_KEY=sk-or-...
+LLM_MODEL=anthropic/claude-opus-4-5
+```
+
+Constructor arguments override the environment — pass `api_key=`, `base_url=`, `timeout=`, or `max_retries=` to `LLM(...)` to bypass `settings` entirely, which is handy for wiring multiple providers in one process.
+
 ## Streaming responses
 
 By default `agent.run()` yields one complete `Message` per step. Pass `stream=True` to also receive incremental `StreamChunk`s as tokens arrive — useful for live-printing the assistant's reply. Each assistant turn yields its chunks first, then the committed `Message` (the one added to the conversation); tool-result steps are always plain `Message`s. Switch on the type to tell a live delta from a committed message:
@@ -390,7 +437,7 @@ The gathered content is wrapped as `<context name="packageJson">...</context>`. 
 | `Placement.RUN` | Once per `agent.run()` | Merged into that run's user message |
 | `Placement.CALL` | Before every LLM call | Trailing message, refreshed each call |
 
-Without a `placement` attribute, a source behaves exactly as before — gathered once, baked into the prompt. Declare `Placement.RUN` for state that changes between user turns (this is what the built-in `GitStatusSource` does); reserve `Placement.CALL` for state that must track the agent's own mid-run side effects — its content can never be prefix-cached, so it's re-sent on every call:
+Without a `placement` attribute, a source defaults to `Placement.SESSION` — gathered once, baked into the prompt. Declare `Placement.RUN` for state that changes between user turns (this is what the built-in `GitStatusSource` does); reserve `Placement.CALL` for state that must track the agent's own mid-run side effects — its content can never be prefix-cached, so it's re-sent on every call:
 
 ```python
 from minimal_agent.context_sources import Placement
