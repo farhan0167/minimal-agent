@@ -2,7 +2,7 @@
 
 A minimal async agent framework in Python. An agent loop drives an LLM that can call tools, with provider details abstracted behind a provider-agnostic facade.
 
-![Architecture diagram](docs/images/agent-loop.png)
+![Architecture diagram](docs/images/main.py.svg)
 
 ## Install
 
