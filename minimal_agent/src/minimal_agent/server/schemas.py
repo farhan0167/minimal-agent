@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ..llm.types import ReasoningEffort
+
 # --- Requests ---
 
 
@@ -36,6 +38,16 @@ class ChatRequest(BaseModel):
     attachments: list[AttachmentContent] | None = Field(
         default=None,
         description="Optional file attachments (images, PDFs) as base64 data URIs.",
+    )
+    reasoning: bool = Field(
+        default=True,
+        description="Whether to request a reasoning/thinking trace for this "
+        "turn. Ignored when the agent has no reasoning config.",
+    )
+    effort: ReasoningEffort | None = Field(
+        default=None,
+        description="Reasoning effort level for this turn "
+        "(none|minimal|low|medium|high|xhigh). Ignored when reasoning=false.",
     )
 
 

@@ -48,6 +48,7 @@ from .types import (
     LLMTool,
     Message,
     ReasoningConfig,
+    ReasoningEffort,
     StreamChunk,
     StructuredResponse,
     ToolCall,
@@ -73,7 +74,7 @@ class LLM:
         model: str,
         *,
         backend: Backend = Backend.OPENAI,
-        reasoning: Optional[ReasoningConfig] = None,
+        reasoning_config: Optional[ReasoningConfig] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: Optional[float] = None,
@@ -82,7 +83,7 @@ class LLM:
     ) -> None:
         self.model = model
         self.backend: Backend = backend
-        self._reasoning = reasoning
+        self._reasoning_config = reasoning_config
         client_kwargs: Dict[str, Any] = {}
         if api_key is not None:
             client_kwargs["api_key"] = api_key
@@ -135,7 +136,7 @@ class LLM:
     def raw(self) -> AsyncOpenAI:
         return self._client
 
-    def with_reasoning(self, reasoning: ReasoningConfig) -> "LLM":
+    def construct_with_reasoning(self, reasoning_config: ReasoningConfig) -> "LLM":
         """Return this client configured to request/read reasoning traces.
 
         Cheap: reuses the underlying AsyncOpenAI client rather than rebuilding
@@ -144,20 +145,21 @@ class LLM:
         clone = object.__new__(LLM)
         clone.model = self.model
         clone.backend = self.backend
-        clone._reasoning = reasoning
+        clone._reasoning_config = reasoning_config
         clone._client = self._client
         return clone
 
-    def _extract_reasoning(self, obj: Any) -> Optional[str]:
+    def _extract_reasoning(self, obj: Any, reasoning: bool = True) -> Optional[str]:
         """Read the provider's reasoning trace off an SDK message/delta.
 
         The field name is configured (reasoning_content | reasoning | ...),
-        never hardcoded. Returns None when reasoning is not configured or the
-        provider didn't emit the field on this object.
+        never hardcoded. Returns None when reasoning wasn't requested for this
+        call (`reasoning=False`), reasoning is not configured, or the provider
+        didn't emit the field on this object.
         """
-        if self._reasoning is None:
+        if not reasoning or self._reasoning_config is None:
             return None
-        return getattr(obj, self._reasoning.response_field, None) or None
+        return getattr(obj, self._reasoning_config.response_field, None) or None
 
     # ---- request building --------------------------------------------------
 
@@ -264,6 +266,8 @@ class LLM:
         top_logprobs: Optional[int],
         user: Optional[str],
         extra: Optional[Dict[str, Any]],
+        reasoning: bool = True,
+        effort: Optional[ReasoningEffort] = None,
     ) -> Dict[str, Any]:
         params: Dict[str, Any] = {
             "model": self.model,
@@ -301,15 +305,21 @@ class LLM:
             params["user"] = user
         if response_format is not None:
             params["response_format"] = response_format
-        if self._reasoning is not None and self._reasoning.request_params:
+        if reasoning and self._reasoning_config is not None:
             # Reasoning knobs go through `extra_body`, NOT as top-level kwargs.
             # The SDK only forwards keys it doesn't model when they're nested
             # under extra_body; a bare kwarg like `enable_thinking` is rejected
             # by create()'s typed signature before it reaches the wire. Native
             # keys (e.g. reasoning_effort) reach the server identically this way,
             # so one rule covers every provider — no native/extension guessing.
-            existing_body = params.get("extra_body") or {}
-            params["extra_body"] = {**existing_body, **self._reasoning.request_params}
+            body = {
+                **(params.get("extra_body") or {}),
+                **self._reasoning_config.request_params,
+            }
+            if effort is not None:
+                body[self._reasoning_config.effort_param] = effort
+            if body:
+                params["extra_body"] = body
         if extra:
             # Last-resort passthrough for anything we haven't surfaced.
             params.update(extra)
@@ -378,6 +388,8 @@ class LLM:
         top_logprobs: Optional[int] = None,
         user: Optional[str] = None,
         extra: Optional[Dict[str, Any]] = None,
+        reasoning: bool = True,
+        effort: Optional[ReasoningEffort] = None,
     ) -> GenerateResponse:
         completion = await self._client.chat.completions.create(
             **self._completion_params(
@@ -399,12 +411,14 @@ class LLM:
                 top_logprobs=top_logprobs,
                 user=user,
                 extra=extra,
+                reasoning=reasoning,
+                effort=effort,
             )
         )
         choice = completion.choices[0]
         return GenerateResponse(
             text=choice.message.content or "",
-            reasoning=self._extract_reasoning(choice.message),
+            reasoning=self._extract_reasoning(choice.message, reasoning),
             tool_calls=self._parse_tool_calls(choice.message),
             finish_reason=choice.finish_reason,
             usage=self._parse_usage(getattr(completion, "usage", None)),
@@ -429,6 +443,8 @@ class LLM:
         seed: Optional[int] = None,
         user: Optional[str] = None,
         extra: Optional[Dict[str, Any]] = None,
+        reasoning: bool = True,
+        effort: Optional[ReasoningEffort] = None,
     ) -> StructuredResponse[T]:
         """Generate a response parsed into a Pydantic model.
 
@@ -465,6 +481,8 @@ class LLM:
             top_logprobs=None,
             user=user,
             extra=extra,
+            reasoning=reasoning,
+            effort=effort,
         )
         # `parse` takes `response_format` as a Pydantic class directly and
         # handles the json_schema wrapping + client-side validation itself.
@@ -474,7 +492,7 @@ class LLM:
         message = choice.message
         return StructuredResponse[T](
             text=message.content or "",
-            reasoning=self._extract_reasoning(message),
+            reasoning=self._extract_reasoning(message, reasoning),
             parsed=getattr(message, "parsed", None),
             refusal=getattr(message, "refusal", None),
             finish_reason=choice.finish_reason,
@@ -504,6 +522,8 @@ class LLM:
         user: Optional[str] = None,
         include_usage: bool = True,
         extra: Optional[Dict[str, Any]] = None,
+        reasoning: bool = True,
+        effort: Optional[ReasoningEffort] = None,
     ) -> AsyncIterator[StreamChunk]:
         params = self._completion_params(
             messages=messages,
@@ -524,6 +544,8 @@ class LLM:
             top_logprobs=top_logprobs,
             user=user,
             extra=extra,
+            reasoning=reasoning,
+            effort=effort,
         )
         params["stream"] = True
         if include_usage:
@@ -554,7 +576,7 @@ class LLM:
                 ]
             yield StreamChunk(
                 text=delta.content or "",
-                reasoning=self._extract_reasoning(delta) or "",
+                reasoning=self._extract_reasoning(delta, reasoning) or "",
                 tool_calls=tool_call_deltas,
                 finish_reason=choice.finish_reason,
                 # OpenAI sends usage as a dedicated trailing chunk with empty

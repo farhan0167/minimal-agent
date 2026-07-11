@@ -5,7 +5,7 @@ API key in the environment or a `.env` file — see the README). Opens an API
 plus the bundled chat UI at http://localhost:8000; the UI's new-session
 dialog lets you pick between the two agents.
 
-Reasoning ("thinking") is opt-in and provider-specific. Set the three
+Reasoning ("thinking") is opt-in and provider-specific. Set the
 REASONING_* vars in your .env to match your backend and both agents will
 stream their thinking trace to the chat UI (rendered as a collapsible
 "Reasoning" block above each answer). Leave them unset for no reasoning.
@@ -51,14 +51,21 @@ def build_reasoning() -> ReasoningConfig | None:
 
     Reasoning is opt-in and provider-specific, so the request toggle and the
     response field are declared by you, the builder — not hard-coded here.
+    Whether to reason, and how hard, is decided per run (agent.run / the web
+    toolbar), so this config carries only the on-switch and the effort's SHAPE
+    — never a static effort value.
 
-      REASONING_REQUEST_KEY    the request param the provider expects
-                               (e.g. "enable_thinking", "reasoning")
-      REASONING_REQUEST_VALUE  its value; parsed as JSON so nested objects
-                               work (e.g. {"effort":"high"}), falling back to
-                               the raw string
-      REASONING_RESPONSE_FIELD the field the trace comes back on
-                               (e.g. "reasoning_content", "reasoning")
+      REASONING_REQUEST_KEY     a static on-switch request param, if the
+                                provider needs one (e.g. "enable_thinking")
+      REASONING_REQUEST_VALUE   its value; parsed as JSON (e.g. true),
+                                falling back to the raw string. Do NOT put an
+                                effort here — effort is per-run.
+      REASONING_RESPONSE_FIELD  the field the trace comes back on
+                                (e.g. "reasoning_content", "reasoning")
+      REASONING_EFFORT_PARAM    the flat request key the per-run effort level
+                                is written to. Optional; defaults to OpenAI's
+                                "reasoning_effort", which OpenRouter accepts
+                                too — set it only for a localhost dialect.
 
     Unset REASONING_RESPONSE_FIELD → reasoning off (returns None).
     """
@@ -76,13 +83,18 @@ def build_reasoning() -> ReasoningConfig | None:
             value = raw
         request_params[key] = value
 
-    return ReasoningConfig(
-        request_params=request_params,
-        response_field=response_field,
-    )
+    config_kwargs: dict = {
+        "request_params": request_params,
+        "response_field": response_field,
+    }
+    effort_param = os.environ.get("REASONING_EFFORT_PARAM")
+    if effort_param:
+        config_kwargs["effort_param"] = effort_param
+
+    return ReasoningConfig(**config_kwargs)
 
 
-reasoning = build_reasoning()
+reasoning_config = build_reasoning()
 
 
 def build_swe_agent() -> Agent:
@@ -107,7 +119,7 @@ def build_swe_agent() -> Agent:
         llm=llm,
         tools=[*tools, spawn_agents],
         workspace_root=workspace,
-        reasoning=reasoning,
+        reasoning_config=reasoning_config,
     )
 
 
@@ -124,7 +136,7 @@ def build_research_agent() -> Agent:
         llm=llm,
         tools=tools,
         workspace_root=workspace,
-        reasoning=reasoning,
+        reasoning_config=reasoning_config,
     )
 
 

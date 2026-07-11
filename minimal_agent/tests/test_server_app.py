@@ -21,10 +21,14 @@ class StubLLM:
         self.backend = "openai"
         self.text = text
 
-    async def generate(self, *, messages, tools=None, tool_choice=None):
+    async def generate(
+        self, *, messages, tools=None, tool_choice=None, reasoning=True, effort=None
+    ):
         return GenerateResponse(text=self.text, usage=self._usage())
 
-    async def stream(self, *, messages, tools=None, tool_choice=None):
+    async def stream(
+        self, *, messages, tools=None, tool_choice=None, reasoning=True, effort=None
+    ):
         mid = len(self.text) // 2
         yield StreamChunk(text=self.text[:mid])
         yield StreamChunk(text=self.text[mid:])
@@ -185,7 +189,9 @@ def test_chat_streams_and_persists(tmp_path):
 class ReasoningStubLLM(StubLLM):
     """Streams a thinking trace ahead of the answer, then commits both."""
 
-    async def stream(self, *, messages, tools=None, tool_choice=None):
+    async def stream(
+        self, *, messages, tools=None, tool_choice=None, reasoning=True, effort=None
+    ):
         yield StreamChunk(reasoning="Let me ")
         yield StreamChunk(reasoning="think.")
         mid = len(self.text) // 2
@@ -231,7 +237,9 @@ class ToolCallStubLLM(StubLLM):
     rest carry incremental JSON string chunks of the arguments.
     """
 
-    async def stream(self, *, messages, tools=None, tool_choice=None):
+    async def stream(
+        self, *, messages, tools=None, tool_choice=None, reasoning=True, effort=None
+    ):
         from minimal_agent.llm.types import ToolCallDelta
 
         # First turn: emit a tool call. Second turn (after the tool result

@@ -21,24 +21,41 @@ class Role(StrEnum):
     TOOL = "tool"
 
 
+# The neutral vocabulary of reasoning effort levels the framework knows about,
+# borrowed verbatim from OpenAI's `reasoning_effort` set. This is a library
+# artifact — a fixed enumeration of levels — not a provider contract. The value
+# passes through to the request unchanged; `ReasoningConfig.effort_param` only
+# says WHICH key in the body carries it. See per-run-reasoning-toggle.md.
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+
+
 class ReasoningConfig(BaseModel):
     """How reasoning is requested from, and read back off, a provider.
 
     Reasoning ("thinking") is non-standard across OpenAI-compatible providers,
     so the caller declares the provider's contract once at Agent-definition
-    time. See the reasoning-support.md specification for the full design.
+    time. Whether reasoning is actually requested is a per-run decision made at
+    `agent.run()` / the LLM facade — this object is only the contract for how.
+    See the per-run-reasoning-toggle.md specification for the full design.
 
-    - `request_params`: merged verbatim into the request body. This is where
-      every request-side knob goes, whether it's OpenAI's native
-      `reasoning_effort` or a provider extension like Qwen's `enable_thinking`.
-      The SDK forwards unknown keys via `extra_body`, so we don't distinguish.
+    - `request_params`: the static, NON-effort request-side knobs, merged
+      verbatim into the body — the on-switch and any always-on options
+      (Qwen's `enable_thinking: true`). Do NOT put effort here; effort is
+      per-run and lands on `effort_param`. The SDK forwards unknown keys via
+      `extra_body`, so we don't distinguish.
     - `response_field`: the (extra, non-standard) attribute the trace comes back
       on. "reasoning_content" for Qwen/DeepSeek, "reasoning" for OpenRouter.
       Read defensively with getattr — absent on providers that don't reason.
+    - `effort_param`: the flat request key the per-run effort level is written
+      to. The default is OpenAI's native `reasoning_effort`, which OpenRouter
+      also accepts as a first-class alias of `reasoning.effort` — so the named
+      backends need no override. Set it only when the server behind the
+      backend expects a different key (a LOCALHOST dialect).
     """
 
     request_params: Dict[str, Any] = Field(default_factory=dict)
     response_field: str = "reasoning_content"
+    effort_param: str = "reasoning_effort"
 
 
 class TextPart(BaseModel):

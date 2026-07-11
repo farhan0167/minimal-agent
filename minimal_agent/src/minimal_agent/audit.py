@@ -459,9 +459,7 @@ def _build_run_view(
         run_id=run_id,
         # ts_start from the run record; fall back to the run.start
         # envelope for a run that never finalized (no runs.jsonl row).
-        started_at=(
-            record["ts_start"] if record else (start["ts"] if start else None)
-        ),
+        started_at=(record["ts_start"] if record else (start["ts"] if start else None)),
         model=(
             record["model"]
             if record
@@ -589,9 +587,7 @@ def find_agent_scope(session_dir: Path, agent_id: str) -> Path | None:
             if not child_dir.is_dir():
                 continue
             meta_path = child_dir / "agent.json"
-            meta = (
-                json.loads(meta_path.read_text()) if meta_path.exists() else {}
-            )
+            meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
             if meta.get("agent_id") == agent_id:
                 return child_dir
             stack.append(child_dir)  # search this agent's own sub-agents

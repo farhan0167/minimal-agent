@@ -218,9 +218,7 @@ async def get_run_route(
     return _one_run(_session_dir(manager, session_id), run_id)
 
 
-@router.get(
-    "/{session_id}/agents/{agent_id}/runs", response_model=AgentRunListResponse
-)
+@router.get("/{session_id}/agents/{agent_id}/runs", response_model=AgentRunListResponse)
 async def list_agent_runs_route(
     session_id: str,
     agent_id: str,

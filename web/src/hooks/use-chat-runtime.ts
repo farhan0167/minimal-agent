@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MutableRefObject } from "react";
 import {
   useLocalRuntime,
   SimpleImageAttachmentAdapter,
@@ -14,7 +14,7 @@ import type {
 } from "@assistant-ui/react";
 import { parsePartialJsonObject } from "assistant-stream/utils";
 import { sendMessage, getMessages } from "../api/chat";
-import type { FileAttachment } from "../api/chat";
+import type { FileAttachment, ReasoningEffort } from "../api/chat";
 import type { Message } from "../types/message";
 import { isAbortError } from "../lib/abort";
 import { getSessionTitle, setSessionTitle } from "../lib/session-titles";
@@ -222,13 +222,25 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
   return result;
 }
 
+/** The per-turn reasoning knobs the composer controls own. `effort`
+ *  undefined means "provider default" — nothing is sent for it. */
+export type ReasoningState = { on: boolean; effort?: ReasoningEffort };
+
 /**
  * Build a LocalRuntime wired to our FastAPI SSE backend.
  *
  * Loads existing message history on mount via initialMessages.
  * Each yield must contain the FULL cumulative content, not deltas.
+ *
+ * `reasoningRef` carries the live Thinking on/off + effort selection. It's a
+ * ref, not a prop, so toggling reasoning doesn't rebuild the memoized adapter
+ * (and thus the runtime) mid-conversation — the adapter reads `.current` at
+ * send time.
  */
-export function useChatRuntime(sessionId: string) {
+export function useChatRuntime(
+  sessionId: string,
+  reasoningRef: MutableRefObject<ReasoningState>,
+) {
   const [initialMessages, setInitialMessages] = useState<
     readonly ThreadMessageLike[]
   >([]);
@@ -364,12 +376,16 @@ export function useChatRuntime(sessionId: string) {
           ]),
         });
 
+        const { on: reasoningOn, effort } = reasoningRef.current;
+
         for await (const event of ignoreAborts(
           sendMessage(
             sessionId,
             userText,
             abortSignal,
             attachments.length > 0 ? attachments : undefined,
+            reasoningOn,
+            reasoningOn ? effort : undefined,
           ),
         )) {
           switch (event.type) {
@@ -478,7 +494,7 @@ export function useChatRuntime(sessionId: string) {
         }
       },
     }),
-    [sessionId],
+    [sessionId, reasoningRef],
   );
 
   const runtime = useLocalRuntime(adapter, {

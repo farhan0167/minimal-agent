@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { Thread, makeMarkdownText } from "@assistant-ui/react-ui";
 import remarkGfm from "remark-gfm";
 import { useChatRuntime } from "../../hooks/use-chat-runtime";
+import type { ReasoningState } from "../../hooks/use-chat-runtime";
+import { ReasoningControls } from "./ReasoningControls";
 import { getTools } from "../../api/tools";
 import { buildToolUIs } from "../tools";
 import { ShikiSyntaxHighlighter } from "./ShikiHighlighter";
@@ -36,7 +38,18 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ sessionId, agent }: ChatPanelProps) {
-  const { runtime, isLoaded } = useChatRuntime(sessionId);
+  // Per-turn reasoning knobs. Held in state (to drive the controls) and
+  // mirrored to a ref the runtime adapter reads at send time — the ref keeps
+  // the memoized adapter stable across toggles (no runtime rebuild).
+  // effort starts undefined ("Default"): nothing is sent for it until the
+  // user picks a level, so the provider's default effort stays in charge.
+  const [reasoning, setReasoning] = useState<ReasoningState>({ on: true });
+  const reasoningRef = useRef(reasoning);
+  useEffect(() => {
+    reasoningRef.current = reasoning;
+  }, [reasoning]);
+
+  const { runtime, isLoaded } = useChatRuntime(sessionId, reasoningRef);
   const [toolUIs, setToolUIs] = useState<ReturnType<typeof buildToolUIs>>([]);
 
   useEffect(() => {
@@ -59,7 +72,15 @@ export function ChatPanel({ sessionId, agent }: ChatPanelProps) {
         <ToolUI key={i} />
       ))}
 
-      <Thread components={{ AssistantMessage }} />
+      {/* Flex column so the toolbar takes its natural height and the Thread
+          (h-full internally) flexes to fill the rest — otherwise the Thread's
+          bottom composer would overflow under the parent's overflow-hidden. */}
+      <div className="flex flex-col h-full min-h-0">
+        <ReasoningControls value={reasoning} onChange={setReasoning} />
+        <div className="flex-1 min-h-0">
+          <Thread components={{ AssistantMessage }} />
+        </div>
+      </div>
     </AssistantRuntimeProvider>
   );
 }
