@@ -1,8 +1,9 @@
 # Minimal Agent
 
-A minimal async agent framework in Python. An agent loop drives an LLM that can call tools, with provider details abstracted behind a provider-agnostic facade.
-
 ![Architecture diagram](docs/images/cover.png)
+
+A minimal toolkit for building your own agent harness in Python — tools, skills, sub-agents, and observability on top of any OpenAI-compatible backend (OpenAI, Anthropic, OpenRouter, or a local server).
+
 
 ## Install
 
@@ -37,36 +38,11 @@ cp .env.example .env
 | OpenRouter | `openrouter` | Any model on OpenRouter |
 | Local server | `localhost` | vLLM, llama.cpp, LM Studio, Ollama — set `LLM_BACKEND_BASE_URL` |
 
-## Build your own agent
+## Quickstart
 
 `minimal_agent` is an installable library. You create a new project that depends on it, wire up the tools you want, and run it however you like.
 
-### 1. Create a new project
-
-```
-my_project/
-  main.py
-  pyproject.toml
-```
-
-In `pyproject.toml`, add `minimal_agent` as a dependency (path reference to the local package):
-
-```toml
-[project]
-name = "my-project"
-requires-python = ">=3.11"
-dependencies = [
-    "minimal-agent",
-]
-
-[tool.uv.sources]
-minimal-agent = { path = "../minimal_agent" }
-```
-
-### 2. Set up the LLM and agent
-
 ```python
-# main.py
 import asyncio
 from pathlib import Path
 
@@ -94,14 +70,9 @@ agent = Agent(
 
 
 async def main():
-    # The agent builds the system prompt and stamps its identity
-    # (model, backend, workspace) onto the session.
     session = await agent.create_session()
-
-    # Add a user message
     session.context.add(Message(role=Role.USER, content="List the files in this directory"))
 
-    # Run the agent loop
     async for message in agent.run(session.context):
         if message.role == Role.ASSISTANT and message.content:
             print(message.content)
@@ -109,281 +80,26 @@ async def main():
 asyncio.run(main())
 ```
 
-That's a working agent. It reads the user message, calls the LLM, uses tools if needed, and prints the response.
+That's a working agent. It reads the user message, calls the LLM, uses tools if needed, and prints the response. Sessions are persisted to disk automatically and can be resumed with `agent.load_session(session_id)`.
 
-Sessions are persisted to disk. To resume one later, use `session = await agent.load_session(session_id)` — the agent rebuilds the system prompt fresh and validates that the session's model, backend, and workspace match its own.
+For the full guide to building your own agent — custom tools, prompts, context sources, reasoning, skills, sub-agents, and the observability model — see **[minimal_agent/README.md](minimal_agent/README.md)**.
 
-By default sessions live under `.minimal_agent/sessions/`. Where they live — and how they're recorded — is a `SessionManager`, which you only construct when you want a different policy:
+## What you get
 
-```python
-from minimal_agent import SessionManager
-
-agent = Agent(
-    llm=llm,
-    tools=[...],
-    workspace_root=workspace,
-    sessions=SessionManager(base_dir=Path("/var/lib/myapp/sessions")),
-)
-
-sessions = agent.sessions.list_sessions()   # most recent first
-```
-
-The agent supplies identity (prompt, model, tools); the manager supplies storage. Token usage is accounted automatically — every LLM call's usage lands in `session.json` without any wiring on your side.
-
-### 3. Add your own tools
-
-Create a tool by subclassing `BaseTool`. A tool needs three things: a name, a Pydantic input schema, and an `invoke` method.
-
-```python
-from pydantic import BaseModel, Field
-from minimal_agent.tools.base import BaseTool
-from minimal_agent.tools.context import ToolContext
-
-
-class LookupInput(BaseModel):
-    """Look up a customer by email."""
-    email: str = Field(..., description="Customer email address")
-
-
-class LookupCustomer(BaseTool[LookupInput, str]):
-    name = "lookup_customer"
-    input_schema = LookupInput
-
-    def __init__(self, db):
-        self._db = db
-
-    async def invoke(self, args: LookupInput, ctx: ToolContext) -> str:
-        customer = await self._db.find_by_email(args.email)
-        if not customer:
-            return "No customer found"
-        return f"Found: {customer.name} (id={customer.id})"
-```
-
-Then pass it to your agent:
-
-```python
-agent = Agent(
-    llm=llm,
-    tools=[
-        LookupCustomer(db=my_database),
-        ReadFile(workspace_root=workspace),
-    ],
-)
-```
-
-The model sees the tool's name, the docstring on the input schema (as the tool description), and the field descriptions. That's all it needs to decide when and how to call it.
-
-### Optional hooks
-
-Override these methods on `BaseTool` for more control:
-
-- **`needs_permission(args)`** — Return `True` to require user confirmation before execution. Use for destructive operations.
-- **`validate(args)`** — Semantic validation beyond what Pydantic checks (e.g., "file must exist"). Return `ValidationOk()` or `ValidationErr("reason")`.
-- **`render_result_for_assistant(result)`** — Customize what the model sees after the tool runs. Default is `str(result)`.
-
-### 4. Custom system prompts
-
-By default, the agent uses a built-in software engineering prompt. Pass your own:
-
-```python
-agent = Agent(
-    llm=llm,
-    tools=[...],
-    prompt="You are a customer support agent. Be helpful and concise.",
-)
-```
-
-Or point to a markdown file:
-
-```python
-agent = Agent(
-    llm=llm,
-    tools=[...],
-    prompt=Path("prompts/support_agent.md"),
-)
-```
-
-### 5. Context sources
-
-Context sources gather dynamic information about the environment (git status, directory trees, or anything you define) and inject it into what the model sees. Implement the `ContextSource` protocol — any object with a `name` and an async `gather()`:
-
-```python
-class DatabaseSchemaSource:
-    name = "db_schema"
-
-    async def gather(self, workspace_root) -> str:
-        # Return whatever context you want injected
-        return "Tables: users, orders, products ..."
-
-agent = Agent(
-    llm=llm,
-    tools=[...],
-    prompt="You are a database assistant.",
-    context_sources=[DatabaseSchemaSource()],
-    workspace_root=workspace,
-)
-```
-
-An optional class-level `placement` (from `minimal_agent.context_sources`) declares when a source is gathered and where its output lands:
-
-| `placement` | Gathered | Lands |
-|---|---|---|
-| `Placement.SESSION` (default) | Once, at session creation | System prompt, labeled as a snapshot |
-| `Placement.RUN` | Once per `agent.run()` | Merged into that run's user message |
-| `Placement.CALL` | Before every LLM call | Trailing message, refreshed each call |
-
-Use `SESSION` for stable facts, and `RUN` for volatile state that changes between user turns — the built-in `GitStatusSource` is RUN-placed, so the model sees the working tree as of the current turn, not session start. Reserve `CALL` for state that must track the agent's own mid-run side effects; its content is re-sent (uncached) on every call. RUN/CALL content is never written to the transcript, and it reaches the conversation only for sessions created through `agent.create_session()` / `agent.load_session()`.
-
-### 6. Reasoning
-
-To turn on a model's reasoning ("thinking"), give the agent a `ReasoningConfig`. Providers differ on how you enable reasoning and what field the trace comes back on, so you supply both:
-
-```python
-from minimal_agent.llm import ReasoningConfig
-
-agent = Agent(
-    llm=llm,
-    tools=[...],
-    reasoning=ReasoningConfig(
-        request_params={"reasoning_effort": "high"},  # how to turn thinking on
-        response_field="reasoning",                   # where the trace comes back
-    ),
-)
-```
-
-The reasoning trace then rides on each assistant message as `message.reasoning` (and on streamed chunks as `chunk.reasoning`, arriving before the answer):
-
-```python
-async for message in agent.run(session.context):
-    if message.role == Role.ASSISTANT:
-        if message.reasoning:
-            print("thinking:", message.reasoning)
-        print("answer:", message.content)
-```
-
-Settings for common providers:
-
-| Provider | `request_params` | `response_field` |
-|---|---|---|
-| OpenAI reasoning models (o-series, gpt-5.x) | `{"reasoning_effort": "high"}` | `"reasoning"` |
-| OpenRouter | `{"reasoning": {"effort": "high"}}` | `"reasoning"` |
-| Qwen (DashScope) | `{"enable_thinking": True}` | `"reasoning_content"` |
-| Local llama.cpp | `{}` — many models think by default | `"reasoning_content"` |
-
-If `message.reasoning` comes back empty, the `response_field` usually doesn't match what your provider returns — try `reasoning_content` instead of `reasoning`, or vice versa.
-
-### Built-in tools
-
-`read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell`, `spawn_agents`, `web_search`, `web_extract`, `get_weather` (stub)
-
-### Skills
-
-Skills are reusable prompt templates stored as markdown files. Drop a `SKILL.md` at `.minimal_agent/skills/<name>/SKILL.md` (project-level) or `~/.minimal_agent/skills/<name>/SKILL.md` (user-level), and the agent sees it in its skill list. When the model decides a skill is relevant, it loads the full instructions on demand via the built-in `skill` tool — cheap metadata always, expensive prompt only when needed.
-
-Skills are auto-discovered when you pass `workspace_root` to the `Agent`. Format follows the official [Agent Skills Specification](https://agentskills.io/specification). See [minimal_agent/README.md](minimal_agent/README.md#5-write-a-skill) for authoring details.
-
-### Observability
-
-Sessions record what happens as they run — no wiring needed. Everything that happens in a session, including every sub-agent, lands in one directory tree:
-
-```
-.minimal_agent/sessions/<session-id>/
-├── session.json     # identity, aggregate usage (sub-agents included)
-├── messages.jsonl   # the conversation
-├── events.jsonl     # the timeline: one timestamped event per line
-├── calls.jsonl      # one provenance record per LLM call
-├── blobs/           # content-addressed system prompts and tool schemas,
-│                    # shared by every agent in the session
-└── agents/          # one directory per nested agent
-    └── a-3f9c21ab/
-        ├── agent.json       # who spawned it, task, status, usage, model
-        ├── messages.jsonl   # the sub-agent's full transcript
-        ├── events.jsonl     # its own timeline
-        └── calls.jsonl      # its own call audit
-```
-
-`events.jsonl` answers *"what happened, when?"* — a run started, a call took 2.7s and used 876 tokens, a tool was denied after 8 seconds of deliberation, a sub-agent was spawned and completed. `calls.jsonl` + `blobs/` answer *"what exactly did the model see?"* — every call's full input (system prompt, projected messages, injected live blocks, tool schemas) is reconstructible, byte-exactly, from the session directory alone. Both guarantees hold for every agent in the tree: a sub-agent's record is the same shape as the main agent's, just one directory down.
-
-### Sub-agents are recorded too
-
-When the built-in `spawn_agents` tool runs sub-agents, each one gets its own recorded home under `agents/` automatically. The parent's timeline gains `agent.spawn` / `agent.end` events (with status and token usage), the child's `agent.json` points back at the exact tool call that spawned it, and the sub-agent's token usage rolls up into the session's `session.json`.
-
-If you write a custom tool that runs its own agent, you get the same recording with one `with` block — ask the tool's scope for a child:
-
-```python
-class DeepResearch(BaseTool[ResearchInput, str]):
-    name = "deep_research"
-
-    async def invoke(self, args: ResearchInput, ctx: ToolContext) -> str:
-        researcher = Agent(llm=self._llm, tools=self._tools, prompt=RESEARCH_PROMPT)
-
-        with ctx.scope.child(
-            spawned_by=self.name, task=args.question, tool_call_id=ctx.tool_call_id
-        ) as scope:
-            context = scope.new_context(
-                system_prompt=await researcher.build_system_prompt(self._root)
-            )
-            context.add(Message(role=Role.USER, content=args.question))
-
-            answer = ""
-            async for msg in researcher.run(context):
-                if msg.role == Role.ASSISTANT and msg.content:
-                    answer = msg.content
-        return answer
-```
-
-No sessions, directories, or wiring in sight — the child scope allocates its directory under the session, records the whole nested run, and closes with a truthful status (`completed` / `error` / `abandoned`) even if the sub-agent crashes. In a unit test (no session), the same code runs unrecorded.
-
-Read it back with the audit API:
-
-```python
-from minimal_agent import (
-    find_agent_scope,
-    reconstruct_call,
-    run_summaries,
-    single_run,
-)
-
-# The cheap index: one summary row per run (id, model, status, calls) —
-# reads runs.jsonl, reconstructs nothing. Pick the run you want, then
-# drill in.
-for s in run_summaries(session.session_dir):
-    print(s.run_id, s.status, f"{s.calls} calls")
-
-# One run, fully expanded — its calls, each carrying its full input,
-# response, latency, usage, tool executions, and any sub-agents it
-# spawned. Returns None for an unknown run_id.
-run = single_run(session.session_dir, "r-4c7d01ab")
-for call in run.calls:
-    print(f"  {call.call_id}: {call.latency_ms}ms, "
-          f"{len(call.input.messages)} input messages")
-    for agent in call.spawned_agents:
-        print(f"    spawned {agent.agent_id}: {agent.task} → {agent.status}")
-
-# A spawned sub-agent records the same kit under its own scope. Resolve it
-# by id (at any nesting depth) and the same readers apply, one level down.
-scope = find_agent_scope(session.session_dir, "a-1434198a")
-for s in run_summaries(scope):
-    sub_run = single_run(scope, s.run_id)
-
-# Or one call's exact input, verified against its recorded hash. Works
-# on the session root and on any agents/<id>/ directory alike.
-call = reconstruct_call(session.session_dir, "r-4c7d01ab:c1")
-assert call.verified
-call.messages   # exactly what the model saw, in order
-```
-
-Recording is fire-and-forget — it can never fail or slow a run — and a bare in-memory `Context()` records nothing. Because system prompts and tool schemas are content-addressed, *"the agent behaves differently since yesterday"* is answered by diffing two blobs.
+- **Tools** — subclass `BaseTool` with a Pydantic input schema and an `invoke()` method. Built-in: `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell`, `spawn_agents`, `web_search`, `web_extract`, `get_weather` (stub). See [Tools](minimal_agent/README.md#tools).
+- **Context sources** — inject dynamic environment info (git status, directory trees, your own) into what the model sees, with control over when it's gathered and how fresh it stays. See [Context sources](minimal_agent/README.md#4-write-a-custom-context-source).
+- **Reasoning** — turn on a model's "thinking" via `ReasoningConfig`; the trace rides on `message.reasoning`. See [Reasoning](minimal_agent/README.md#reasoning).
+- **Skills** — reusable prompt templates loaded on demand from `.minimal_agent/skills/`, following the [Agent Skills Specification](https://agentskills.io/specification). See [Skills](minimal_agent/README.md#5-write-a-skill).
+- **Sub-agents** — the built-in `spawn_agents` tool fans work out to concurrent sub-agents, each fully recorded under the parent session. See [Spawning sub-agents](minimal_agent/README.md#spawning-sub-agents).
+- **Observability** — every session records its transcript, timeline, and a byte-exact audit of every LLM call to disk, with no wiring required — sub-agents included. See [Observability](minimal_agent/README.md#observability).
 
 ## Serve it in the browser
 
-Any agent you build can be served over HTTP with a bundled chat web UI — one process, one port, no Node required. Install the server extra:
+Any agent you build can be served over HTTP with a bundled chat web UI — one process, one port, no Node required.
 
 ```bash
 pip install "mini-agent-kit[server]"
 ```
-
-Then hand your agent to an `App`:
 
 ```python
 # my_app.py
@@ -395,9 +111,7 @@ if __name__ == "__main__":
     app.serve()                  # → http://localhost:8000
 ```
 
-`python my_app.py` serves the chat UI at `/`, the JSON API under `/api`, and interactive docs at `/docs`. Responses stream over SSE, sessions persist to disk and resume across restarts, and with multiple agents registered the UI's new-session dialog lets you pick one.
-
-`App` subclasses `FastAPI`, so routes, middleware, `lifespan`, and `uvicorn my_app:app --reload` all work as usual. The API also exposes each session's observability artifacts: `GET /api/sessions/{id}/events` (the timeline), `/api/sessions/{id}/calls` (raw audit records), `/api/sessions/{id}/calls/{call_id}` (byte-exact input reconstruction), and `/api/sessions/{id}/runs` (every model input and output, by run and call, in one response).
+`python my_app.py` serves the chat UI at `/`, the JSON API under `/api`, and interactive docs at `/docs`. Responses stream over SSE, sessions persist to disk and resume across restarts, and with multiple agents registered the UI's new-session dialog lets you pick one. `App` subclasses `FastAPI`, so routes, middleware, `lifespan`, and `uvicorn my_app:app --reload` all work as usual.
 
 A ready-to-run two-agent example lives in [example/my_app.py](example/my_app.py) — see [example/README.md](example/README.md). The UI's source is in [web/](web/); from a source checkout, build it once into the package with `make ui` (needs Node), or hack on it live with `npm run dev` against a running `App`.
 

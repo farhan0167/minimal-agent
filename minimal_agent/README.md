@@ -1,80 +1,10 @@
-# minimal-agent
+# minimal_agent: User Guide
 
-A minimal async agent framework in Python. An agent loop drives an LLM that can call tools — you define the prompt, pick the tools, and let the loop handle the rest.
+This is the full reference guide to building with `minimal_agent`. For installation, backend setup, and a five-minute quickstart, see the [root README](../README.md) first — this file picks up from there and covers everything the library can do.
 
 Built on top of the OpenAI SDK (works with any OpenAI-compatible API), Pydantic for schemas, and `asyncio` for concurrency.
 
-## Setup
-
-**Requirements:** Python >= 3.11, [uv](https://docs.astral.sh/uv/) for dependency management.
-
-```bash
-# Install dependencies
-uv sync
-
-# Copy the example env file and add your API key
-cp .env.example .env
-# Edit .env → set LLM_BACKEND_API_KEY=sk-...
-```
-
-The framework supports multiple LLM backends out of the box: `openai`, `openrouter`, `anthropic`, and `localhost` (for local servers like vLLM, Ollama, LM Studio). Set `LLM_BACKEND` and `LLM_MODEL` in your `.env` file.
-
-## Quickstart
-
-The framework ships with a built-in software engineering agent. Out of the box it can read and write files, search codebases, and run shell commands.
-
-```python
-import asyncio
-from pathlib import Path
-
-from minimal_agent import Agent
-from minimal_agent.config import settings
-from minimal_agent.llm import LLM, Message, Role
-from minimal_agent.tools.builtin.glob import Glob
-from minimal_agent.tools.builtin.grep import Grep
-from minimal_agent.tools.builtin.read_file import ReadFile
-from minimal_agent.tools.builtin.run_shell import RunShell
-from minimal_agent.tools.builtin.write_file import WriteFile
-
-
-async def main():
-    llm = LLM(
-        model=settings.LLM_MODEL,
-        backend=settings.LLM_BACKEND,
-    )
-
-    workspace = Path.cwd()
-    read_timestamps: dict[str, float] = {}
-
-    agent = Agent(
-        llm=llm,
-        tools=[
-            ReadFile(workspace_root=workspace, read_timestamps=read_timestamps),
-            WriteFile(workspace_root=workspace, read_timestamps=read_timestamps),
-            RunShell(workspace_root=workspace),
-            Grep(workspace_root=workspace),
-            Glob(workspace_root=workspace),
-        ],
-        workspace_root=workspace,
-    )
-
-    # Start a new conversation. The agent builds the system prompt and
-    # stamps its identity (model, backend, workspace) onto the session.
-    session = await agent.create_session()
-
-    # Send a message and consume the agent's responses
-    session.context.add(Message(role=Role.USER, content="What files are in this project?"))
-
-    async for msg in agent.run(session.context):
-        if msg.role == Role.ASSISTANT and msg.content:
-            print(msg.content)
-
-asyncio.run(main())
-```
-
-The agent decides which tools to call, calls them, reads the results, and keeps going until it has an answer. You don't need to manage the loop yourself.
-
-### Streaming responses
+## Streaming responses
 
 By default `agent.run()` yields one complete `Message` per step. Pass `stream=True` to also receive incremental `StreamChunk`s as tokens arrive — useful for live-printing the assistant's reply. Each assistant turn yields its chunks first, then the committed `Message` (the one added to the conversation); tool-result steps are always plain `Message`s. Switch on the type to tell a live delta from a committed message:
 
@@ -212,6 +142,107 @@ async def invoke(self, args, ctx: ToolContext) -> str:
 ```
 
 The child scope allocates its directory, records the nested run end to end, and closes with a truthful status (`completed` / `error` / `abandoned`) even if the body raises. Under a bare `ToolContext()` (unit tests), the same code runs unrecorded.
+
+### Reasoning
+
+To turn on a model's reasoning ("thinking"), give the agent a `ReasoningConfig`. Providers differ on how you enable reasoning and what field the trace comes back on, so you supply both:
+
+```python
+from minimal_agent.llm import ReasoningConfig
+
+agent = Agent(
+    llm=llm,
+    tools=[...],
+    reasoning=ReasoningConfig(
+        request_params={"reasoning_effort": "high"},  # how to turn thinking on
+        response_field="reasoning",                   # where the trace comes back
+    ),
+)
+```
+
+The reasoning trace then rides on each assistant message as `message.reasoning` (and on streamed chunks as `chunk.reasoning`, arriving before the answer):
+
+```python
+async for message in agent.run(session.context):
+    if message.role == Role.ASSISTANT:
+        if message.reasoning:
+            print("thinking:", message.reasoning)
+        print("answer:", message.content)
+```
+
+Settings for common providers:
+
+| Provider | `request_params` | `response_field` |
+|---|---|---|
+| OpenAI reasoning models (o-series, gpt-5.x) | `{"reasoning_effort": "high"}` | `"reasoning"` |
+| OpenRouter | `{"reasoning_effort": "high"}` | `"reasoning"` |
+| Qwen (DashScope) | `{"enable_thinking": True}` | `"reasoning_content"` |
+| Local llama.cpp | `{}` — many models think by default | `"reasoning_content"` |
+
+If `message.reasoning` comes back empty, the `response_field` usually doesn't match what your provider returns — try `reasoning_content` instead of `reasoning`, or vice versa.
+
+### Observability
+
+Sessions record what happens as they run — no wiring needed. Everything that happens in a session, including every sub-agent, lands in one directory tree:
+
+```
+.minimal_agent/sessions/<session-id>/
+├── session.json     # identity, aggregate usage (sub-agents included)
+├── messages.jsonl   # the conversation
+├── events.jsonl     # the timeline: one timestamped event per line
+├── calls.jsonl      # one provenance record per LLM call
+├── blobs/           # content-addressed system prompts and tool schemas,
+│                    # shared by every agent in the session
+└── agents/          # one directory per nested agent
+    └── a-3f9c21ab/
+        ├── agent.json       # who spawned it, task, status, usage, model
+        ├── messages.jsonl   # the sub-agent's full transcript
+        ├── events.jsonl     # its own timeline
+        └── calls.jsonl      # its own call audit
+```
+
+`events.jsonl` answers *"what happened, when?"* — a run started, a call took 2.7s and used 876 tokens, a tool was denied after 8 seconds of deliberation, a sub-agent was spawned and completed. `calls.jsonl` + `blobs/` answer *"what exactly did the model see?"* — every call's full input (system prompt, projected messages, injected live blocks, tool schemas) is reconstructible, byte-exactly, from the session directory alone. Both guarantees hold for every agent in the tree: a sub-agent's record is the same shape as the main agent's, just one directory down.
+
+Read it back with the audit API:
+
+```python
+from minimal_agent import (
+    find_agent_scope,
+    reconstruct_call,
+    run_summaries,
+    single_run,
+)
+
+# The cheap index: one summary row per run (id, model, status, calls) —
+# reads runs.jsonl, reconstructs nothing. Pick the run you want, then
+# drill in.
+for s in run_summaries(session.session_dir):
+    print(s.run_id, s.status, f"{s.calls} calls")
+
+# One run, fully expanded — its calls, each carrying its full input,
+# response, latency, usage, tool executions, and any sub-agents it
+# spawned. Returns None for an unknown run_id.
+run = single_run(session.session_dir, "r-4c7d01ab")
+for call in run.calls:
+    print(f"  {call.call_id}: {call.latency_ms}ms, "
+          f"{len(call.input.messages)} input messages")
+    for agent in call.spawned_agents:
+        print(f"    spawned {agent.agent_id}: {agent.task} → {agent.status}")
+
+# A spawned sub-agent records the same kit under its own scope. Resolve it
+# by id (at any nesting depth) and the same readers apply, one level down.
+scope = find_agent_scope(session.session_dir, "a-1434198a")
+for s in run_summaries(scope):
+    sub_run = single_run(scope, s.run_id)
+
+# Or one call's exact input, verified against its recorded hash. Works
+# on the session root and on any agents/<id>/ directory alike.
+call = reconstruct_call(session.session_dir, "r-4c7d01ab:c1")
+assert call.verified
+call.messages   # exactly what the model saw, in order
+```
+
+Recording is fire-and-forget — it can never fail or slow a run — and a bare in-memory `Context()` records nothing. Because system prompts and tool schemas are content-addressed, *"the agent behaves differently since yesterday"* is answered by diffing two blobs.
 
 ### System Prompt
 
