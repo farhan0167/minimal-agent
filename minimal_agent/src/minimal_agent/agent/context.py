@@ -1,13 +1,15 @@
-"""Context — composes a MessageStore with a system prompt and projection strategy.
+"""Context — composes a MessageStore with a behavior prompt and projection strategy.
 
 The Agent interacts with the conversation exclusively through this class.
 Storage is append-only; projection is where shaping lives.
 
-Context is also the single assembly point for what the LLM sees each call:
-`assemble()` returns `get_messages()` plus content gathered from live
-(RUN/CALL-placed) context sources, injected per the merge rule below.
-Injected content is never persisted — the store only ever holds real
-conversation.
+Context is the single assembly point for what the LLM sees, across all
+three gathering cadences: SESSION sources gather once at the first
+`assemble()` (cached for the context's lifetime, rendered into the system
+message together with the static behavior prompt), while live (RUN/CALL-
+placed) sources are injected into the message list per the merge rule
+below. Injected content is never persisted — the store only ever holds
+real conversation.
 """
 
 import logging
@@ -16,6 +18,7 @@ from pathlib import Path
 from ..context_sources import (
     ContextSource,
     Placement,
+    build_context_blocks,
     source_placement,
     source_tag,
 )
@@ -27,11 +30,25 @@ from ..events import (
     hash_messages,
 )
 from ..llm.types import Message, Role, TextPart
-from ..system_prompt.builder import build_context_blocks
 from .message_store import MessageStore
 from .scope import NullScope, Scope
 
 logger = logging.getLogger(__name__)
+
+# Prompt-baked context blocks are gathered once, at the context's first
+# use — the preamble says so, so the model re-checks state instead of
+# trusting a stale snapshot.
+SNAPSHOT_PREAMBLE = (
+    "As you answer the user's questions, "
+    "you can use the following context.\n"
+    "Note: these blocks are a snapshot taken at first use and do not\n"
+    "update — use your tools to check current state when it matters:"
+)
+
+# Sentinel distinguishing "SESSION sources not gathered yet" from
+# "gathered, nothing to contribute" (None is a valid gathered result).
+_UNGATHERED = object()
+
 
 # Framing appended after injected blocks so the model knows the harness —
 # not the user — put them there, and that they beat any prompt snapshots.
@@ -84,9 +101,9 @@ class Context:
     def __init__(
         self,
         *,
-        system_prompt: str | None = None,
+        behavior_prompt: str | None = None,
         scope: Scope | None = None,
-        live_sources: list[ContextSource] | None = None,
+        context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
     ) -> None:
         # The scope supplies both storage and the event seam. A bare
@@ -94,13 +111,19 @@ class Context:
         # byte-identical behavior, nothing recorded.
         self._scope: Scope = scope if scope is not None else NullScope()
         self._store = self._scope.store
-        self._system_prompt = system_prompt
+        self._behavior_prompt = behavior_prompt
         self._workspace_root = workspace_root
-        sources = list(live_sources) if live_sources else []
+        sources = list(context_sources) if context_sources else []
+        self._session_sources = [
+            s for s in sources if source_placement(s) is Placement.SESSION
+        ]
         self._run_sources = [s for s in sources if source_placement(s) is Placement.RUN]
         self._call_sources = [
             s for s in sources if source_placement(s) is Placement.CALL
         ]
+        # Cached SESSION blocks — the snapshot, taken at the first
+        # ensure_session_gathered() and immutable thereafter.
+        self._session_blocks: object = _UNGATHERED
         # Cached RUN blocks for the current run. The (blocks, gathered)
         # pair distinguishes "not gathered yet" from "gathered, nothing
         # to inject".
@@ -123,11 +146,16 @@ class Context:
 
     @property
     def system_prompt(self) -> str | None:
-        """The stable system-prompt layer (behavior prompt + SESSION context),
-        constant for the run's lifetime. The Agent reads this to stamp it onto
-        run.start as a run-level fact; the volatile layer (live injected
-        blocks) is recorded separately as injected_run / injected_call."""
-        return self._system_prompt
+        """The stable system-prompt layer (behavior prompt + SESSION blocks),
+        rendered from the cache. Its value changes exactly once — at the
+        first ensure_session_gathered(); before that it is the behavior
+        prompt alone. The Agent reads this to stamp it onto run.start as a
+        run-level fact (after awaiting the ensure, so the event is
+        truthful); the volatile layer (live injected blocks) is recorded
+        separately as injected_run / injected_call."""
+        blocks = None if self._session_blocks is _UNGATHERED else self._session_blocks
+        parts = [p for p in (self._behavior_prompt, blocks) if p is not None]
+        return "\n\n".join(parts) if parts else None
 
     @property
     def events(self) -> EventEmitter:
@@ -143,11 +171,14 @@ class Context:
 
         The default projection returns all stored messages unmodified.
         Sync and pure — no I/O, no gathering, no injected blocks — so
-        UIs, tests, and debuggers can call it at any frequency.
+        UIs, tests, and debuggers can call it at any frequency. The
+        system message renders from the SESSION cache: before the first
+        gather it carries the behavior prompt alone.
         """
         msgs: list[Message] = []
-        if self._system_prompt is not None:
-            msgs.append(Message(role=Role.SYSTEM, content=self._system_prompt))
+        system = self.system_prompt
+        if system is not None:
+            msgs.append(Message(role=Role.SYSTEM, content=system))
         msgs.extend(self._project())
         return msgs
 
@@ -162,10 +193,38 @@ class Context:
         self._run_blocks = None
         self._run_gathered = False
 
+    async def ensure_session_gathered(self) -> None:
+        """Idempotent first-gather of SESSION sources into the per-context
+        cache — the snapshot moment. Called by Agent.run() before emitting
+        RunStart (so the trace records the real rendered prompt) and by
+        assemble() (so contexts driven without Agent.run() self-heal).
+        Doubles as the host-facing preview trigger: await it, then read
+        the sync `system_prompt` property.
+
+        Fail-fast: a raising SESSION source propagates (unlike the live
+        channels, where _SafeSource degrades a failure to None) — a
+        broken source fails the first run loudly rather than silently
+        shipping a degraded prompt. The cache is assigned only after the
+        awaited gather completes, so a failed or cancelled first gather
+        leaves it ungathered and the next call retries.
+        """
+        if self._session_blocks is not _UNGATHERED:
+            return
+        if not self._session_sources or self._workspace_root is None:
+            self._session_blocks = None
+            return
+        self._session_blocks = await build_context_blocks(
+            self._session_sources,
+            self._workspace_root,
+            preamble=SNAPSHOT_PREAMBLE,
+        )
+
     async def assemble(self) -> list[Message]:
         """The full input for one LLM call.
 
-        get_messages() plus injected live content, per the merge rule:
+        Ensures the SESSION snapshot exists (a no-op after the first
+        call), then get_messages() plus injected live content, per the
+        merge rule:
         RUN blocks merge into a copy of the run's (last) user message and
         stay byte-stable until the next begin_run(); CALL blocks join
         that merge on the run's first call, and otherwise ride one
@@ -178,6 +237,7 @@ class Context:
         event recording what was assembled; without one, behavior is
         byte-identical to an unrecorded context.
         """
+        await self.ensure_session_gathered()
         msgs = self.get_messages()
         injected_run: InjectedBlock | None = None
         injected_call: InjectedBlock | None = None
@@ -214,9 +274,9 @@ class Context:
                 injected = "\n".join([*merged, _MERGED_FRAMING])
                 msgs[user_idx] = _merge_into_user(msgs[user_idx], injected)
                 # anchor is a store index: user_idx is a position in the
-                # assembled list, which the system message (if any) shifts
-                # by one.
-                offset = 1 if self._system_prompt is not None else 0
+                # assembled list, which the system message (if rendered)
+                # shifts by one.
+                offset = 1 if msgs[0].role is Role.SYSTEM else 0
                 injected_run = InjectedBlock(anchor=user_idx - offset, text=injected)
 
             if call_blocks:

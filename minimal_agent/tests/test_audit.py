@@ -45,7 +45,7 @@ async def _session_with_one_call(tmp_path, **create_overrides):
     defaults = dict(
         model="test-model",
         backend="openai",
-        system_prompt="you are helpful",
+        behavior_prompt="you are helpful",
     )
     defaults.update(create_overrides)
     session = SessionManager(base_dir=tmp_path).create_session(**defaults)
@@ -55,7 +55,7 @@ async def _session_with_one_call(tmp_path, **create_overrides):
             model=defaults["model"],
             backend=defaults["backend"],
             tools_json="[]",
-            system_prompt=defaults["system_prompt"],
+            system_prompt=defaults["behavior_prompt"],
             store_len=len(session.context.store),
         )
     )
@@ -69,7 +69,7 @@ async def test_reconstruct_call_matches_assembled_output(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     session, assembled = await _session_with_one_call(
-        tmp_path, workspace_root=str(ws), live_sources=[_RunSource()]
+        tmp_path, workspace_root=str(ws), context_sources=[_RunSource()]
     )
 
     (record,) = read_call_records(session.session_dir)
@@ -225,7 +225,7 @@ async def test_session_runs_joins_everything(tmp_path):
 async def test_session_runs_degraded_direct_assemble(tmp_path):
     # A host calling assemble() directly, with no run.start ever emitted.
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="you are helpful"
+        model="test-model", backend="openai", behavior_prompt="you are helpful"
     )
     session.context.add(Message(role=Role.USER, content="what changed?"))
     await session.context.assemble()
@@ -281,11 +281,11 @@ async def test_reconstruct_carries_fingerprint_and_parsed_tools(tmp_path):
 async def test_reconstruct_call_in_child_scope_resolves_root_blobs(tmp_path):
     """Children share the session root's blobs/ — reconstruction walks up."""
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="root sys"
+        model="test-model", backend="openai", behavior_prompt="root sys"
     )
 
     with session.scope.child(spawned_by="t", task="x") as child:
-        ctx = child.new_context(system_prompt="child sys")
+        ctx = child.new_context(behavior_prompt="child sys")
         child.events.emit(
             RunStart(
                 model="test-model",
@@ -309,7 +309,7 @@ async def test_reconstruct_call_in_child_scope_resolves_root_blobs(tmp_path):
 
 async def test_session_runs_surfaces_spawned_agents(tmp_path):
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="sys"
+        model="test-model", backend="openai", behavior_prompt="sys"
     )
     scope = session.scope
     scope.events.emit(
@@ -340,7 +340,7 @@ async def test_tool_end_children_surface_in_tool_executions(tmp_path):
     from minimal_agent.events import ToolEnd, ToolStart
 
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="sys"
+        model="test-model", backend="openai", behavior_prompt="sys"
     )
     scope = session.scope
     scope.events.emit(
@@ -374,7 +374,7 @@ async def test_single_run_scopes_to_one_run(tmp_path):
     """single_run returns exactly the run asked for, matching what
     session_runs produces for that id — across a session with two runs."""
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="sys"
+        model="test-model", backend="openai", behavior_prompt="sys"
     )
     scope = session.scope
 
@@ -404,7 +404,7 @@ async def test_single_run_scopes_to_one_run(tmp_path):
 
 def test_single_run_unknown_id_returns_none(tmp_path):
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="sys"
+        model="test-model", backend="openai", behavior_prompt="sys"
     )
     assert single_run(session.session_dir, "r-does-not-exist") is None
 
@@ -413,7 +413,7 @@ async def test_run_summaries_index_matches_session_runs(tmp_path):
     """run_summaries lists exactly the runs single_run can resolve, in order,
     with outcome facts — but without reconstructing any call."""
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="sys"
+        model="test-model", backend="openai", behavior_prompt="sys"
     )
     scope = session.scope
     run_ids = []
@@ -448,7 +448,7 @@ async def test_run_summaries_includes_degraded_run(tmp_path):
     """A run recorded without a run frame (direct assemble()) has no
     runs.jsonl row but still shows up in the index with null metadata."""
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="sys"
+        model="test-model", backend="openai", behavior_prompt="sys"
     )
     session.context.add(Message(role=Role.USER, content="go"))
     await session.context.assemble()  # no RunStart emitted → degraded run
@@ -464,13 +464,13 @@ async def test_find_agent_scope_resolves_nested_agent_by_id(tmp_path):
     """A spawned agent's scope is findable by id at any depth, and the same
     per-run readers apply to it directly."""
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="test-model", backend="openai", system_prompt="root sys"
+        model="test-model", backend="openai", behavior_prompt="root sys"
     )
 
     # root → child → grandchild, each recording one run.
     with session.scope.child(spawned_by="t", task="child work") as child:
         with child.child(spawned_by="t", task="grandchild work") as grandchild:
-            ctx = grandchild.new_context(system_prompt="gc sys")
+            ctx = grandchild.new_context(behavior_prompt="gc sys")
             grandchild.events.emit(
                 RunStart(
                     model="test-model",

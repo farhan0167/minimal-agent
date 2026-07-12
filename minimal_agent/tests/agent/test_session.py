@@ -58,7 +58,7 @@ def _report_usage(session, usage: Usage) -> None:
 
 
 def test_create_makes_directory_and_files(tmp_path):
-    session = _create(tmp_path, system_prompt="sys")
+    session = _create(tmp_path, behavior_prompt="sys")
 
     session_dir = tmp_path / session.session_id
     assert session_dir.is_dir()
@@ -72,7 +72,7 @@ def test_create_makes_directory_and_files(tmp_path):
 
 
 def test_add_message_writes_to_jsonl(tmp_path):
-    session = _create(tmp_path, system_prompt="sys")
+    session = _create(tmp_path, behavior_prompt="sys")
     session.context.add(Message(role=Role.USER, content="hello"))
 
     messages_path = tmp_path / session.session_id / "messages.jsonl"
@@ -82,12 +82,12 @@ def test_add_message_writes_to_jsonl(tmp_path):
 
 
 def test_load_recovers_messages(tmp_path):
-    session = _create(tmp_path, system_prompt="sys")
+    session = _create(tmp_path, behavior_prompt="sys")
     session.context.add(Message(role=Role.USER, content="q"))
     session.context.add(Message(role=Role.ASSISTANT, content="a"))
     sid = session.session_id
 
-    loaded = _load(sid, tmp_path, system_prompt="sys")
+    loaded = _load(sid, tmp_path, behavior_prompt="sys")
 
     assert len(loaded.context.store) == 2
     assert loaded.context.store.messages[0].content == "q"
@@ -95,11 +95,11 @@ def test_load_recovers_messages(tmp_path):
 
 
 def test_load_uses_provided_system_prompt(tmp_path):
-    session = _create(tmp_path, system_prompt="original")
+    session = _create(tmp_path, behavior_prompt="original")
     session.context.add(Message(role=Role.USER, content="hi"))
     sid = session.session_id
 
-    loaded = _load(sid, tmp_path, system_prompt="updated")
+    loaded = _load(sid, tmp_path, behavior_prompt="updated")
     msgs = loaded.context.get_messages()
 
     assert msgs[0].role == Role.SYSTEM
@@ -239,7 +239,7 @@ async def test_create_forwards_live_sources_to_context(tmp_path):
     session = _create(
         tmp_path,
         workspace_root=str(ws),
-        live_sources=[_RunSource()],
+        context_sources=[_RunSource()],
     )
     session.context.add(Message(role=Role.USER, content="hi"))
 
@@ -256,7 +256,7 @@ async def test_load_reattaches_live_sources_with_persisted_root(tmp_path):
     session.context.add(Message(role=Role.USER, content="hi"))
     sid = session.session_id
 
-    loaded = _load(sid, tmp_path, live_sources=[_RunSource()])
+    loaded = _load(sid, tmp_path, context_sources=[_RunSource()])
     msgs = await loaded.context.assemble()
 
     # load() appends an interrupted-response marker after the unanswered
@@ -270,7 +270,7 @@ async def test_load_without_persisted_root_degrades_silently(tmp_path):
     session.context.add(Message(role=Role.USER, content="hi"))
     sid = session.session_id
 
-    loaded = _load(sid, tmp_path, live_sources=[_RunSource()])
+    loaded = _load(sid, tmp_path, context_sources=[_RunSource()])
     msgs = await loaded.context.assemble()
 
     assert msgs == loaded.context.get_messages()
@@ -320,7 +320,7 @@ def _blob_text(session_dir, ref: str) -> str:
 async def test_create_emits_session_created_and_assemble_writes_artifacts(
     tmp_path,
 ):
-    session = _create(tmp_path, system_prompt="you are helpful")
+    session = _create(tmp_path, behavior_prompt="you are helpful")
     session_dir = tmp_path / session.session_id
 
     assert _events(session_dir)[0]["type"] == "session.created"
@@ -338,11 +338,11 @@ async def test_create_emits_session_created_and_assemble_writes_artifacts(
 
 
 def test_load_emits_session_loaded_with_count_and_healing(tmp_path):
-    session = _create(tmp_path, system_prompt="sys")
+    session = _create(tmp_path, behavior_prompt="sys")
     session.context.add(Message(role=Role.USER, content="unanswered"))
     sid = session.session_id
 
-    loaded = _load(sid, tmp_path, system_prompt="sys")
+    loaded = _load(sid, tmp_path, behavior_prompt="sys")
 
     evt = next(e for e in _events(tmp_path / sid) if e["type"] == "session.loaded")
     # The trailing unanswered user message was healed at load — and the
@@ -355,7 +355,7 @@ def test_load_emits_session_loaded_with_count_and_healing(tmp_path):
 async def test_resume_with_edited_prompt_flips_system_prompt_ref(tmp_path):
     """'The agent changed between runs' is a one-line-per-run scan of
     runs.jsonl — the fingerprint now lives at run granularity."""
-    session = _create(tmp_path, system_prompt="prompt v1")
+    session = _create(tmp_path, behavior_prompt="prompt v1")
     _open_run(session)
     session.context.add(Message(role=Role.USER, content="hi"))
     await session.context.assemble()
@@ -363,7 +363,7 @@ async def test_resume_with_edited_prompt_flips_system_prompt_ref(tmp_path):
     session.context.add(Message(role=Role.ASSISTANT, content="hello"))
     sid = session.session_id
 
-    loaded = _load(sid, tmp_path, system_prompt="prompt v2")
+    loaded = _load(sid, tmp_path, behavior_prompt="prompt v2")
     _open_run(loaded)
     loaded.context.add(Message(role=Role.USER, content="again"))
     await loaded.context.assemble()
@@ -425,9 +425,9 @@ async def test_audit_record_reconstructs_byte_exactly_from_disk(tmp_path):
     ws.mkdir()
     session = _create(
         tmp_path,
-        system_prompt="sys",
+        behavior_prompt="sys",
         workspace_root=str(ws),
-        live_sources=[_RunSource()],
+        context_sources=[_RunSource()],
     )
     _open_run(session)
     session.context.add(Message(role=Role.USER, content="what changed?"))

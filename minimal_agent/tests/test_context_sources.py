@@ -1,13 +1,19 @@
 """Tests for context sources."""
 
+import datetime
+import platform
 from pathlib import Path
+
+import pytest
 
 from minimal_agent.context_sources import (
     AgentsMdSource,
     DirectoryTreeSource,
+    EnvSource,
     GitStatusSource,
     Placement,
     SkillsContextSource,
+    build_context_blocks,
     source_placement,
     source_tag,
 )
@@ -258,11 +264,105 @@ class TestTagResolution:
         assert source_tag(Reminder()) == "system-reminder"
 
 
-class TestLegacyImportPaths:
-    def test_system_prompt_reexports(self):
-        from minimal_agent import context_sources, system_prompt
+class TestModuleRemoval:
+    def test_system_prompt_package_is_gone(self):
+        with pytest.raises(ModuleNotFoundError):
+            import minimal_agent.system_prompt  # noqa: F401
 
-        assert system_prompt.GitStatusSource is context_sources.GitStatusSource
-        assert system_prompt.ContextSource is context_sources.ContextSource
-        assert system_prompt.DirectoryTreeSource is context_sources.DirectoryTreeSource
-        assert system_prompt.SkillsContextSource is context_sources.SkillsContextSource
+
+# ---- EnvSource (the former system_prompt/env.py, as a source) ----------------
+
+
+class TestEnvSource:
+    async def test_contains_workspace_root(self, tmp_path: Path):
+        result = await EnvSource().gather(tmp_path)
+        assert str(tmp_path) in result
+
+    async def test_contains_platform(self, tmp_path: Path):
+        result = await EnvSource().gather(tmp_path)
+        assert platform.system().lower() in result
+
+    async def test_contains_date(self, tmp_path: Path):
+        result = await EnvSource().gather(tmp_path)
+        assert datetime.date.today().isoformat() in result
+
+    async def test_non_git_dir(self, tmp_path: Path):
+        result = await EnvSource().gather(tmp_path)
+        assert "Is git repo: no" in result
+
+    async def test_git_dir(self, tmp_path: Path):
+        (tmp_path / ".git").mkdir()
+        result = await EnvSource().gather(tmp_path)
+        assert "Is git repo: yes" in result
+
+    def test_session_placed_with_env_tag(self):
+        src = EnvSource()
+        assert source_placement(src) is Placement.SESSION
+        assert source_tag(src) == "env"
+
+    async def test_golden_block_matches_former_build_env_block(self, tmp_path: Path):
+        """The rendered block carries exactly the content build_env_block()
+        used to produce, inside the source-tag wrapper."""
+        rendered = await build_context_blocks([EnvSource()], tmp_path)
+        expected_inner = (
+            f"Working directory: {tmp_path}\n"
+            f"Platform: {platform.system().lower()}\n"
+            f"Date: {datetime.date.today().isoformat()}\n"
+            f"Is git repo: no"
+        )
+        assert rendered == f'<env name="env">\n{expected_inner}\n</env>'
+
+
+# ---- build_context_blocks (relocated from the deleted builder) ---------------
+
+
+class _FakeSource:
+    def __init__(self, name: str, content: str | None):
+        self._name = name
+        self._content = content
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def gather(self, workspace_root: Path) -> str | None:
+        return self._content
+
+
+class TestBuildContextBlocks:
+    async def test_empty_sources(self, tmp_path: Path):
+        assert await build_context_blocks([], tmp_path) is None
+
+    async def test_all_sources_return_none(self, tmp_path: Path):
+        sources = [_FakeSource("a", None), _FakeSource("b", None)]
+        assert await build_context_blocks(sources, tmp_path) is None
+
+    async def test_formats_xml_blocks(self, tmp_path: Path):
+        sources = [
+            _FakeSource("git", "branch: main"),
+            _FakeSource("tree", "src/\n  app.py"),
+        ]
+        result = await build_context_blocks(sources, tmp_path)
+        assert result == (
+            '<context name="git">\nbranch: main\n</context>\n\n'
+            '<context name="tree">\nsrc/\n  app.py\n</context>'
+        )
+
+    async def test_skips_none_sources(self, tmp_path: Path):
+        sources = [_FakeSource("present", "data"), _FakeSource("absent", None)]
+        result = await build_context_blocks(sources, tmp_path)
+        assert '<context name="present">' in result
+        assert "absent" not in result
+
+    async def test_preamble_prepended_when_given(self, tmp_path: Path):
+        result = await build_context_blocks(
+            [_FakeSource("x", "content")], tmp_path, preamble="Heads up:"
+        )
+        assert result.startswith("Heads up:\n\n")
+
+    async def test_custom_tag_wraps_block(self, tmp_path: Path):
+        class _TaggedSource(_FakeSource):
+            tag = "system-reminder"
+
+        result = await build_context_blocks([_TaggedSource("x", "content")], tmp_path)
+        assert result == '<system-reminder name="x">\ncontent\n</system-reminder>'

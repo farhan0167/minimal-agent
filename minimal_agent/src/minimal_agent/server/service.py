@@ -106,5 +106,5 @@ def open_session_readonly(manager: SessionManager, session_id: str) -> Session:
         session_id,
         model=meta.model,
         backend=meta.backend,
-        system_prompt=None,
+        behavior_prompt=None,
     )

@@ -193,7 +193,7 @@ def test_session_json_includes_nested_agent_usage(tmp_path):
 
 async def test_child_blobs_share_the_session_root_store(tmp_path):
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="m", backend="openai", system_prompt="root sys"
+        model="m", backend="openai", behavior_prompt="root sys"
     )
 
     # A run inside the child interns its system prompt against root blobs/.

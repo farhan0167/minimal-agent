@@ -67,14 +67,19 @@ class SpawnAgents(BaseTool[SpawnAgentsInput, str]):
             prompt=_SUB_AGENT_PROMPT_PATH.read_text().format(task=spec.task),
             max_turns=spec.max_turns,
         )
-        system_prompt = await agent.build_system_prompt(self._workspace_root)
 
         with ctx.scope.child(
             spawned_by=self.name,
             task=spec.task,
             tool_call_id=ctx.tool_call_id,
         ) as scope:
-            context = scope.new_context(system_prompt=system_prompt)
+            # Identity in, no rendered prompt: the child context gathers
+            # the agent's SESSION sources at its first assemble().
+            context = scope.new_context(
+                behavior_prompt=agent.behavior_prompt,
+                context_sources=agent.context_sources,
+                workspace_root=self._workspace_root,
+            )
             context.add(Message(role=Role.USER, content=spec.task))
 
             last_assistant = ""

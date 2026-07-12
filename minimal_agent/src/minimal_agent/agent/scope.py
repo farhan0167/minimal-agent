@@ -134,8 +134,8 @@ class Scope(Protocol):
     def new_context(
         self,
         *,
-        system_prompt: str | None = None,
-        live_sources: list[ContextSource] | None = None,
+        behavior_prompt: str | None = None,
+        context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
     ) -> "Context": ...
 
@@ -164,16 +164,16 @@ class NullScope:
     def new_context(
         self,
         *,
-        system_prompt: str | None = None,
-        live_sources: list[ContextSource] | None = None,
+        behavior_prompt: str | None = None,
+        context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
     ) -> "Context":
         from .context import Context
 
         return Context(
-            system_prompt=system_prompt,
+            behavior_prompt=behavior_prompt,
             scope=self,
-            live_sources=live_sources,
+            context_sources=context_sources,
             workspace_root=workspace_root,
         )
 
@@ -243,16 +243,16 @@ class RecordedScope:
     def new_context(
         self,
         *,
-        system_prompt: str | None = None,
-        live_sources: list[ContextSource] | None = None,
+        behavior_prompt: str | None = None,
+        context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
     ) -> "Context":
         from .context import Context
 
         return Context(
-            system_prompt=system_prompt,
+            behavior_prompt=behavior_prompt,
             scope=self,
-            live_sources=live_sources,
+            context_sources=context_sources,
             workspace_root=workspace_root,
         )
 
