@@ -9,7 +9,7 @@ Each sub-agent runs inside a child scope of the calling agent's scope, so
 its full record — transcript, trace, call audit — lands under the session's
 `agents/<agent_id>/` directory. This tool is the reference implementation
 of recorded sub-agents; a custom tool that arms its own agent should use
-the same `ctx.scope.child(...)` one-liner.
+the same `ctx.session.spawn(...)` one-liner.
 
 Sub-agents cannot spawn further sub-agents (no recursion).
 """
@@ -67,14 +67,19 @@ class SpawnAgents(BaseTool[SpawnAgentsInput, str]):
             prompt=_SUB_AGENT_PROMPT_PATH.read_text().format(task=spec.task),
             max_turns=spec.max_turns,
         )
-        system_prompt = await agent.build_system_prompt(self._workspace_root)
 
-        with ctx.scope.child(
+        with ctx.session.spawn(
             spawned_by=self.name,
             task=spec.task,
             tool_call_id=ctx.tool_call_id,
         ) as scope:
-            context = scope.new_context(system_prompt=system_prompt)
+            # Identity in, no rendered prompt: the child context gathers
+            # the agent's SESSION sources at its first assemble().
+            context = scope.new_context(
+                behavior_prompt=agent.behavior_prompt,
+                context_sources=agent.context_sources,
+                workspace_root=self._workspace_root,
+            )
             context.add(Message(role=Role.USER, content=spec.task))
 
             last_assistant = ""

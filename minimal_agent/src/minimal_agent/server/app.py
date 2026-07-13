@@ -97,7 +97,7 @@ class App(FastAPI):
         # One store for every agent — sessions created by any of them are
         # listable and resumable through this App.
         for agent in self.agents.values():
-            agent.sessions = self.session_manager
+            agent.session_manager = self.session_manager
 
         self.include_router(api_router, prefix="/api")
         self._ui_mounted = False

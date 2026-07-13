@@ -16,15 +16,13 @@ from ..context_sources import (
     ContextSource,
     DirectoryTreeSource,
     GitStatusSource,
-    Placement,
     SkillsContextSource,
-    source_placement,
+    WorkspaceSource,
 )
 from ..events import CallResponse, RunEnd, RunEndStatus, RunStart
 from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
 from ..llm.types import ContentPart, LLMTool, ReasoningConfig, ReasoningEffort, Usage
 from ..skills import discover_skills
-from ..system_prompt import build_system_prompt, load_prompt
 from ..tools import ToolContext, dispatch
 from ..tools.base import BaseTool
 from ..tools.builtin.skill import SkillTool
@@ -38,6 +36,23 @@ from .session import (
 )
 
 OnUsageCallback = Callable[[Usage], None]
+
+_DEFAULT_BEHAVIOR_PATH = Path(__file__).parent / "defaults" / "behavior.md"
+
+
+def load_prompt(prompt: str | Path | None) -> str:
+    """Resolve a prompt argument to a behavior prompt string.
+
+    Part of constructing the Agent's identity:
+    - Path → read the file
+    - str → use as-is
+    - None → load the default behavior.md
+    """
+    if prompt is None:
+        return _DEFAULT_BEHAVIOR_PATH.read_text()
+    if isinstance(prompt, Path):
+        return prompt.read_text()
+    return prompt
 
 
 def _canonical_tools_json(tools: list[LLMTool]) -> str:
@@ -69,7 +84,7 @@ class Agent:
         max_turns: int = 10,
         workspace_root: Path | None = None,
         enable_skills: bool = True,
-        sessions: SessionManager | None = None,
+        session_manager: SessionManager | None = None,
     ) -> None:
         # Reasoning is agent-level config: attach the provider contract to the
         # LLM so every generate/stream carries it. Passing reasoning_config=...
@@ -82,7 +97,9 @@ class Agent:
         )
         # Identity lives here; persistence policy lives in the manager.
         # The default manager records under .minimal_agent/sessions.
-        self._sessions = sessions if sessions is not None else SessionManager()
+        self._session_manager = (
+            session_manager if session_manager is not None else SessionManager()
+        )
         self._tools_by_name: dict[str, BaseTool] = {t.name: t for t in tools}
         self._llm_tools: list[LLMTool] = [t.as_llm_tool() for t in tools]
         self._max_turns = max_turns
@@ -115,14 +132,12 @@ class Agent:
                 self._llm_tools.append(skill_tool.as_llm_tool())
                 resolved_sources.append(SkillsContextSource(skills))
 
-        # Partition by placement: SESSION sources feed the system prompt;
-        # live (RUN/CALL) sources feed the message channel via the Context
-        # of every session this agent creates.
-        self._prompt_sources = [
-            s for s in resolved_sources if source_placement(s) is Placement.SESSION
-        ]
-        self._live_sources = [
-            s for s in resolved_sources if source_placement(s) is not Placement.SESSION
+        # The <workspace> block rides every identity, default or custom — first,
+        # so the model reads where it is before any other context. The
+        # Context of each session partitions the full list by placement.
+        self._context_sources: list[ContextSource] = [
+            WorkspaceSource(),
+            *resolved_sources,
         ]
 
         # Canonical fingerprint of the tool schemas — computed once, after
@@ -131,28 +146,26 @@ class Agent:
         # session directory alone.
         self._tools_json = _canonical_tools_json(self._llm_tools)
 
-    async def build_system_prompt(self, workspace_root: Path) -> str:
-        """Build the full system prompt for a new session.
-
-        Combines the behavior prompt, environment block, and context
-        blocks from this agent's SESSION-placed sources.
-        """
-        return await build_system_prompt(
-            behavior_prompt=self._behavior_prompt,
-            workspace_root=workspace_root,
-            context_sources=self._prompt_sources,
-        )
+    @property
+    def behavior_prompt(self) -> str:
+        """The static identity prompt — config, never gathered."""
+        return self._behavior_prompt
 
     @property
-    def sessions(self) -> SessionManager:
-        """The persistence policy this agent's session factories use."""
-        return self._sessions
+    def context_sources(self) -> list[ContextSource]:
+        """All context sources (every placement), WorkspaceSource included."""
+        return list(self._context_sources)
 
-    @sessions.setter
-    def sessions(self, manager: SessionManager) -> None:
+    @property
+    def session_manager(self) -> SessionManager:
+        """The persistence policy this agent's session factories use."""
+        return self._session_manager
+
+    @session_manager.setter
+    def session_manager(self, manager: SessionManager) -> None:
         """Rebind the persistence policy (e.g. a host consolidating all
         registered agents onto one store)."""
-        self._sessions = manager
+        self._session_manager = manager
 
     @property
     def llm(self) -> LLM:
@@ -172,11 +185,13 @@ class Agent:
     async def create_session(self, workspace_root: Path | None = None) -> Session:
         """Create a new session carrying this agent's identity.
 
-        Identity (prompt, model/backend, live sources) comes from the
-        agent; persistence wiring comes from the attached SessionManager —
-        callers state each exactly once. workspace_root defaults to the
-        root the Agent was constructed with; passing neither there nor
-        here raises ValueError.
+        Identity (behavior prompt, model/backend, context sources) comes
+        from the agent; persistence wiring comes from the attached
+        SessionManager — callers state each exactly once. Passes identity,
+        not a rendered prompt: SESSION sources gather at the context's
+        first assemble(), inside the session. workspace_root defaults to
+        the root the Agent was constructed with; passing neither there
+        nor here raises ValueError.
         """
         root = workspace_root or self._workspace_root
         if root is None:
@@ -184,32 +199,31 @@ class Agent:
                 "workspace_root required — pass it to create_session() "
                 "or to the Agent constructor"
             )
-        system_prompt = await self.build_system_prompt(root)
-        return self._sessions.create_session(
+        return self._session_manager.create_session(
             model=self._llm.model,
             backend=self._llm.backend,
-            system_prompt=system_prompt,
+            behavior_prompt=self._behavior_prompt,
             workspace_root=str(root),
-            live_sources=self._live_sources,
+            context_sources=self._context_sources,
         )
 
     async def load_session(self, session_id: str) -> Session:
         """Resume a session with this agent's identity re-attached.
 
-        Rebuilds the system prompt fresh against the session's persisted
-        workspace root (rebuild, don't restore). Raises
-        SessionConfigMismatchError if the session's model, backend, or
-        workspace don't match this agent's.
+        The system prompt is rebuilt fresh at the resumed context's first
+        assemble(), against the session's persisted workspace root
+        (rebuild, don't restore). Raises SessionConfigMismatchError if
+        the session's model, backend, or workspace don't match this
+        agent's.
         """
-        meta = self._sessions.read_meta(session_id)
-        root = self._resolve_load_root(meta)
-        system_prompt = await self.build_system_prompt(root)
-        return self._sessions.load_session(
+        meta = self._session_manager.read_meta(session_id)
+        self._resolve_load_root(meta)
+        return self._session_manager.load_session(
             session_id,
             model=self._llm.model,
             backend=self._llm.backend,
-            system_prompt=system_prompt,
-            live_sources=self._live_sources,
+            behavior_prompt=self._behavior_prompt,
+            context_sources=self._context_sources,
         )
 
     def _resolve_load_root(self, meta: SessionMeta) -> Path:
@@ -291,6 +305,12 @@ class Agent:
         is a NullScope and the same emissions go nowhere.
         """
         context.begin_run()
+        # The SESSION snapshot must exist before run.start is emitted:
+        # the event's system_prompt is blob-interned as the run record's
+        # only persisted copy of the SESSION blocks — emitting the bare
+        # behavior prompt would break byte-exact call reconstruction.
+        # A no-op on every run but the context's first.
+        await context.ensure_session_gathered()
         events = context.events
         events.emit(
             RunStart(
@@ -309,7 +329,7 @@ class Agent:
             for _turn in range(self._max_turns):
                 tool_ctx = ToolContext(
                     permission_callback=permission_callback,
-                    scope=context.scope,
+                    session=context.session,
                 )
                 messages = await context.assemble()
                 calls += 1

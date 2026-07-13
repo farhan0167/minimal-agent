@@ -98,6 +98,13 @@ class SessionListResponse(BaseModel):
 class MessageResponse(BaseModel):
     role: str
     content: str | list | None = None
+    reasoning: str | None = Field(
+        default=None,
+        description=(
+            "The model's reasoning/thinking trace for this message. Null when "
+            "the model produced none, or the agent has no reasoning config."
+        ),
+    )
     tool_call_id: str | None = None
     tool_calls: list[dict] | None = None
 

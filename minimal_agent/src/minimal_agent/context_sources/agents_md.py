@@ -2,8 +2,12 @@
 
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .base import Placement
+
+if TYPE_CHECKING:
+    from ..agent.view import SessionView
 
 
 class AgentsMdSource:
@@ -34,7 +38,10 @@ class AgentsMdSource:
     def name(self) -> str:
         return "agentsMd"
 
-    async def gather(self, workspace_root: Path) -> str | None:
+    async def gather(self, session: "SessionView") -> str | None:
+        workspace_root = session.workspace_root
+        if workspace_root is None:
+            return None
         path = workspace_root / self._FILENAME
         try:
             raw = path.read_text(encoding="utf-8")

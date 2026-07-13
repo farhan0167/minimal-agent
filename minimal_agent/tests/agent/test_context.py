@@ -16,7 +16,7 @@ from minimal_agent.llm.types import Message, Role, TextPart
 
 
 def test_get_messages_with_system_prompt():
-    ctx = Context(system_prompt="You are helpful.")
+    ctx = Context(behavior_prompt="You are helpful.")
     ctx.add(Message(role=Role.USER, content="hi"))
 
     msgs = ctx.get_messages()
@@ -38,7 +38,7 @@ def test_get_messages_without_system_prompt():
 
 
 def test_get_messages_reflects_additions():
-    ctx = Context(system_prompt="sys")
+    ctx = Context(behavior_prompt="sys")
     ctx.add(Message(role=Role.USER, content="q"))
 
     assert len(ctx.get_messages()) == 2
@@ -50,7 +50,7 @@ def test_get_messages_reflects_additions():
 
 def test_get_messages_is_pure():
     """Calling get_messages twice returns equivalent but distinct lists."""
-    ctx = Context(system_prompt="sys")
+    ctx = Context(behavior_prompt="sys")
     ctx.add(Message(role=Role.USER, content="hi"))
 
     a = ctx.get_messages()
@@ -85,11 +85,13 @@ class _LiveSource:
         self.name = name
         self.placement = placement
         self.calls = 0
+        self.seen_workspace_root = None
         self._raises = raises
         self._content = content
 
-    async def gather(self, workspace_root) -> str | None:
+    async def gather(self, env) -> str | None:
         self.calls += 1
+        self.seen_workspace_root = env.workspace_root
         if self._raises:
             raise RuntimeError("gather blew up")
         if self._content is None:
@@ -102,9 +104,9 @@ def _live_context(*sources, workspace_root="ws", store=None) -> Context:
     if store is not None:
         scope.store = store
     return Context(
-        system_prompt="sys",
+        behavior_prompt="sys",
         scope=scope,
-        live_sources=list(sources),
+        context_sources=list(sources),
         workspace_root=Path(workspace_root) if workspace_root else None,
     )
 
@@ -117,7 +119,7 @@ def _no_consecutive_users(msgs: list[Message]) -> bool:
 
 
 async def test_assemble_without_live_sources_equals_get_messages():
-    ctx = Context(system_prompt="sys")
+    ctx = Context(behavior_prompt="sys")
     ctx.add(Message(role=Role.USER, content="hi"))
 
     assert await ctx.assemble() == ctx.get_messages()
@@ -280,15 +282,19 @@ async def test_all_sources_none_returns_clean_projection():
     assert await ctx.assemble() == ctx.get_messages()
 
 
-async def test_no_workspace_root_skips_gathering():
+async def test_no_workspace_root_still_gathers():
+    """Gathering is not gated on a workspace root: the env always exists, so
+    every source runs and decides for itself whether it has anything to say
+    (the built-ins return None when env.workspace_root is None)."""
     src = _LiveSource(placement=Placement.RUN)
     ctx = _live_context(src, workspace_root=None)
     ctx.add(Message(role=Role.USER, content="hi"))
 
     msgs = await ctx.assemble()
 
-    assert src.calls == 0
-    assert msgs == ctx.get_messages()
+    assert src.calls == 1
+    assert src.seen_workspace_root is None
+    assert '<context name="live">' in msgs[-1].content
 
 
 async def test_raising_source_skipped_others_injected():
@@ -341,15 +347,15 @@ class _Recorder:
 
 
 def _recorded_context(
-    *sources, system_prompt="sys", workspace_root="ws"
+    *sources, behavior_prompt="sys", workspace_root="ws"
 ) -> tuple[Context, "_Recorder"]:
     rec = _Recorder()
     scope = NullScope()
     scope.events = EventEmitter(sinks=[rec])
     ctx = Context(
-        system_prompt=system_prompt,
+        behavior_prompt=behavior_prompt,
         scope=scope,
-        live_sources=list(sources),
+        context_sources=list(sources),
         workspace_root=Path(workspace_root) if workspace_root else None,
     )
     return ctx, rec
@@ -493,3 +499,114 @@ async def test_round_trip_reconstruction_matches_hash(placements, stored):
     rebuilt = _reconstruct(ctx.store.messages, req, ctx.system_prompt)
     assert hash_messages(rebuilt) == req.assembled_sha256
     assert rebuilt == assembled
+
+
+# ---- lazy SESSION assembly (ensure_session_gathered) ------------------------
+
+
+async def test_first_assemble_gathers_session_once_and_renders():
+    src = _LiveSource(name="tree", placement=Placement.SESSION)
+    ctx = _live_context(src)
+    ctx.add(Message(role=Role.USER, content="hi"))
+
+    first = await ctx.assemble()
+    await ctx.assemble()
+    ctx.begin_run()
+    await ctx.assemble()
+
+    assert src.calls == 1  # cached across assembles and runs
+    system = first[0]
+    assert system.role is Role.SYSTEM
+    assert system.content.startswith("sys")
+    assert "snapshot taken at first use" in system.content
+    assert '<context name="tree">' in system.content
+    assert "fresh data (gather 1)" in system.content
+
+
+def test_get_messages_before_first_gather_is_behavior_prompt_alone():
+    src = _LiveSource(name="tree", placement=Placement.SESSION)
+    ctx = _live_context(src)
+    ctx.add(Message(role=Role.USER, content="hi"))
+
+    msgs = ctx.get_messages()
+
+    assert src.calls == 0
+    assert msgs[0].content == "sys"
+
+
+async def test_preview_shares_snapshot_with_run():
+    src = _LiveSource(name="tree", placement=Placement.SESSION)
+    ctx = _live_context(src)
+
+    await ctx.ensure_session_gathered()
+    previewed = ctx.system_prompt
+
+    assert "gather 1" in previewed
+    ctx.add(Message(role=Role.USER, content="hi"))
+    msgs = await ctx.assemble()
+    assert src.calls == 1  # the preview and the run share one snapshot
+    assert msgs[0].content == previewed
+
+
+async def test_session_source_without_behavior_prompt_still_renders_system():
+    src = _LiveSource(name="tree", placement=Placement.SESSION)
+    scope = NullScope()
+    ctx = Context(scope=scope, context_sources=[src], workspace_root=Path("ws"))
+    ctx.add(Message(role=Role.USER, content="hi"))
+
+    msgs = await ctx.assemble()
+
+    assert msgs[0].role is Role.SYSTEM
+    assert '<context name="tree">' in msgs[0].content
+
+
+async def test_session_gather_is_fail_fast_and_retries():
+    src = _LiveSource(name="boom", placement=Placement.SESSION, raises=True)
+    ctx = _live_context(src)
+    ctx.add(Message(role=Role.USER, content="hi"))
+
+    with pytest.raises(RuntimeError):
+        await ctx.assemble()
+
+    # The failed gather must not half-populate the cache: the next
+    # ensure retries the source instead of serving a broken snapshot.
+    src._raises = False
+    msgs = await ctx.assemble()
+    assert src.calls == 2
+    assert '<context name="boom">' in msgs[0].content
+
+
+async def test_cancelled_first_gather_leaves_cache_ungathered():
+    import asyncio
+
+    release = asyncio.Event()
+    started = asyncio.Event()
+
+    class _BlockingSource:
+        placement = Placement.SESSION
+        name = "slow"
+        calls = 0
+
+        async def gather(self, env) -> str | None:
+            type(self).calls += 1
+            started.set()
+            await release.wait()
+            return "eventually"
+
+    ctx = _live_context(_BlockingSource())
+    task = asyncio.create_task(ctx.ensure_session_gathered())
+    await started.wait()  # cancel mid-gather, not before it
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    release.set()
+    await ctx.ensure_session_gathered()
+    assert _BlockingSource.calls == 2
+    assert "eventually" in ctx.system_prompt
+
+
+async def test_no_session_sources_gathers_nothing_and_renders_behavior():
+    ctx = Context(behavior_prompt="sys")
+    await ctx.ensure_session_gathered()
+    assert ctx.system_prompt == "sys"

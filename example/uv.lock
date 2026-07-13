@@ -265,7 +265,7 @@ wheels = [
 
 [[package]]
 name = "mini-agent-kit"
-version = "0.1.6"
+version = "0.1.7"
 source = { editable = "../minimal_agent" }
 dependencies = [
     { name = "openai" },

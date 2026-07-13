@@ -11,6 +11,7 @@ import pytest
 from pydantic import BaseModel
 
 from minimal_agent.agent.scope import NullScope
+from minimal_agent.agent.view import SessionView
 from minimal_agent.events import EventEmitter, ToolEnd, ToolStart, ToolStatus
 from minimal_agent.llm.types import Role, ToolCall
 from minimal_agent.tools import (
@@ -254,7 +255,7 @@ def _recorded_ctx(**kwargs) -> tuple[ToolContext, "_Recorder"]:
     rec = _Recorder()
     scope = NullScope()
     scope.events = EventEmitter(sinks=[rec])
-    ctx = ToolContext(scope=scope, **kwargs)
+    ctx = ToolContext(session=SessionView(scope=scope), **kwargs)
     return ctx, rec
 
 

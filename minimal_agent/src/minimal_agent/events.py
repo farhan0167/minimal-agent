@@ -96,10 +96,12 @@ class RunStart:
     model: str
     backend: str
     tools_json: str  # canonical JSON: sorted by name, compact separators
-    # The stable system-prompt layer (behavior prompt + SESSION context),
+    # The stable system-prompt layer (behavior prompt + SESSION blocks),
     # constant for the run's lifetime — a run-level fact. Blob-interned by
-    # RunLogSink. The volatile layer (live injected blocks) rides each
-    # call.request as injected_run/injected_call instead.
+    # RunLogSink. Always the fully rendered prompt: Agent.run() awaits the
+    # context's SESSION gather before emitting this event. The volatile
+    # layer (live injected blocks) rides each call.request as
+    # injected_run/injected_call instead.
     system_prompt: str | None
     store_len: int  # store size when the run began
 

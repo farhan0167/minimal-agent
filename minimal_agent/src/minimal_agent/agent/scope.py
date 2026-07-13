@@ -1,8 +1,12 @@
 """Scope — a node in the session's recording tree.
 
+How a session *records itself*: plumbing, not application surface. Code
+running inside a session sees `SessionView` ([view.py](view.py)) instead —
+`Scope` reaches extension code only as what `session.spawn()` yields.
+
 The uniform handle every recorded context hangs off. The session root is a
 scope; any tool can mint a *child scope* for an agent it is about to run
-(`ctx.scope.child(...)`), which allocates `agents/a-<id>/` under the current
+(`ctx.session.spawn(...)`), which allocates `agents/a-<id>/` under the current
 scope with the identical artifact kit — transcript, trace, audit — linked
 bidirectionally to its parent. Recording a whole tree of agents is
 structural, not optional.
@@ -113,12 +117,12 @@ class ScopeMetaSink:
         self._totals = totals
         self._root_totals = root_totals
 
-    def handle(self, env: Envelope) -> None:
-        if isinstance(env.event, RunStart):
-            self.model = env.event.model
-            self.backend = env.event.backend
-        elif isinstance(env.event, CallResponse) and env.event.usage:
-            usage = Usage(**env.event.usage)
+    def handle(self, envelope: Envelope) -> None:
+        if isinstance(envelope.event, RunStart):
+            self.model = envelope.event.model
+            self.backend = envelope.event.backend
+        elif isinstance(envelope.event, CallResponse) and envelope.event.usage:
+            usage = Usage(**envelope.event.usage)
             self._totals.add(usage)
             if self._root_totals is not None:
                 self._root_totals.add(usage)
@@ -134,8 +138,8 @@ class Scope(Protocol):
     def new_context(
         self,
         *,
-        system_prompt: str | None = None,
-        live_sources: list[ContextSource] | None = None,
+        behavior_prompt: str | None = None,
+        context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
     ) -> "Context": ...
 
@@ -164,17 +168,22 @@ class NullScope:
     def new_context(
         self,
         *,
-        system_prompt: str | None = None,
-        live_sources: list[ContextSource] | None = None,
+        behavior_prompt: str | None = None,
+        context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
     ) -> "Context":
         from .context import Context
+        from .view import SessionView
 
+        # The degraded view: no session id, tempdir-backed state
+        # (state_dir=None ⇒ lazily minted). Extension code cannot tell
+        # the difference except that nothing durable is written.
         return Context(
-            system_prompt=system_prompt,
+            behavior_prompt=behavior_prompt,
             scope=self,
-            live_sources=live_sources,
+            context_sources=context_sources,
             workspace_root=workspace_root,
+            session=SessionView(scope=self, workspace_root=workspace_root),
         )
 
     @contextmanager
@@ -243,17 +252,28 @@ class RecordedScope:
     def new_context(
         self,
         *,
-        system_prompt: str | None = None,
-        live_sources: list[ContextSource] | None = None,
+        behavior_prompt: str | None = None,
+        context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
     ) -> "Context":
         from .context import Context
+        from .view import SessionView
 
+        # `state/` sits beside the artifact kit and is user land: the
+        # framework never reads, writes, or migrates anything under it.
+        # A child scope's dir is agents/a-<id>/, so a sub-agent's state is
+        # private to it — the same way its transcript already is.
         return Context(
-            system_prompt=system_prompt,
+            behavior_prompt=behavior_prompt,
             scope=self,
-            live_sources=live_sources,
+            context_sources=context_sources,
             workspace_root=workspace_root,
+            session=SessionView(
+                scope=self,
+                session_id=self._session_id,
+                workspace_root=workspace_root,
+                state_dir=self._dir / "state",
+            ),
         )
 
     def children_of(self, tool_call_id: str | None) -> list[str]:

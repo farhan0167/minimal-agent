@@ -15,6 +15,7 @@ import pytest
 from minimal_agent.agent.scope import NullScope, RecordedScope
 from minimal_agent.agent.session import SessionManager
 from minimal_agent.agent.sinks import BlobStore
+from minimal_agent.agent.view import SessionView
 from minimal_agent.events import CallResponse, RunStart
 from minimal_agent.llm.types import (
     GenerateResponse,
@@ -193,7 +194,7 @@ def test_session_json_includes_nested_agent_usage(tmp_path):
 
 async def test_child_blobs_share_the_session_root_store(tmp_path):
     session = SessionManager(base_dir=tmp_path).create_session(
-        model="m", backend="openai", system_prompt="root sys"
+        model="m", backend="openai", behavior_prompt="root sys"
     )
 
     # A run inside the child interns its system prompt against root blobs/.
@@ -228,14 +229,14 @@ async def test_tool_end_carries_children(tmp_path):
         input_schema = _In
 
         async def invoke(self, args: _In, ctx: ToolContext) -> str:
-            with ctx.scope.child(
+            with ctx.session.spawn(
                 spawned_by=self.name, task="sub", tool_call_id=ctx.tool_call_id
             ):
                 pass
             return "ok"
 
     root = _root_scope(tmp_path)
-    ctx = ToolContext(scope=root)
+    ctx = ToolContext(session=SessionView(scope=root))
     call = ToolCall(id="call_9", name="spawner", arguments={})
 
     await dispatch(call, {"spawner": SpawningTool()}, ctx)
@@ -256,7 +257,7 @@ async def test_spawn_agents_records_children_under_the_scope(tmp_path):
 
     tool = SpawnAgents(llm=llm, available_tools={}, workspace_root=tmp_path)
     root = _root_scope(tmp_path)
-    ctx = ToolContext(scope=root, tool_call_id="call_7")
+    ctx = ToolContext(session=SessionView(scope=root), tool_call_id="call_7")
 
     result = await tool.invoke(
         SpawnAgentsInput(

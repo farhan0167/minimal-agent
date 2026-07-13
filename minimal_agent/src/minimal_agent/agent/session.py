@@ -153,7 +153,7 @@ class SessionManager:
     factories to it; hosts construct one explicitly only to change policy:
 
         manager = SessionManager(base_dir=Path("/var/lib/app/sessions"))
-        agent = Agent(llm, tools, workspace_root=root, sessions=manager)
+        agent = Agent(llm, tools, workspace_root=root, session_manager=manager)
     """
 
     def __init__(
@@ -176,14 +176,16 @@ class SessionManager:
         *,
         model: str,
         backend: str,
-        system_prompt: str | None = None,
+        behavior_prompt: str | None = None,
         workspace_root: str | None = None,
-        live_sources: list[ContextSource] | None = None,
+        context_sources: list[ContextSource] | None = None,
     ) -> Session:
         """Start a new session. Creates the directory and files on disk.
 
-        live_sources (RUN/CALL-placed context sources) are forwarded to
-        the Context together with the workspace root; they are runtime
+        Takes identity (behavior prompt + context sources), never a
+        rendered prompt: the Context partitions sources by placement and
+        gathers SESSION ones at its first assemble(). Creation does no
+        gathering, no I/O beyond mkdir + metadata. Sources are runtime
         wiring, not persisted state.
         """
         now = datetime.now(tz=timezone.utc)
@@ -201,8 +203,8 @@ class SessionManager:
 
         scope = self._root_scope(session_dir, meta.session_id)
         context = scope.new_context(
-            system_prompt=system_prompt,
-            live_sources=live_sources,
+            behavior_prompt=behavior_prompt,
+            context_sources=context_sources,
             workspace_root=Path(workspace_root) if workspace_root else None,
         )
 
@@ -219,8 +221,8 @@ class SessionManager:
         *,
         model: str,
         backend: str,
-        system_prompt: str | None = None,
-        live_sources: list[ContextSource] | None = None,
+        behavior_prompt: str | None = None,
+        context_sources: list[ContextSource] | None = None,
     ) -> Session:
         """Resume an existing session from disk.
 
@@ -228,10 +230,11 @@ class SessionManager:
         session was created with. Raises SessionConfigMismatchError
         if they differ.
 
-        live_sources are re-attached to the Context with the persisted
-        workspace_root — live content is regenerated, never restored, so
-        sessions predating workspace_root persistence degrade to no live
-        gathering.
+        context_sources are re-attached to the Context with the persisted
+        workspace_root — gathered content is regenerated, never restored
+        (SESSION sources re-gather at the resumed context's first
+        assemble()), so sessions predating workspace_root persistence
+        degrade to no gathering.
         """
         session_dir = self._base_dir / session_id
         meta = self.read_meta(session_id)
@@ -250,8 +253,8 @@ class SessionManager:
         store = MessageStore.from_file(session_dir / "messages.jsonl")
         scope = self._root_scope(session_dir, session_id, store=store)
         context = scope.new_context(
-            system_prompt=system_prompt,
-            live_sources=live_sources,
+            behavior_prompt=behavior_prompt,
+            context_sources=context_sources,
             workspace_root=(Path(meta.workspace_root) if meta.workspace_root else None),
         )
         scope.events.emit(

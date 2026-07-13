@@ -11,6 +11,8 @@ from minimal_agent.context_sources import (
     DirectoryTreeSource,
     GitStatusSource,
     Placement,
+    WorkspaceSource,
+    source_placement,
 )
 from minimal_agent.events import (
     EventEmitter,
@@ -64,7 +66,7 @@ def _make_tool(name: str = "test_tool") -> BaseTool:
 async def test_terminates_when_no_tool_calls():
     llm = _make_llm(return_value=GenerateResponse(text="Hello!", tool_calls=None))
     agent = Agent(llm=llm, tools=[])
-    context = Context(system_prompt="sys")
+    context = Context(behavior_prompt="sys")
     context.add(Message(role=Role.USER, content="hi"))
 
     messages = [msg async for msg in agent.run(context)]
@@ -284,7 +286,7 @@ async def test_stream_yields_chunks_then_committed_message():
     """A streaming turn yields each StreamChunk, then the committed Message."""
     llm = _make_streaming_llm([[StreamChunk(text="Hel"), StreamChunk(text="lo!")]])
     agent = Agent(llm=llm, tools=[])
-    context = Context(system_prompt="sys")
+    context = Context(behavior_prompt="sys")
     context.add(Message(role=Role.USER, content="hi"))
 
     items = [item async for item in agent.run(context, stream=True)]
@@ -354,7 +356,7 @@ class _CountingSource:
     def name(self) -> str:
         return "counter"
 
-    async def gather(self, workspace_root) -> str:
+    async def gather(self, env) -> str:
         self.calls += 1
         return f"gathered {self.calls}"
 
@@ -366,7 +368,7 @@ def _make_factory_agent(
     llm.model = model
     llm.backend = "openai"
     if base_dir is not None:
-        kwargs["sessions"] = SessionManager(base_dir=base_dir)
+        kwargs["session_manager"] = SessionManager(base_dir=base_dir)
     return Agent(
         llm=llm,
         tools=[],
@@ -437,9 +439,11 @@ async def test_load_session_rebuilds_prompt_fresh(tmp_path):
     )
 
     created = await agent.create_session()
+    await created.context.ensure_session_gathered()
     assert "gathered 1" in created.context.get_messages()[0].content
 
     loaded = await agent.load_session(created.session_id)
+    await loaded.context.ensure_session_gathered()
     assert "gathered 2" in loaded.context.get_messages()[0].content
 
 
@@ -524,7 +528,7 @@ class _CountingLiveSource:
         self.placement = placement
         self.calls = 0
 
-    async def gather(self, workspace_root) -> str:
+    async def gather(self, env) -> str:
         self.calls += 1
         return f"live gather {self.calls}"
 
@@ -550,7 +554,7 @@ async def _session_with_source(tmp_path, source, llm_responses):
         prompt="you are a test agent",
         context_sources=[source],
         workspace_root=ws,
-        sessions=SessionManager(base_dir=tmp_path / "sessions"),
+        session_manager=SessionManager(base_dir=tmp_path / "sessions"),
     )
     session = await agent.create_session()
     return agent, session, llm
@@ -665,7 +669,7 @@ async def test_streaming_run_assembles_like_nonstreaming(tmp_path):
         prompt="you are a test agent",
         context_sources=[source],
         workspace_root=ws,
-        sessions=SessionManager(base_dir=tmp_path / "sessions"),
+        session_manager=SessionManager(base_dir=tmp_path / "sessions"),
     )
     session = await agent.create_session()
     session.context.add(Message(role=Role.USER, content="hello"))
@@ -690,8 +694,9 @@ async def test_factories_partition_session_and_live_sources(tmp_path):
     )
 
     created = await agent.create_session()
+    await created.context.ensure_session_gathered()
     prompt = created.context.get_messages()[0].content
-    assert "gathered 1" in prompt  # SESSION source baked in
+    assert "gathered 1" in prompt  # SESSION source in the rendered prompt
     assert "liveProbe" not in prompt  # RUN source stays out
 
     created.context.add(Message(role=Role.USER, content="hi"))
@@ -706,23 +711,28 @@ async def test_factories_partition_session_and_live_sources(tmp_path):
 
 
 def test_default_prompt_puts_git_status_on_message_channel():
+    def _by_placement(agent, placement):
+        return [s for s in agent.context_sources if source_placement(s) is placement]
+
     # Custom prompt → no default git/tree sources, but AGENTS.md rides
     # alongside every agent (RUN-placed), so it's the sole live source.
     agent = _make_factory_agent()
-    assert [type(s).__name__ for s in agent._live_sources] == ["AgentsMdSource"]
-    assert all(not isinstance(s, GitStatusSource) for s in agent._live_sources)
+    live = [
+        s for s in agent.context_sources if source_placement(s) is not Placement.SESSION
+    ]
+    assert [type(s).__name__ for s in live] == ["AgentsMdSource"]
+    # WorkspaceSource rides every identity, first in line.
+    assert isinstance(agent.context_sources[0], WorkspaceSource)
 
     llm = _make_llm(return_value=GenerateResponse(text="hi", tool_calls=None))
     llm.model = "test-model"
     llm.backend = "openai"
     default_agent = Agent(llm=llm, tools=[])  # default prompt
-    assert any(isinstance(s, GitStatusSource) for s in default_agent._live_sources)
-    assert all(
-        not isinstance(s, GitStatusSource) for s in default_agent._prompt_sources
-    )
-    assert any(
-        isinstance(s, DirectoryTreeSource) for s in default_agent._prompt_sources
-    )
+    run_sources = _by_placement(default_agent, Placement.RUN)
+    session_sources = _by_placement(default_agent, Placement.SESSION)
+    assert any(isinstance(s, GitStatusSource) for s in run_sources)
+    assert all(not isinstance(s, GitStatusSource) for s in session_sources)
+    assert any(isinstance(s, DirectoryTreeSource) for s in session_sources)
 
 
 async def test_default_agent_injects_git_status_into_user_message(tmp_path):
@@ -757,16 +767,16 @@ async def test_default_agent_injects_git_status_into_user_message(tmp_path):
         llm=llm,
         tools=[],
         workspace_root=ws,
-        sessions=SessionManager(base_dir=tmp_path / "sessions"),
+        session_manager=SessionManager(base_dir=tmp_path / "sessions"),
     )
     session = await agent.create_session()
-
-    system_prompt = session.context.get_messages()[0].content
-    assert '<context name="gitStatus">' not in system_prompt
 
     session.context.add(Message(role=Role.USER, content="status?"))
     async for _ in agent.run(session.context):
         pass
+
+    # The gathered (post-run) system prompt never carries a RUN source.
+    assert '<context name="gitStatus">' not in session.context.system_prompt
 
     sent_user = _user_texts(_sent_messages(llm)[0])[-1]
     assert '<context name="gitStatus">' in sent_user
@@ -969,3 +979,64 @@ async def test_bare_context_emits_nothing_and_runs_unchanged():
     messages = [msg async for msg in agent.run(context)]
 
     assert len(messages) == 1  # no events machinery in the way
+
+
+async def test_run_start_carries_fully_rendered_prompt():
+    """run.start must record the prompt the run's calls will see: the
+    SESSION gather happens before the event is emitted (run 1), and the
+    cached snapshot keeps later runs identical."""
+    from pathlib import Path
+
+    llm = _traced_llm(
+        [
+            GenerateResponse(text="one", tool_calls=None),
+            GenerateResponse(text="two", tool_calls=None),
+        ]
+    )
+    agent = Agent(llm=llm, tools=[])
+    context, rec = _recorded_context(
+        behavior_prompt="sys",
+        context_sources=[_CountingSource()],
+        workspace_root=Path("ws"),
+    )
+
+    context.add(Message(role=Role.USER, content="go"))
+    async for _ in agent.run(context):
+        pass
+    context.add(Message(role=Role.USER, content="more"))
+    async for _ in agent.run(context):
+        pass
+
+    starts = [env.event for env in rec.envelopes if isinstance(env.event, RunStart)]
+    assert len(starts) == 2
+    assert starts[0].system_prompt.startswith("sys")
+    assert "gathered 1" in starts[0].system_prompt  # rendered, not bare
+    # Run 2 re-emits the same snapshot — gathered once per context.
+    assert starts[1].system_prompt == starts[0].system_prompt
+    assert starts[0].system_prompt == context.system_prompt
+
+
+# ---- load_prompt (identity resolution, relocated from the deleted builder) --
+
+
+class TestLoadPrompt:
+    def test_none_loads_default(self):
+        from minimal_agent.agent.agent import load_prompt
+
+        result = load_prompt(None)
+        assert "software engineering" in result.lower() or "tool" in result.lower()
+        assert len(result) > 50
+
+    def test_string_returns_as_is(self):
+        from minimal_agent.agent.agent import load_prompt
+
+        assert load_prompt("You are a test agent.") == "You are a test agent."
+
+    def test_path_reads_file(self, tmp_path):
+        from pathlib import Path
+
+        from minimal_agent.agent.agent import load_prompt
+
+        prompt_file = tmp_path / "my_prompt.md"
+        prompt_file.write_text("Custom prompt content.")
+        assert load_prompt(Path(prompt_file)) == "Custom prompt content."
