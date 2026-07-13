@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from minimal_agent.agent.context import _merge_into_user
+from minimal_agent.agent.context import Context, _merge_into_user
 from minimal_agent.agent.session import SessionConfigMismatchError, SessionManager
 from minimal_agent.context_sources import GitStatusSource
 from minimal_agent.events import CallResponse, RunEnd, RunEndStatus, RunStart
@@ -442,3 +442,61 @@ async def test_audit_record_reconstructs_byte_exactly_from_disk(tmp_path):
     (record,) = _calls(session_dir)
     rebuilt = _reconstruct_from_disk(session_dir, record["call_id"])
     assert rebuilt == assembled
+
+
+# ---- context_cls persistence and drift detection ---------------------------
+
+
+class _SubContext(Context):
+    pass
+
+
+def test_meta_round_trips_context_cls(tmp_path):
+    session = _create(tmp_path, context_cls=_SubContext)
+
+    meta = SessionManager(base_dir=tmp_path).read_meta(session.session_id)
+
+    on_disk = json.loads((session.session_dir / "session.json").read_text())
+    expected = f"{_SubContext.__module__}.{_SubContext.__qualname__}"
+    assert on_disk["context_cls"] == expected
+    assert meta.context_cls == expected
+
+
+def test_default_context_cls_stamps_a_real_class_name(tmp_path):
+    """The default has one spelling — never None, never a sentinel."""
+    session = _create(tmp_path)
+
+    on_disk = json.loads((session.session_dir / "session.json").read_text())
+    assert on_disk["context_cls"] == "minimal_agent.agent.context.Context"
+
+
+def test_load_session_rejects_a_different_context_cls(tmp_path):
+    manager = SessionManager(base_dir=tmp_path)
+    created = manager.create_session(
+        model=_MODEL, backend=_BACKEND, context_cls=_SubContext
+    )
+
+    with pytest.raises(SessionConfigMismatchError) as exc:
+        manager.load_session(created.session_id, model=_MODEL, backend=_BACKEND)
+
+    msg = str(exc.value)
+    assert "_SubContext" in msg and "minimal_agent.agent.context.Context" in msg
+
+
+def test_list_sessions_skips_unreadable_meta_but_read_meta_stays_loud(tmp_path):
+    manager = SessionManager(base_dir=tmp_path)
+    good = manager.create_session(model=_MODEL, backend=_BACKEND)
+
+    # A pre-spec session directory: valid JSON, no context_cls key.
+    stale_dir = tmp_path / "stale"
+    stale_dir.mkdir()
+    stale = json.loads((good.session_dir / "session.json").read_text())
+    del stale["context_cls"]
+    stale["session_id"] = "stale"
+    (stale_dir / "session.json").write_text(json.dumps(stale))
+
+    listed = [s.session_id for s in manager.list_sessions()]
+    assert listed == [good.session_id]
+
+    with pytest.raises(KeyError):
+        manager.read_meta("stale")

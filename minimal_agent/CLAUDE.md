@@ -62,7 +62,7 @@ Three layers:
 2. **Dispatch** — `dispatch()` ([src/minimal_agent/tools/dispatcher.py](src/minimal_agent/tools/dispatcher.py)) runs the full pipeline: lookup → parse/validate args → semantic validation → permission check → invoke → serialize result. All errors are caught and returned as tool-result messages so the agent loop never crashes.
 3. **Context** — `ToolContext` ([src/minimal_agent/tools/context.py](src/minimal_agent/tools/context.py)) is a per-call bag passed to every tool invocation. Carries `permission_callback` (interactive confirmation), `scope` (the recording node — defaults to a `NullScope`; tools that embed agents spawn children from it), and `tool_call_id` (stamped per call by the dispatcher). New fields (cancellation tokens, loggers) land here as concrete tools need them.
 
-Concrete tools live under [src/minimal_agent/tools/builtin/](src/minimal_agent/tools/builtin/) (e.g. `get_weather`). See [.claude/specifications/tool-system.md](.claude/specifications/tool-system.md) for the full tool-authoring contract.
+Concrete tools live under [src/minimal_agent/tools/builtin/](src/minimal_agent/tools/builtin/) (e.g. `read_file`), each in its own sub-package alongside its input schema. The package `__init__.py` re-exports them all, so callers import by name rather than layout: `from minimal_agent.tools.builtin import ReadFile`. See [.claude/specifications/tool-system.md](.claude/specifications/tool-system.md) for the full tool-authoring contract and [.claude/specifications/public-api-surface.md](.claude/specifications/public-api-surface.md) for the two-tier import surface.
 
 ### LLM facade ([src/minimal_agent/llm/](src/minimal_agent/llm/))
 

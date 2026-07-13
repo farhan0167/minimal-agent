@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from minimal_agent.agent import Agent
+from minimal_agent.agent.context import Context
 from minimal_agent.agent.session import SessionManager
 from minimal_agent.audit import (
     CallRecordNotFoundError,
@@ -501,3 +502,73 @@ async def test_find_agent_scope_resolves_nested_agent_by_id(tmp_path):
     assert call.input.messages[0].content == "gc sys"
 
     assert find_agent_scope(session.session_dir, "a-nope") is None
+
+
+# ---- reconstruction under a custom projection ------------------------------
+
+
+class _WindowedContext(Context):
+    """Sends only the last two stored messages to the LLM."""
+
+    def project(self):
+        return self._store.messages[-2:]
+
+
+class _SummarizingContext(Context):
+    """Synthesizes a message that is not in the store — no range expresses it."""
+
+    def project(self):
+        return [Message(role=Role.USER, content="summary of everything")]
+
+
+async def _session_with_messages(tmp_path, context_cls, n=5):
+    session = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model",
+        backend="openai",
+        behavior_prompt="you are helpful",
+        context_cls=context_cls,
+    )
+    events = session.context.events
+    events.emit(
+        RunStart(
+            model="test-model",
+            backend="openai",
+            tools_json="[]",
+            system_prompt="you are helpful",
+            store_len=len(session.context.store),
+        )
+    )
+    for i in range(n):
+        session.context.add(Message(role=Role.USER, content=f"m{i}"))
+    assembled = await session.context.assemble()
+    events.emit(RunEnd(status=RunEndStatus.COMPLETED, calls=1, duration_ms=1))
+    return session, assembled
+
+
+async def test_reconstruct_replays_a_windowed_projection_verbatim(tmp_path):
+    """The recorded ranges describe what project() actually returned, so a
+    windowed session reconstructs exactly — and verifies."""
+    session, assembled = await _session_with_messages(tmp_path, _WindowedContext)
+
+    (record,) = read_call_records(session.session_dir)
+    assert record["projected"] == [[3, 5]]  # the last two of five, not [0, 5]
+
+    result = reconstruct_call(session.session_dir, record["call_id"])
+
+    assert result.messages == assembled
+    assert result.verified
+    assert [m.content for m in result.messages[1:]] == ["m3", "m4"]
+
+
+async def test_synthesizing_projection_is_reported_non_reconstructible(tmp_path):
+    """No honest range exists, so the call says so — rather than replaying a
+    false range and reporting a healthy session as tampered."""
+    session, _ = await _session_with_messages(tmp_path, _SummarizingContext)
+
+    (record,) = read_call_records(session.session_dir)
+    assert record["projected"] is None
+
+    result = reconstruct_call(session.session_dir, record["call_id"])
+
+    assert not result.verified
+    assert "not expressible as store ranges" in result.unverified_reason

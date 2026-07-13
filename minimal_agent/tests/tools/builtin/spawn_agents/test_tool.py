@@ -248,3 +248,55 @@ def test_schema_max_turns_bounds():
     # Valid bounds
     assert SubAgentSpec(task="x", max_turns=1).max_turns == 1
     assert SubAgentSpec(task="x", max_turns=20).max_turns == 20
+
+
+# -- Context class (identity, not inherited from the parent) ------------------
+
+
+async def test_sub_agent_context_is_its_own_agents_class(tmp_path):
+    """The sub-agent's Context comes from *its* Agent — which SpawnAgents
+    builds with the default class — not from whatever the parent projects
+    with. Identity travels with the agent; the scope only records."""
+    from minimal_agent.agent.context import Context
+    from minimal_agent.agent.session import SessionManager
+
+    class _WindowedContext(Context):
+        def project(self):
+            return self._store.messages[-1:]
+
+    # A parent session that projects through a subclass.
+    parent = SessionManager(base_dir=tmp_path).create_session(
+        model="test-model", backend="openai", context_cls=_WindowedContext
+    )
+    assert isinstance(parent.context, _WindowedContext)
+
+    built: list[type] = []
+    real_child = parent.scope.child
+
+    def _spy_child(**kwargs):
+        cm = real_child(**kwargs)
+
+        class _Wrapper:
+            def __enter__(self):
+                child = cm.__enter__()
+                real_new = child.new_context
+
+                def _spy_new(**kw):
+                    ctx = real_new(**kw)
+                    built.append(type(ctx))
+                    return ctx
+
+                child.new_context = _spy_new
+                return child
+
+            def __exit__(self, *exc):
+                return cm.__exit__(*exc)
+
+        return _Wrapper()
+
+    parent.scope.child = _spy_child
+
+    args = SpawnAgentsInput(agents=[SubAgentSpec(task="do a thing")])
+    await _make_tool().invoke(args, ToolContext(session=parent.context.session))
+
+    assert built == [Context]  # plain, despite the parent's _WindowedContext

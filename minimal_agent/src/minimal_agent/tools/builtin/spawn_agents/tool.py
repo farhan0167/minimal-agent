@@ -17,7 +17,6 @@ Sub-agents cannot spawn further sub-agents (no recursion).
 import asyncio
 from pathlib import Path
 
-from ....agent import Agent
 from ....llm import LLM
 from ....llm.types import Message, Role
 from ...base import BaseTool
@@ -61,6 +60,11 @@ class SpawnAgents(BaseTool[SpawnAgentsInput, str]):
 
     async def _run_sub_agent(self, spec: SubAgentSpec, ctx: ToolContext) -> str:
         """Build and run a single sub-agent to completion, recorded."""
+        # Deferred: this tool needs Agent, but Agent imports SkillTool from
+        # tools.builtin — so a module-scope import here closes the cycle
+        # agent → tools.builtin → spawn_agents → agent. Keep it in the method.
+        from ....agent import Agent
+
         agent = Agent(
             llm=self._llm,
             tools=self._resolve_tools(spec.tools),
@@ -74,11 +78,14 @@ class SpawnAgents(BaseTool[SpawnAgentsInput, str]):
             tool_call_id=ctx.tool_call_id,
         ) as scope:
             # Identity in, no rendered prompt: the child context gathers
-            # the agent's SESSION sources at its first assemble().
+            # the agent's SESSION sources at its first assemble(). The
+            # Context class is the sub-agent's own, not the parent's — the
+            # scope contributes recording, the agent contributes identity.
             context = scope.new_context(
                 behavior_prompt=agent.behavior_prompt,
                 context_sources=agent.context_sources,
                 workspace_root=self._workspace_root,
+                context_cls=agent.context_cls,
             )
             context.add(Message(role=Role.USER, content=spec.task))
 

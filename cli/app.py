@@ -2,19 +2,19 @@
 
 from pathlib import Path
 
-from minimal_agent.agent import Agent, Session, SessionConfigMismatchError, SessionManager
-from minimal_agent.config import settings
-from minimal_agent.llm import LLM
-from minimal_agent.tools.builtin.edit_file import EditFile
-from minimal_agent.tools.builtin.get_weather import GetWeather
-from minimal_agent.tools.builtin.glob import Glob
-from minimal_agent.tools.builtin.grep import Grep
-from minimal_agent.tools.builtin.read_file import ReadFile
-from minimal_agent.tools.builtin.run_shell import RunShell
-from minimal_agent.tools.builtin.spawn_agents import SpawnAgents
-from minimal_agent.tools.builtin.web_extract import WebExtract
-from minimal_agent.tools.builtin.web_search import WebSearch
-from minimal_agent.tools.builtin.write_file import WriteFile
+from minimal_agent import LLM, Agent, Session, SessionManager, settings
+from minimal_agent.agent import SessionConfigMismatchError
+from minimal_agent.tools.builtin import (
+    EditFile,
+    Glob,
+    Grep,
+    ReadFile,
+    RunShell,
+    SpawnAgents,
+    WebExtract,
+    WebSearch,
+    WriteFile,
+)
 
 import render
 from repl import run_loop
@@ -32,7 +32,6 @@ def _build_agent(workspace: Path) -> Agent:
     read_timestamps: dict[str, float] = {}
 
     builtin_tools = [
-        GetWeather(),
         ReadFile(
             workspace_root=workspace,
             read_timestamps=read_timestamps,

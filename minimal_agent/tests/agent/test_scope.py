@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from minimal_agent.agent.context import Context
 from minimal_agent.agent.scope import NullScope, RecordedScope
 from minimal_agent.agent.session import SessionManager
 from minimal_agent.agent.sinks import BlobStore
@@ -285,3 +286,42 @@ async def test_spawn_agents_records_children_under_the_scope(tmp_path):
         meta = _agent_json(tmp_path, agent_id)
         assert meta["status"] == "completed"
         assert meta["model"] == "test-model"
+
+
+# ---- context_cls passthrough (identity travels, scope holds nothing) --------
+
+
+class _SubContext(Context):
+    pass
+
+
+def test_recorded_scope_builds_the_given_context_class(tmp_path):
+    scope = _root_scope(tmp_path)
+
+    ctx = scope.new_context(behavior_prompt="sys", context_cls=_SubContext)
+
+    assert isinstance(ctx, _SubContext)
+    assert ctx.scope is scope
+    assert ctx.session.id == "sess-1"
+    assert ctx.session.state_dir == scope.dir / "state"
+
+
+def test_null_scope_builds_the_given_context_class():
+    ctx = NullScope().new_context(context_cls=_SubContext)
+
+    assert isinstance(ctx, _SubContext)
+
+
+def test_omitted_context_cls_builds_plain_context(tmp_path):
+    assert type(_root_scope(tmp_path).new_context()) is Context
+    assert type(NullScope().new_context()) is Context
+
+
+def test_scope_holds_no_context_class(tmp_path):
+    """A child scope is a recording node, not an identity carrier: it does
+    not inherit the class its parent's context was built from."""
+    parent = _root_scope(tmp_path)
+    parent.new_context(context_cls=_SubContext)
+
+    with parent.child(spawned_by="t", task="task") as child:
+        assert type(child.new_context()) is Context

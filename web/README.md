@@ -130,12 +130,13 @@ Status semantics:
 
 ## Writing a renderer for a new tool
 
-Say the backend grows a `get_weather` tool whose result renders as
+Say the backend grows a `get_weather` tool (hypothetical — write your own
+under `tools/builtin/`) whose result renders as
 `"72°F, partly cloudy in San Francisco"` with args `{ location: string }`.
 
 **1. Know the contract.** Read the tool's `schema.py` (args) and
 `render_result_for_assistant` (result string) under
-`minimal_agent/src/minimal_agent/tools/builtin/get_weather/`.
+`minimal_agent/src/minimal_agent/tools/builtin/<your_tool>/`.
 
 **2. Create `src/components/tools/renderers/GetWeather.tsx`:**
 

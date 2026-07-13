@@ -117,7 +117,10 @@ class RunEnd:
 @dataclass(frozen=True)
 class CallRequest:
     type: ClassVar[EventType] = EventType.CALL_REQUEST
-    projected: list[tuple[int, int]]  # [start, end) store-index ranges
+    # [start, end) store-index ranges the projection selected, in order.
+    # None ⇒ the projection synthesized or reordered messages, so it is not
+    # expressible as store ranges and the call is not reconstructible.
+    projected: list[tuple[int, int]] | None
     store_len: int  # ⇒ the reply lands at this index
     # The system prompt is a run-level fact — it rides run.start, not here.
     injected_run: InjectedBlock | None

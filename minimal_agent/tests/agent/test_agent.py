@@ -1040,3 +1040,110 @@ class TestLoadPrompt:
         prompt_file = tmp_path / "my_prompt.md"
         prompt_file.write_text("Custom prompt content.")
         assert load_prompt(Path(prompt_file)) == "Custom prompt content."
+
+
+# ---- pluggable Context class (context_cls) ---------------------------------
+
+
+class _LastTwoContext(Context):
+    """Projection strategy: the LLM sees only the last two messages."""
+
+    def project(self) -> List[Message]:
+        return self._store.messages[-2:]
+
+
+def test_context_cls_defaults_to_context():
+    agent = Agent(llm=_make_llm(), tools=[])
+    assert agent.context_cls is Context
+
+
+def test_context_cls_is_identity():
+    agent = Agent(llm=_make_llm(), tools=[], context_cls=_LastTwoContext)
+    assert agent.context_cls is _LastTwoContext
+
+
+async def test_create_session_builds_the_agents_context_class(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    agent = _make_factory_agent(
+        workspace_root=ws, base_dir=tmp_path / "sessions", context_cls=_LastTwoContext
+    )
+
+    session = await agent.create_session()
+
+    assert isinstance(session.context, _LastTwoContext)
+
+
+async def test_load_session_rebuilds_the_same_context_class(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    base = tmp_path / "sessions"
+    agent = _make_factory_agent(
+        workspace_root=ws, base_dir=base, context_cls=_LastTwoContext
+    )
+    created = await agent.create_session()
+
+    loaded = await agent.load_session(created.session_id)
+
+    assert isinstance(loaded.context, _LastTwoContext)
+
+
+async def test_load_session_rejects_swapped_context_class(tmp_path):
+    """A windowed session resumed under the plain Context would silently ship
+    the whole transcript — the exact drift the check exists to catch."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    base = tmp_path / "sessions"
+    created = await _make_factory_agent(
+        workspace_root=ws, base_dir=base, context_cls=_LastTwoContext
+    ).create_session()
+
+    plain = _make_factory_agent(workspace_root=ws, base_dir=base)
+    with pytest.raises(SessionConfigMismatchError) as exc:
+        await plain.load_session(created.session_id)
+
+    msg = str(exc.value)
+    assert "context_cls" in msg
+    assert "_LastTwoContext" in msg  # the persisted side
+    assert "minimal_agent.agent.context.Context" in msg  # the current side
+
+
+async def test_load_session_rejects_context_class_added_to_default_session(tmp_path):
+    """The reverse drift: full → windowed silently truncates live history."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    base = tmp_path / "sessions"
+    created = await _make_factory_agent(
+        workspace_root=ws, base_dir=base
+    ).create_session()
+
+    windowed = _make_factory_agent(
+        workspace_root=ws, base_dir=base, context_cls=_LastTwoContext
+    )
+    with pytest.raises(SessionConfigMismatchError, match="context_cls"):
+        await windowed.load_session(created.session_id)
+
+
+async def test_projection_shapes_what_the_llm_sees_without_touching_the_store():
+    """End-to-end: the subclass's project() governs the LLM input, and the
+    store still holds the whole durable transcript (invariant 7)."""
+    llm = _make_llm(return_value=GenerateResponse(text="ok", tool_calls=None))
+    agent = Agent(llm=llm, tools=[], context_cls=_LastTwoContext)
+
+    context = agent.context_cls(behavior_prompt="sys")
+    for i in range(5):
+        context.add(Message(role=Role.USER, content=f"m{i}"))
+
+    [msg async for msg in agent.run(context)]
+
+    sent = llm.generate.call_args.kwargs["messages"]
+    non_system = [m for m in sent if m.role is not Role.SYSTEM]
+    assert [m.content for m in non_system] == ["m3", "m4"]
+    # The store is the durable transcript — projection is only a view of it.
+    assert [m.content for m in context.store.messages if m.role is Role.USER] == [
+        "m0",
+        "m1",
+        "m2",
+        "m3",
+        "m4",
+    ]
