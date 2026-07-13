@@ -170,6 +170,18 @@ def _rebuild(
         )
     system_prompt_ref = run["system_prompt"] if run else None
 
+    # A projection that synthesizes or reorders messages (a summarizing
+    # Context, say) has no store-range expression, so the transcript cannot
+    # rebuild what the model saw. Say so, rather than replaying a wrong input
+    # and reporting the mismatch as a failed verification.
+    ranges = record["projected"]
+    if ranges is None and unverified_reason is None:
+        unverified_reason = (
+            "projection is not expressible as store ranges "
+            "(Context.project() synthesized or reordered messages); "
+            "the model input cannot be rebuilt from the transcript"
+        )
+
     msgs: list[Message] = []
     if system_prompt_ref:
         msgs.append(
@@ -178,21 +190,23 @@ def _rebuild(
                 content=_read_blob(session_dir, system_prompt_ref),
             )
         )
-    for start, end in record["projected"]:
+    for start, end in ranges or []:
         msgs.extend(stored[start:end])
 
     offset = 1 if system_prompt_ref else 0
     inj_run = record["injected"]["run"]
     inj_call = record["injected"]["call"]
-    if inj_run:
-        i = inj_run["anchor"] + offset
-        msgs[i] = _merge_into_user(msgs[i], inj_run["text"])
-    if inj_call:
-        if inj_call["anchor"] is not None:
-            i = inj_call["anchor"] + offset
-            msgs[i] = _merge_into_user(msgs[i], inj_call["text"])
-        else:
-            msgs.append(Message(role=Role.USER, content=inj_call["text"]))
+    # Anchors index the projection, so they are meaningless without it.
+    if ranges is not None:
+        if inj_run:
+            i = inj_run["anchor"] + offset
+            msgs[i] = _merge_into_user(msgs[i], inj_run["text"])
+        if inj_call:
+            if inj_call["anchor"] is not None:
+                i = inj_call["anchor"] + offset
+                msgs[i] = _merge_into_user(msgs[i], inj_call["text"])
+            else:
+                msgs.append(Message(role=Role.USER, content=inj_call["text"]))
 
     tools_ref = run["tools"] if run else None
     return ReconstructedCall(

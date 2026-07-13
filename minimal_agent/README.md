@@ -166,6 +166,8 @@ Every session records itself as it runs: the transcript (`messages.jsonl`), a ti
 
 `Context` is the agent's view of the conversation. It wraps a `MessageStore` (append-only message log) with the system prompt and a projection strategy. Each LLM call goes through `context.assemble()`, which prepends the system prompt, projects the history, and injects fresh content from any RUN/CALL-placed context sources — without ever writing that content to the transcript. `get_messages()` returns the clean conversation (no injected blocks, no I/O), which is what UIs should render.
 
+The **projection** is the seam between the two: the store is the durable transcript, and `context.project()` decides which of it the model actually sees. It returns everything by default. Subclass `Context`, override `project()`, and hand the class to the agent to shape history instead — a sliding window, a token budget, tool-result decay. See [Manage the context window](#6-manage-the-context-window).
+
 ### Session view
 
 `SessionView` is the session as seen *from inside* — the handle every tool invocation (`ctx.session`) and every context-source `gather(session)` receives. Its facets:
@@ -590,3 +592,61 @@ The model reads the skill list in its system prompt, decides a skill matches the
 This is progressive disclosure: the skill list costs ~100 tokens, but the full prompt is only loaded when it's actually needed. You can have dozens of skills available without paying the token cost of any specific one until the model decides to use it.
 
 Skills can reference additional files (`scripts/`, `references/`, `assets/`) alongside the `SKILL.md` — the skill prompt just tells the model to read them with its existing tools. See the [official specification](https://agentskills.io/specification) for the full directory layout and progressive-disclosure pattern.
+
+### 6. Manage the context window
+
+Long conversations eventually outgrow the model's context window. `max_turns` doesn't help — it caps LLM *calls*, not tokens. The lever is the **projection**: the store is the durable transcript, and `Context.project()` decides which of it the model actually sees on each call. It returns everything by default.
+
+To shape history, subclass `Context`, override `project()`, and pass the class to the agent:
+
+```python
+from minimal_agent import Agent
+from minimal_agent.agent import Context
+from minimal_agent.llm import Message
+
+
+class WindowedContext(Context):
+    """Pin the task, keep the last 40 messages, drop the middle."""
+
+    def project(self) -> list[Message]:
+        msgs = self._store.messages
+        if len(msgs) <= 40:
+            return msgs
+        return msgs[:1] + msgs[-40:]
+
+
+agent = Agent(llm=llm, tools=[...], workspace_root=workspace,
+              context_cls=WindowedContext)
+```
+
+That's the whole seam. The class is part of the agent's **identity**, like its prompt and tools, so it reaches every context the agent mints — sessions it creates, sessions it resumes, and sub-agents it spawns (each sub-agent uses *its own* agent's class, not its parent's).
+
+Note the pin. A naive `msgs[-40:]` drops the *first* user message — the actual task — which is the one message you can never afford to lose.
+
+**The contract.** `project()` must not mutate the store: the store is the durable transcript, the projection is only a view of it. Filter and copy. It's called on every LLM call, so keep it cheap.
+
+Because it's a class and not a callable, you can override the rest of `Context` too. `add()` is the write path — every message enters the conversation through it, which makes it the place to redact secrets *before* they reach `messages.jsonl`, or to keep a running token count as messages land:
+
+```python
+class RedactingContext(Context):
+    def add(self, msg: Message) -> None:
+        if isinstance(msg.content, str):
+            msg = msg.model_copy(
+                update={"content": SECRET_RE.sub("[REDACTED]", msg.content)}
+            )
+        super().add(msg)
+```
+
+`assemble()` is `async`, so a subclass can do real work per call — consult a token budget against the model's true limit, fetch from a vector store, summarize when the transcript crosses a threshold. And since a subclass gets `self._session.state_dir` (a real directory the framework never touches), it can cache what it computes and survive a resume.
+
+#### Projection and the audit trail
+
+Every LLM call records which slices of the store it sent, so `reconstruct_call()` can rebuild the exact model input and verify it against a hash (see [Observability](#observability)). A projection that **selects** stored messages — windows, filters, budgets, pins — is recorded as store-index ranges and stays fully reconstructible, even when the ranges are disjoint.
+
+A projection that **synthesizes** messages (a summary, an elided tool result — anything the store doesn't literally contain) has no honest range expression. Those calls record `projected: null` and `reconstruct_call()` reports them non-reconstructible, with a reason, rather than replaying a wrong input and reporting a healthy session as tampered. That's a real tradeoff to make deliberately: summarization buys you tokens and costs you byte-exact replay.
+
+#### Resuming
+
+The Context class is persisted in `session.json` and validated on resume, exactly like the model and backend. Loading a `WindowedContext` session with a plain `Context` raises `SessionConfigMismatchError` — otherwise you'd silently ship the entire transcript to the model (a context blowout and a cost spike), and the reverse would silently truncate history you believe is live.
+
+The check compares the class's import path, so it catches a *swap*, not an *edit*: renaming or moving your Context class orphans its existing sessions (loudly), and changing the body of `project()` in place is invisible to it.

@@ -74,11 +74,14 @@ class SpawnAgents(BaseTool[SpawnAgentsInput, str]):
             tool_call_id=ctx.tool_call_id,
         ) as scope:
             # Identity in, no rendered prompt: the child context gathers
-            # the agent's SESSION sources at its first assemble().
+            # the agent's SESSION sources at its first assemble(). The
+            # Context class is the sub-agent's own, not the parent's — the
+            # scope contributes recording, the agent contributes identity.
             context = scope.new_context(
                 behavior_prompt=agent.behavior_prompt,
                 context_sources=agent.context_sources,
                 workspace_root=self._workspace_root,
+                context_cls=agent.context_cls,
             )
             context.add(Message(role=Role.USER, content=spec.task))
 

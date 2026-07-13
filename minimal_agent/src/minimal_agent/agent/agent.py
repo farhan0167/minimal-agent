@@ -81,6 +81,7 @@ class Agent:
         reasoning_config: ReasoningConfig | None = None,
         prompt: Union[str, Path, None] = None,
         context_sources: list[ContextSource] | None = None,
+        context_cls: type[Context] = Context,
         max_turns: int = 10,
         workspace_root: Path | None = None,
         enable_skills: bool = True,
@@ -105,6 +106,7 @@ class Agent:
         self._max_turns = max_turns
         self._behavior_prompt = load_prompt(prompt)
         self._workspace_root = workspace_root
+        self._context_cls = context_cls
 
         # Default prompt → default context sources.
         # Custom prompt → blank slate (user opts in).
@@ -157,6 +159,14 @@ class Agent:
         return list(self._context_sources)
 
     @property
+    def context_cls(self) -> type[Context]:
+        """The Context class this agent's sessions are built from — the
+        projection strategy, as identity. Read by SpawnAgents so a
+        sub-agent's context is built from *its* agent's class, not its
+        parent's."""
+        return self._context_cls
+
+    @property
     def session_manager(self) -> SessionManager:
         """The persistence policy this agent's session factories use."""
         return self._session_manager
@@ -205,6 +215,7 @@ class Agent:
             behavior_prompt=self._behavior_prompt,
             workspace_root=str(root),
             context_sources=self._context_sources,
+            context_cls=self._context_cls,
         )
 
     async def load_session(self, session_id: str) -> Session:
@@ -213,8 +224,8 @@ class Agent:
         The system prompt is rebuilt fresh at the resumed context's first
         assemble(), against the session's persisted workspace root
         (rebuild, don't restore). Raises SessionConfigMismatchError if
-        the session's model, backend, or workspace don't match this
-        agent's.
+        the session's model, backend, Context class, or workspace don't
+        match this agent's.
         """
         meta = self._session_manager.read_meta(session_id)
         self._resolve_load_root(meta)
@@ -224,6 +235,7 @@ class Agent:
             backend=self._llm.backend,
             behavior_prompt=self._behavior_prompt,
             context_sources=self._context_sources,
+            context_cls=self._context_cls,
         )
 
     def _resolve_load_root(self, meta: SessionMeta) -> Path:

@@ -192,11 +192,15 @@ class Context:
         system message renders from the SESSION cache: before the first
         gather it carries the behavior prompt alone.
         """
+        return self._with_system(self.project())
+
+    def _with_system(self, projected: list[Message]) -> list[Message]:
+        """Prepend the system message (if any) to a projection."""
         msgs: list[Message] = []
         system = self.system_prompt
         if system is not None:
             msgs.append(Message(role=Role.SYSTEM, content=system))
-        msgs.extend(self._project())
+        msgs.extend(projected)
         return msgs
 
     def begin_run(self) -> None:
@@ -255,7 +259,10 @@ class Context:
         byte-identical to an unrecorded context.
         """
         await self.ensure_session_gathered()
-        msgs = self.get_messages()
+        # project() once: the same list is both sent and audited, so the
+        # recorded ranges cannot drift from what the model actually saw.
+        projected = self.project()
+        msgs = self._with_system(projected)
         injected_run: InjectedBlock | None = None
         injected_call: InjectedBlock | None = None
 
@@ -288,9 +295,10 @@ class Context:
             if merged:
                 injected = "\n".join([*merged, _MERGED_FRAMING])
                 msgs[user_idx] = _merge_into_user(msgs[user_idx], injected)
-                # anchor is a store index: user_idx is a position in the
-                # assembled list, which the system message (if rendered)
-                # shifts by one.
+                # anchor is an index into the *projection*, which is what
+                # audit rebuilds from the recorded ranges: user_idx is a
+                # position in the assembled list, which the system message
+                # (if rendered) shifts by one.
                 offset = 1 if msgs[0].role is Role.SYSTEM else 0
                 injected_run = InjectedBlock(anchor=user_idx - offset, text=injected)
 
@@ -299,12 +307,13 @@ class Context:
                 msgs.append(Message(role=Role.USER, content=carrier))
                 injected_call = InjectedBlock(anchor=None, text=carrier)
 
-        self._emit_call_request(msgs, injected_run, injected_call)
+        self._emit_call_request(msgs, projected, injected_run, injected_call)
         return msgs
 
     def _emit_call_request(
         self,
         msgs: list[Message],
+        projected: list[Message],
         injected_run: InjectedBlock | None,
         injected_call: InjectedBlock | None,
     ) -> None:
@@ -315,15 +324,53 @@ class Context:
         """
         self._scope.events.emit(
             CallRequest(
-                # The default full projection, today. A projection strategy
-                # that shapes history replaces this with its actual ranges.
-                projected=[(0, len(self._store))],
+                projected=self._projected_ranges(projected),
                 store_len=len(self._store),
                 injected_run=injected_run,
                 injected_call=injected_call,
                 assembled_sha256=hash_messages(msgs),
             )
         )
+
+    def _projected_ranges(
+        self, projected: list[Message]
+    ) -> list[tuple[int, int]] | None:
+        """Express this call's projection as [start, end) store-index ranges.
+
+        These ranges are the audit recipe: reconstruct_call() replays them
+        against messages.jsonl to rebuild the exact model input. So they
+        must describe what project() actually returned, not what the default
+        would have returned — a full-range claim under a windowing subclass
+        would make reconstruction produce the wrong input and report a
+        healthy session as unverified.
+
+        Matches by object identity against the store, so it is exact for any
+        projection that *selects* stored messages (the default, windows,
+        filters) and is O(len(projected)). Returns None — "not expressible as
+        ranges" — for a projection that synthesizes messages (a summary, a
+        rewrite) or reorders them; audit then reports the call
+        non-reconstructible instead of silently replaying a false range.
+        """
+        stored = self._store.messages
+        if not projected:
+            return []
+        index = {id(m): i for i, m in enumerate(stored)}
+
+        ranges: list[tuple[int, int]] = []
+        start = prev = None
+        for msg in projected:
+            i = index.get(id(msg))
+            if i is None or (prev is not None and i <= prev):
+                return None  # synthesized or reordered — no honest range exists
+            if start is None:
+                start, prev = i, i
+            elif i == prev + 1:
+                prev = i
+            else:
+                ranges.append((start, prev + 1))
+                start = prev = i
+        ranges.append((start, prev + 1))
+        return ranges
 
     async def _gather_blocks(self, sources: list[ContextSource]) -> str | None:
         """Gather and format one channel's sources, tolerating failures."""
@@ -333,11 +380,28 @@ class Context:
             preamble=None,
         )
 
-    def _project(self) -> list[Message]:
-        """The projection strategy. Returns the messages the LLM should see.
+    def project(self) -> list[Message]:
+        """The projection strategy: the messages the LLM should see.
 
-        Default: return everything. Override point for future strategies
-        (sliding window, summarization, token-aware truncation).
+        Default: everything in the store. Override to implement a sliding
+        window, summarization, token-aware truncation, etc. Supply the
+        subclass to an Agent with `Agent(..., context_cls=MyContext)`.
+
+        Contract:
+        - Return a list of Messages for the LLM; the framework sends them
+          in the order returned.
+        - MUST NOT mutate the store. Projection is a *view*; the durable
+          transcript is what the store holds. Filter and copy — never
+          `self._store.messages.pop()`.
+        - Called on every LLM call in the loop. Keep it cheap, or cache
+          against the store's length.
+
+        Messages returned *as stored* (same objects, in store order) are
+        recorded as store-index ranges on call.request, which is what makes
+        a call replayable by audit.reconstruct_call(). A projection that
+        synthesizes messages (a summary, a rewrite) cannot be expressed as
+        ranges; such calls are recorded as non-reconstructible rather than
+        with a false range claim. See _projected_ranges().
         """
         return self._store.messages
 

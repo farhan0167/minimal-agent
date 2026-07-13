@@ -141,6 +141,7 @@ class Scope(Protocol):
         behavior_prompt: str | None = None,
         context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
+        context_cls: type["Context"] | None = None,
     ) -> "Context": ...
 
     def child(
@@ -171,6 +172,7 @@ class NullScope:
         behavior_prompt: str | None = None,
         context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
+        context_cls: type["Context"] | None = None,
     ) -> "Context":
         from .context import Context
         from .view import SessionView
@@ -178,7 +180,8 @@ class NullScope:
         # The degraded view: no session id, tempdir-backed state
         # (state_dir=None ⇒ lazily minted). Extension code cannot tell
         # the difference except that nothing durable is written.
-        return Context(
+        cls = context_cls or Context
+        return cls(
             behavior_prompt=behavior_prompt,
             scope=self,
             context_sources=context_sources,
@@ -255,6 +258,7 @@ class RecordedScope:
         behavior_prompt: str | None = None,
         context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
+        context_cls: type["Context"] | None = None,
     ) -> "Context":
         from .context import Context
         from .view import SessionView
@@ -263,7 +267,8 @@ class RecordedScope:
         # framework never reads, writes, or migrates anything under it.
         # A child scope's dir is agents/a-<id>/, so a sub-agent's state is
         # private to it — the same way its transcript already is.
-        return Context(
+        cls = context_cls or Context
+        return cls(
             behavior_prompt=behavior_prompt,
             scope=self,
             context_sources=context_sources,

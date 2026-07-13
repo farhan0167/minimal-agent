@@ -11,6 +11,7 @@ never sessions: not resumable, not listed, no config validation. See
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,11 +25,24 @@ from .message_store import MessageStore
 from .scope import RecordedScope
 from .sinks import BlobStore
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_BASE_DIR = Path(".minimal_agent/sessions")
 
 
+def _qualname(cls: type) -> str:
+    """The persisted spelling of a Context class — its import path.
+
+    The default is the real `Context`, never a sentinel, so a default
+    session stamps a real class name and compares against the same string
+    on load: one spelling of the default, on disk and in memory.
+    """
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
 class SessionConfigMismatchError(Exception):
-    """Raised when resuming a session with a different model or backend."""
+    """Raised when resuming a session with a different model, backend, or
+    Context class."""
 
 
 @dataclass
@@ -40,6 +54,10 @@ class SessionMeta:
     backend: str
     created_at: datetime
     updated_at: datetime
+    # The Context class this session's messages were projected through —
+    # identity, like model and backend, and validated the same way on
+    # resume. Always a real class name (the default stamps `Context`).
+    context_cls: str
     usage: Usage | None = None
     workspace_root: str | None = None
 
@@ -50,6 +68,7 @@ class SessionMeta:
             "backend": self.backend,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+            "context_cls": self.context_cls,
             "usage": self.usage.model_dump() if self.usage else None,
         }
         if self.workspace_root is not None:
@@ -64,6 +83,7 @@ class SessionMeta:
             backend=data["backend"],
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
+            context_cls=data["context_cls"],
             usage=Usage(**data["usage"]) if data.get("usage") else None,
             workspace_root=data.get("workspace_root"),
         )
@@ -179,14 +199,17 @@ class SessionManager:
         behavior_prompt: str | None = None,
         workspace_root: str | None = None,
         context_sources: list[ContextSource] | None = None,
+        context_cls: type[Context] = Context,
     ) -> Session:
         """Start a new session. Creates the directory and files on disk.
 
-        Takes identity (behavior prompt + context sources), never a
-        rendered prompt: the Context partitions sources by placement and
-        gathers SESSION ones at its first assemble(). Creation does no
+        Takes identity (behavior prompt + context sources + Context class),
+        never a rendered prompt: the Context partitions sources by placement
+        and gathers SESSION ones at its first assemble(). Creation does no
         gathering, no I/O beyond mkdir + metadata. Sources are runtime
-        wiring, not persisted state.
+        wiring, not persisted state; the Context class is persisted, because
+        resuming under a different projection silently changes what the model
+        sees.
         """
         now = datetime.now(tz=timezone.utc)
         meta = SessionMeta(
@@ -195,6 +218,7 @@ class SessionManager:
             backend=backend,
             created_at=now,
             updated_at=now,
+            context_cls=_qualname(context_cls),
             workspace_root=workspace_root,
         )
 
@@ -206,6 +230,7 @@ class SessionManager:
             behavior_prompt=behavior_prompt,
             context_sources=context_sources,
             workspace_root=Path(workspace_root) if workspace_root else None,
+            context_cls=context_cls,
         )
 
         session = Session(
@@ -223,12 +248,16 @@ class SessionManager:
         backend: str,
         behavior_prompt: str | None = None,
         context_sources: list[ContextSource] | None = None,
+        context_cls: type[Context] = Context,
     ) -> Session:
         """Resume an existing session from disk.
 
-        Validates that the current model and backend match what the
-        session was created with. Raises SessionConfigMismatchError
-        if they differ.
+        Validates that the current model, backend, and Context class match
+        what the session was created with. Raises SessionConfigMismatchError
+        if they differ. Projection is checked for the same reason as model:
+        resuming a windowed session under the plain Context would ship the
+        entire transcript to the LLM, and the reverse would silently truncate
+        history the caller believes is live.
 
         context_sources are re-attached to the Context with the persisted
         workspace_root — gathered content is regenerated, never restored
@@ -244,6 +273,11 @@ class SessionManager:
             mismatches.append(f"model: session={meta.model!r}, current={model!r}")
         if meta.backend and meta.backend != backend:
             mismatches.append(f"backend: session={meta.backend!r}, current={backend!r}")
+        current_cls = _qualname(context_cls)
+        if meta.context_cls != current_cls:
+            mismatches.append(
+                f"context_cls: session={meta.context_cls!r}, current={current_cls!r}"
+            )
         if mismatches:
             raise SessionConfigMismatchError(
                 "Cannot resume session with different LLM config: "
@@ -256,6 +290,7 @@ class SessionManager:
             behavior_prompt=behavior_prompt,
             context_sources=context_sources,
             workspace_root=(Path(meta.workspace_root) if meta.workspace_root else None),
+            context_cls=context_cls,
         )
         scope.events.emit(
             SessionLoaded(
@@ -283,6 +318,12 @@ class SessionManager:
 
         Returns a list of SessionMeta, sorted by updated_at
         descending (most recent first).
+
+        Skips any directory whose session.json is missing keys or otherwise
+        unreadable: one corrupt (or pre-`context_cls`) session must not take
+        down the listing of every other one. read_meta() and load_session()
+        stay loud — there the caller named a specific session and deserves
+        the error.
         """
         sessions: list[SessionMeta] = []
         if not self._base_dir.exists():
@@ -293,8 +334,13 @@ class SessionManager:
                 continue
             meta_path = session_dir / "session.json"
             if meta_path.exists():
-                with open(meta_path) as f:
-                    sessions.append(SessionMeta.from_dict(json.load(f)))
+                try:
+                    with open(meta_path) as f:
+                        sessions.append(SessionMeta.from_dict(json.load(f)))
+                except (KeyError, ValueError, OSError):
+                    logger.debug(
+                        "skipping unreadable session %s", meta_path, exc_info=True
+                    )
 
         sessions.sort(key=lambda s: s.updated_at, reverse=True)
         return sessions
