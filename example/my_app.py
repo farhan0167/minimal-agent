@@ -17,19 +17,19 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from minimal_agent import Agent, App
-from minimal_agent.config import settings
-from minimal_agent.llm import LLM
-from minimal_agent.llm.types import ReasoningConfig
-from minimal_agent.tools.builtin.edit_file import EditFile
-from minimal_agent.tools.builtin.glob import Glob
-from minimal_agent.tools.builtin.grep import Grep
-from minimal_agent.tools.builtin.read_file import ReadFile
-from minimal_agent.tools.builtin.run_shell import RunShell
-from minimal_agent.tools.builtin.spawn_agents import SpawnAgents
-from minimal_agent.tools.builtin.web_extract import WebExtract
-from minimal_agent.tools.builtin.web_search import WebSearch
-from minimal_agent.tools.builtin.write_file import WriteFile
+from minimal_agent import LLM, Agent, App, settings
+from minimal_agent.llm import ReasoningConfig
+from minimal_agent.tools.builtin import (
+    EditFile,
+    Glob,
+    Grep,
+    ReadFile,
+    RunShell,
+    SpawnAgents,
+    WebExtract,
+    WebSearch,
+    WriteFile,
+)
 
 # Load .env into the process environment so the REASONING_* vars below are
 # visible to os.environ (pydantic-settings reads .env into `settings`, but not

@@ -31,10 +31,8 @@ Create a project that depends on `minimal_agent`, wire up the tools you want, an
 # my_app.py
 from pathlib import Path
 
-from minimal_agent import Agent, App, Settings
-from minimal_agent.llm import LLM
-from minimal_agent.tools.builtin.read_file import ReadFile
-from minimal_agent.tools.builtin.run_shell import RunShell
+from minimal_agent import LLM, Agent, App, Settings
+from minimal_agent.tools.builtin import ReadFile, RunShell
 
 settings = Settings()
 workspace = Path.cwd()
@@ -63,13 +61,35 @@ That's a working agent served over HTTP with a bundled chat web UI — one proce
 
 `App` subclasses `FastAPI`, so routes, middleware, `lifespan`, and `uvicorn my_app:app --reload` all work as usual. Prefer to drive the agent loop yourself instead of serving it? See [Streaming responses](#streaming-responses) for the `async for message in agent.run(...)` pattern.
 
+## Imports
+
+The import surface is two tiers.
+
+The **top-level package** is the curated common case: everything you need to build, run, and serve an agent — `Agent`, `LLM`, `Settings`, `settings`, `Backend`, `Message`, `Role`, `App` — plus the two extension points for writing a tool, `BaseTool` and `ToolContext`. Built-in tools come from `minimal_agent.tools.builtin` **by name, not by module layout**:
+
+```python
+from minimal_agent import LLM, Agent, BaseTool, ToolContext
+from minimal_agent.tools.builtin import ReadFile, Grep, RunShell
+```
+
+**Submodules** hold the full surface for everything past the basics:
+
+| Module | Holds |
+|---|---|
+| `minimal_agent.llm` | `ReasoningConfig`, `StreamChunk`, `LLMTool`, content parts (`TextPart`, `ImagePart`, …) |
+| `minimal_agent.tools.builtin` | Every built-in tool and its input schema |
+| `minimal_agent.audit` | Session introspection — `session_runs`, `reconstruct_call`, `read_events`, … (see [Observability](#observability)) |
+| `minimal_agent.context_sources` | The `ContextSource` protocol, `Placement`, and the built-in sources |
+| `minimal_agent.agent` | `SessionConfigMismatchError`, `MessageStore`, and the scope internals |
+
+Both paths resolve to the same object — `from minimal_agent import LLM` and `from minimal_agent.llm import LLM` are interchangeable — so the deep form never breaks. The short form is just the one worth typing.
+
 ## Configuring providers
 
 The LLM facade talks to any OpenAI-compatible provider through one `Backend` enum. You pick the backend and model on the `LLM`, and supply credentials through environment variables (a `.env` file in the working directory works too — see [.env.example](.env.example)).
 
 ```python
-from minimal_agent.llm import LLM
-from minimal_agent.config import Backend
+from minimal_agent import LLM, Backend
 
 llm = LLM(model="gpt-4o-mini", backend=Backend.OPENAI)
 ```
@@ -212,12 +232,8 @@ The built-in `spawn_agents` tool lets the orchestrator LLM fan work out to concu
 Wire it up like any other tool, but it needs the orchestrator's `LLM` and a name→tool map so it knows what it's allowed to hand out:
 
 ```python
-from minimal_agent import Agent
-from minimal_agent.llm import LLM
-from minimal_agent.tools.builtin.grep import Grep
-from minimal_agent.tools.builtin.glob import Glob
-from minimal_agent.tools.builtin.read_file import ReadFile
-from minimal_agent.tools.builtin.spawn_agents import SpawnAgents
+from minimal_agent import LLM, Agent
+from minimal_agent.tools.builtin import Glob, Grep, ReadFile, SpawnAgents
 
 llm = LLM(model="gpt-4o", backend="openai")
 workspace = Path.cwd()
@@ -419,12 +435,9 @@ Point the agent at your prompt file. Since this isn't a general coding agent, we
 ```python
 from pathlib import Path
 
-from minimal_agent import Agent
+from minimal_agent import LLM, Agent
 from minimal_agent.context_sources import GitStatusSource
-from minimal_agent.llm import LLM
-from minimal_agent.tools.builtin.glob import Glob
-from minimal_agent.tools.builtin.grep import Grep
-from minimal_agent.tools.builtin.read_file import ReadFile
+from minimal_agent.tools.builtin import Glob, Grep, ReadFile
 
 
 llm = LLM(model="gpt-4o", backend="openai")
@@ -452,8 +465,7 @@ Tools are just async classes with a Pydantic schema. Here's a minimal example:
 ```python
 from pydantic import BaseModel, Field
 
-from minimal_agent.tools.base import BaseTool
-from minimal_agent.tools.context import ToolContext
+from minimal_agent import BaseTool, ToolContext
 
 
 class GreetInput(BaseModel):
@@ -600,9 +612,7 @@ Long conversations eventually outgrow the model's context window. `max_turns` do
 To shape history, subclass `Context`, override `project()`, and pass the class to the agent:
 
 ```python
-from minimal_agent import Agent
-from minimal_agent.agent import Context
-from minimal_agent.llm import Message
+from minimal_agent import Agent, Context, Message
 
 
 class WindowedContext(Context):

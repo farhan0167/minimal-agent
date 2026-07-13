@@ -46,10 +46,8 @@ cp .env.example .env
 import asyncio
 from pathlib import Path
 
-from minimal_agent import Agent, Settings
-from minimal_agent.llm import LLM, Message, Role
-from minimal_agent.tools.builtin.read_file import ReadFile
-from minimal_agent.tools.builtin.run_shell import RunShell
+from minimal_agent import LLM, Agent, Message, Role, Settings
+from minimal_agent.tools.builtin import ReadFile, RunShell
 
 settings = Settings()
 workspace = Path.cwd()
@@ -86,7 +84,7 @@ For the full guide to building your own agent — custom tools, prompts, context
 
 ## What you get
 
-- **Tools** — subclass `BaseTool` with a Pydantic input schema and an `invoke()` method. Built-in: `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell`, `spawn_agents`, `web_search`, `web_extract`, `get_weather` (stub). See [Tools](minimal_agent/README.md#tools).
+- **Tools** — subclass `BaseTool` with a Pydantic input schema and an `invoke()` method. Built-in: `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell`, `spawn_agents`, `web_search`, `web_extract`. See [Tools](minimal_agent/README.md#tools).
 - **Context sources** — inject dynamic environment info (git status, directory trees, your own) into what the model sees, with control over when it's gathered and how fresh it stays. See [Context sources](minimal_agent/README.md#4-write-a-custom-context-source).
 - **Reasoning** — turn on a model's "thinking" via `ReasoningConfig`; the trace rides on `message.reasoning`. See [Reasoning](minimal_agent/README.md#reasoning).
 - **Skills** — reusable prompt templates loaded on demand from `.minimal_agent/skills/`, following the [Agent Skills Specification](https://agentskills.io/specification). See [Skills](minimal_agent/README.md#5-write-a-skill).

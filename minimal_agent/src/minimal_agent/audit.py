@@ -28,6 +28,30 @@ from .agent.context import _merge_into_user
 from .events import hash_messages
 from .llm.types import Message, Role
 
+__all__ = [
+    # Raw readers — one artifact each, no joining.
+    "read_events",
+    "read_call_records",
+    "read_run_records",
+    "read_agent_meta",
+    # Reconstruction — rebuild what the model saw on a recorded call.
+    "reconstruct_call",
+    "ReconstructedCall",
+    # Joined views — the artifacts stitched into a session/run picture.
+    "session_runs",
+    "single_run",
+    "run_summaries",
+    "RunView",
+    "RunSummary",
+    "CallView",
+    "ToolExecution",
+    "SpawnedAgent",
+    # Scope lookup.
+    "find_agent_scope",
+    # Errors.
+    "CallRecordNotFoundError",
+]
+
 
 class CallRecordNotFoundError(LookupError):
     """No record with the requested call_id exists in calls.jsonl."""
