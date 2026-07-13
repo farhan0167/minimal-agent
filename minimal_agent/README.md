@@ -156,19 +156,38 @@ Where sessions live — and how they're recorded — is a `SessionManager`. A de
 from minimal_agent import SessionManager
 
 agent = Agent(llm=llm, tools=[...], workspace_root=workspace,
-              sessions=SessionManager(base_dir=Path("/srv/sessions")))
-recent = agent.sessions.list_sessions()
+              session_manager=SessionManager(base_dir=Path("/srv/sessions")))
+recent = agent.session_manager.list_sessions()
 ```
 
 Every session records itself as it runs: the transcript (`messages.jsonl`), a timeline of everything that happened (`events.jsonl`), and a byte-exact audit of every LLM call (`calls.jsonl` + `blobs/`). Token usage — including usage from any sub-agents — is accounted into `session.json` automatically.
 
-### Scope
-
-A `Scope` is one node in a session's recording tree. The session root is a scope; a tool that runs its own agent opens a *child scope* under it (`ctx.scope.child(...)`), which gets the identical artifact kit in `agents/<agent-id>/` inside the session directory — full transcript, timeline, and call audit for the nested agent, linked to the exact tool call that spawned it. You only touch scopes when writing a tool that embeds an agent; everything else records itself.
-
 ### Context
 
 `Context` is the agent's view of the conversation. It wraps a `MessageStore` (append-only message log) with the system prompt and a projection strategy. Each LLM call goes through `context.assemble()`, which prepends the system prompt, projects the history, and injects fresh content from any RUN/CALL-placed context sources — without ever writing that content to the transcript. `get_messages()` returns the clean conversation (no injected blocks, no I/O), which is what UIs should render.
+
+### Session view
+
+`SessionView` is the session as seen *from inside* — the handle every tool invocation (`ctx.session`) and every context-source `gather(session)` receives. Its facets:
+
+| Facet | What it is |
+|---|---|
+| `session.workspace_root` | Where the agent *acts* — the user's world, shared across sessions |
+| `session.state_dir` | Where the agent *remembers* — a per-session directory (`<session_dir>/state/`), yours to write, never touched by the framework, re-attached on `load_session()` |
+| `session.transcript` | The conversation so far, read-only, with a `tool_calls(name=...)` helper |
+| `session.events` | The session's event emitter — fire-and-forget, lands in `events.jsonl` |
+| `session.id` | The session's id (`None` for a bare, unrecorded `Context`) |
+| `session.spawn(...)` | Open a recorded child scope for a nested agent (see [Scope](#scope), next) |
+
+Everything session-specific reaches a tool or source through the view, per call — never through its constructor. That's what makes tools and sources stateless objects: one instance safely serves every session its agent runs, even concurrently. An unrecorded `Context()` still gets a fully functional view (tempdir-backed `state_dir`, empty transcript), so the same code runs everywhere — it just doesn't persist.
+
+### Scope
+
+A `Scope` is one node in a session's recording tree. Concretely: one directory in the session's on-disk layout (the tree under [Observability](#observability)), plus the writers that fill it — the transcript (`messages.jsonl`), the timeline (`events.jsonl`), and the call audit (`calls.jsonl`). Bundling them in one object is what guarantees everything about one agent lands in the same directory.
+
+The session root is a scope. A tool that runs its own agent opens a *child scope* under it (`ctx.session.spawn(...)`), which allocates `agents/<agent-id>/` inside the session directory with the identical artifact kit — full transcript, timeline, and call audit for the nested agent, linked to the exact tool call that spawned it. The child scope also builds the nested agent's `Context` (`scope.new_context(...)`): the conversation is born already wired to the child's own files, so it cannot record into the wrong directory.
+
+You only touch scopes when writing a tool that embeds an agent; everything else records itself.
 
 ### Tools
 
@@ -233,14 +252,16 @@ Results come back concatenated, each labeled `[Sub-agent N: <task>]`, with failu
 
 Every sub-agent is fully recorded under the session's `agents/` directory: its own transcript, timeline, and call audit, plus an `agent.json` naming who spawned it, its task, final status, and token usage. The parent session's timeline gains `agent.spawn` / `agent.end` events, and sub-agent usage rolls up into the session's totals — nothing an agent does in a session is off the record.
 
-If you write your own tool that runs an agent inside it, ask the tool's scope for a child and you get the same recording:
+If you write your own tool that runs an agent inside it, ask the session view for a child scope and you get the same recording:
 
 ```python
 async def invoke(self, args, ctx: ToolContext) -> str:
-    with ctx.scope.child(
+    with ctx.session.spawn(
         spawned_by=self.name, task=args.task, tool_call_id=ctx.tool_call_id
     ) as scope:
-        context = scope.new_context(system_prompt=...)
+        # the scope builds the sub-agent's context: its conversation and
+        # events record into the child's own directory, never the parent's
+        context = scope.new_context(behavior_prompt=...)
         context.add(Message(role=Role.USER, content=args.task))
         async for msg in my_agent.run(context):
             ...
@@ -299,6 +320,8 @@ Sessions record what happens as they run — no wiring needed. Everything that h
 ├── calls.jsonl      # one provenance record per LLM call
 ├── blobs/           # content-addressed system prompts and tool schemas,
 │                    # shared by every agent in the session
+├── state/           # user land: written via session.state_dir, never touched
+│                    # by the framework
 └── agents/          # one directory per nested agent
     └── a-3f9c21ab/
         ├── agent.json       # who spawned it, task, status, usage, model
@@ -352,7 +375,7 @@ Recording is fire-and-forget — it can never fail or slow a run — and a bare 
 
 ### System Prompt
 
-The system prompt is built from three parts: a **behavior prompt** (markdown that defines the agent's personality), an **environment block** (workspace metadata), and **context blocks** (from SESSION-placed context sources, labeled as a session-start snapshot). The `system_prompt` module handles assembly — you just pass a markdown file or string. Volatile state like git status doesn't live here: it rides the message list, refreshed each run (see [Write a custom context source](#4-write-a-custom-context-source)).
+The system prompt has two layers: a **behavior prompt** (markdown that defines the agent's personality — you just pass a markdown file or string) and **context blocks** from SESSION-placed context sources (the `<workspace>` metadata block first, the rest labeled as a session-start snapshot). The session's `Context` assembles it lazily — sources are gathered at the session's first LLM call, then cached for the session's lifetime. Volatile state like git status doesn't live here: it rides the message list, refreshed each run (see [Write a custom context source](#4-write-a-custom-context-source)).
 
 ### Skills
 
@@ -455,12 +478,14 @@ The `input_schema` docstring becomes the tool description the LLM sees. Field de
 - `needs_permission(args)` — return `True` if this invocation needs user approval
 - `render_result_for_assistant(out)` — control what the LLM sees as the tool result
 
+`ctx.session` is the [session view](#session-view) — read the conversation so far (`ctx.session.transcript`), remember things across calls and runs (`ctx.session.state_dir`), or spawn a recorded sub-agent (`ctx.session.spawn(...)`). Keep session state out of your tool's constructor: one tool instance serves every session its agent runs.
+
 ### 4. Write a custom context source
 
-Context sources gather dynamic information about the environment. Any object with a `name` property and an async `gather()` method works — no base class needed.
+Context sources gather dynamic information about the environment. Any object with a `name` property and an async `gather()` method works — no base class needed. `gather()` receives the [session view](#session-view): most sources only need `session.workspace_root`, but the transcript and the per-session `session.state_dir` are right there when a source needs to read what a tool has written.
 
 ```python
-from pathlib import Path
+from minimal_agent import SessionView
 
 
 class PackageJsonSource:
@@ -470,8 +495,10 @@ class PackageJsonSource:
     def name(self) -> str:
         return "packageJson"
 
-    async def gather(self, workspace_root: Path) -> str | None:
-        pkg = workspace_root / "package.json"
+    async def gather(self, session: SessionView) -> str | None:
+        if session.workspace_root is None:
+            return None
+        pkg = session.workspace_root / "package.json"
         if not pkg.exists():
             return None
         return pkg.read_text()
@@ -492,7 +519,7 @@ The gathered content is wrapped as `<context name="packageJson">...</context>`. 
 
 | `placement` | Gathered | Lands |
 |---|---|---|
-| `Placement.SESSION` (default) | Once, at session creation | System prompt, labeled as a snapshot |
+| `Placement.SESSION` (default) | Once, at the session's first LLM call | System prompt, labeled as a snapshot |
 | `Placement.RUN` | Once per `agent.run()` | Merged into that run's user message |
 | `Placement.CALL` | Before every LLM call | Trailing message, refreshed each call |
 

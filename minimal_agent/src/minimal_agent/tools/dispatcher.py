@@ -38,16 +38,20 @@ async def dispatch(
     # Per-call copy: the caller's ToolContext is shared across a turn's
     # tool calls; the id must not leak from one call into the next.
     ctx = replace(ctx, tool_call_id=tool_call.id)
-    ctx.scope.events.emit(ToolStart(tool_call_id=tool_call.id, name=tool_call.name))
+    ctx.session.events.emit(ToolStart(tool_call_id=tool_call.id, name=tool_call.name))
     t0 = time.monotonic()
     status, msg, parts = await _dispatch_inner(tool_call, tools_by_name, ctx)
-    ctx.scope.events.emit(
+    # children_of() is recording plumbing, deliberately absent from the env's
+    # curated surface — the dispatcher is framework code and reaches the
+    # scope directly rather than widening what tools can see.
+    children = tuple(ctx.session._scope.children_of(tool_call.id))
+    ctx.session.events.emit(
         ToolEnd(
             tool_call_id=tool_call.id,
             name=tool_call.name,
             status=status,
             duration_ms=int((time.monotonic() - t0) * 1000),
-            children=tuple(ctx.scope.children_of(tool_call.id)),
+            children=children,
         )
     )
     return msg, parts

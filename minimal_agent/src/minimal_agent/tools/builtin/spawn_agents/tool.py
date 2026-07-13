@@ -9,7 +9,7 @@ Each sub-agent runs inside a child scope of the calling agent's scope, so
 its full record — transcript, trace, call audit — lands under the session's
 `agents/<agent_id>/` directory. This tool is the reference implementation
 of recorded sub-agents; a custom tool that arms its own agent should use
-the same `ctx.scope.child(...)` one-liner.
+the same `ctx.session.spawn(...)` one-liner.
 
 Sub-agents cannot spawn further sub-agents (no recursion).
 """
@@ -68,7 +68,7 @@ class SpawnAgents(BaseTool[SpawnAgentsInput, str]):
             max_turns=spec.max_turns,
         )
 
-        with ctx.scope.child(
+        with ctx.session.spawn(
             spawned_by=self.name,
             task=spec.task,
             tool_call_id=ctx.tool_call_id,

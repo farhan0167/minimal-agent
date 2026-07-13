@@ -9,9 +9,9 @@ from minimal_agent.agent import Agent, Context, NullScope
 from minimal_agent.agent.session import SessionConfigMismatchError, SessionManager
 from minimal_agent.context_sources import (
     DirectoryTreeSource,
-    EnvSource,
     GitStatusSource,
     Placement,
+    WorkspaceSource,
     source_placement,
 )
 from minimal_agent.events import (
@@ -356,7 +356,7 @@ class _CountingSource:
     def name(self) -> str:
         return "counter"
 
-    async def gather(self, workspace_root) -> str:
+    async def gather(self, env) -> str:
         self.calls += 1
         return f"gathered {self.calls}"
 
@@ -368,7 +368,7 @@ def _make_factory_agent(
     llm.model = model
     llm.backend = "openai"
     if base_dir is not None:
-        kwargs["sessions"] = SessionManager(base_dir=base_dir)
+        kwargs["session_manager"] = SessionManager(base_dir=base_dir)
     return Agent(
         llm=llm,
         tools=[],
@@ -528,7 +528,7 @@ class _CountingLiveSource:
         self.placement = placement
         self.calls = 0
 
-    async def gather(self, workspace_root) -> str:
+    async def gather(self, env) -> str:
         self.calls += 1
         return f"live gather {self.calls}"
 
@@ -554,7 +554,7 @@ async def _session_with_source(tmp_path, source, llm_responses):
         prompt="you are a test agent",
         context_sources=[source],
         workspace_root=ws,
-        sessions=SessionManager(base_dir=tmp_path / "sessions"),
+        session_manager=SessionManager(base_dir=tmp_path / "sessions"),
     )
     session = await agent.create_session()
     return agent, session, llm
@@ -669,7 +669,7 @@ async def test_streaming_run_assembles_like_nonstreaming(tmp_path):
         prompt="you are a test agent",
         context_sources=[source],
         workspace_root=ws,
-        sessions=SessionManager(base_dir=tmp_path / "sessions"),
+        session_manager=SessionManager(base_dir=tmp_path / "sessions"),
     )
     session = await agent.create_session()
     session.context.add(Message(role=Role.USER, content="hello"))
@@ -721,8 +721,8 @@ def test_default_prompt_puts_git_status_on_message_channel():
         s for s in agent.context_sources if source_placement(s) is not Placement.SESSION
     ]
     assert [type(s).__name__ for s in live] == ["AgentsMdSource"]
-    # EnvSource rides every identity, first in line.
-    assert isinstance(agent.context_sources[0], EnvSource)
+    # WorkspaceSource rides every identity, first in line.
+    assert isinstance(agent.context_sources[0], WorkspaceSource)
 
     llm = _make_llm(return_value=GenerateResponse(text="hi", tool_calls=None))
     llm.model = "test-model"
@@ -767,7 +767,7 @@ async def test_default_agent_injects_git_status_into_user_message(tmp_path):
         llm=llm,
         tools=[],
         workspace_root=ws,
-        sessions=SessionManager(base_dir=tmp_path / "sessions"),
+        session_manager=SessionManager(base_dir=tmp_path / "sessions"),
     )
     session = await agent.create_session()
 

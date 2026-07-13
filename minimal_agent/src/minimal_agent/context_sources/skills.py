@@ -1,8 +1,11 @@
 """Skills — the lightweight skill metadata list baked into the prompt."""
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..skills import SkillMeta
+
+if TYPE_CHECKING:
+    from ..agent.view import SessionView
 
 
 class SkillsContextSource:
@@ -19,7 +22,9 @@ class SkillsContextSource:
     def name(self) -> str:
         return "availableSkills"
 
-    async def gather(self, workspace_root: Path) -> str | None:
+    async def gather(self, session: "SessionView") -> str | None:
+        # The skill list is constructor config (discovered once at Agent
+        # construction), not session state — the view goes unread.
         active = [s for s in self._skills if s.shadowed_by is None]
         if not active:
             return None

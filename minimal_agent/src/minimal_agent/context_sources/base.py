@@ -12,8 +12,10 @@ cadences are gathered by `Context`: SESSION sources at its first
 
 import asyncio
 from enum import StrEnum
-from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from ..agent.view import SessionView
 
 
 class Placement(StrEnum):
@@ -37,11 +39,17 @@ class ContextSource(Protocol):
         """The name used in the <{tag} name="..."> XML wrapper."""
         ...
 
-    async def gather(self, workspace_root: Path) -> str | None:
+    async def gather(self, session: "SessionView") -> str | None:
         """Gather context. Returns the content string, or None to skip.
 
         Returning None means this source has nothing to contribute
         (e.g., git status in a non-git directory). The caller skips it.
+
+        `session` is the session as seen from inside: the workspace root the
+        agent acts in, the conversation so far, and a per-session state
+        directory to read what tools have written. Everything
+        session-specific arrives here, per call — a source is a stateless
+        object, safe to share across every session its agent serves.
         """
         ...
 
@@ -62,7 +70,7 @@ def source_tag(src: ContextSource) -> str:
 
 async def build_context_blocks(
     sources: list[ContextSource],
-    workspace_root: Path,
+    session: "SessionView",
     *,
     preamble: str | None = None,
 ) -> str | None:
@@ -77,7 +85,7 @@ async def build_context_blocks(
     if not sources:
         return None
 
-    results = await asyncio.gather(*(src.gather(workspace_root) for src in sources))
+    results = await asyncio.gather(*(src.gather(session) for src in sources))
 
     blocks: list[str] = []
     for src, content in zip(sources, results, strict=True):

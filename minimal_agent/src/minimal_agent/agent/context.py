@@ -32,6 +32,7 @@ from ..events import (
 from ..llm.types import Message, Role, TextPart
 from .message_store import MessageStore
 from .scope import NullScope, Scope
+from .view import SessionView
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +84,9 @@ class _SafeSource:
         self.name = src.name
         self.tag = source_tag(src)
 
-    async def gather(self, workspace_root: Path) -> str | None:
+    async def gather(self, session: SessionView) -> str | None:
         try:
-            return await self._src.gather(workspace_root)
+            return await self._src.gather(session)
         except Exception as e:
             # Type name only — exception messages can carry paths/secrets.
             self._events.emit(SourceFailed(source=self.name, error=type(e).__name__))
@@ -105,6 +106,7 @@ class Context:
         scope: Scope | None = None,
         context_sources: list[ContextSource] | None = None,
         workspace_root: Path | None = None,
+        session: SessionView | None = None,
     ) -> None:
         # The scope supplies both storage and the event seam. A bare
         # Context gets a NullScope: in-memory store, zero-sink emitter —
@@ -113,6 +115,15 @@ class Context:
         self._store = self._scope.store
         self._behavior_prompt = behavior_prompt
         self._workspace_root = workspace_root
+        # The inside view of this session, handed to every tool call and
+        # every gather. Normally minted by Scope.new_context(), which knows
+        # the session id and state dir; a bare Context() builds the degraded
+        # one (no session id, tempdir state) from its NullScope.
+        self._session = (
+            session
+            if session is not None
+            else SessionView(scope=self._scope, workspace_root=workspace_root)
+        )
         sources = list(context_sources) if context_sources else []
         self._session_sources = [
             s for s in sources if source_placement(s) is Placement.SESSION
@@ -143,6 +154,12 @@ class Context:
     def scope(self) -> Scope:
         """The recording node this context hangs off (NullScope if bare)."""
         return self._scope
+
+    @property
+    def session(self) -> SessionView:
+        """This session as seen from inside — the handle every tool call
+        and every gather receives. One per Context, for its lifetime."""
+        return self._session
 
     @property
     def system_prompt(self) -> str | None:
@@ -210,12 +227,12 @@ class Context:
         """
         if self._session_blocks is not _UNGATHERED:
             return
-        if not self._session_sources or self._workspace_root is None:
+        if not self._session_sources:
             self._session_blocks = None
             return
         self._session_blocks = await build_context_blocks(
             self._session_sources,
-            self._workspace_root,
+            self._session,
             preamble=SNAPSHOT_PREAMBLE,
         )
 
@@ -242,9 +259,7 @@ class Context:
         injected_run: InjectedBlock | None = None
         injected_call: InjectedBlock | None = None
 
-        if (
-            self._run_sources or self._call_sources
-        ) and self._workspace_root is not None:
+        if self._run_sources or self._call_sources:
             if self._run_sources and not self._run_gathered:
                 self._run_blocks = await self._gather_blocks(self._run_sources)
                 self._run_gathered = True
@@ -314,7 +329,7 @@ class Context:
         """Gather and format one channel's sources, tolerating failures."""
         return await build_context_blocks(
             [_SafeSource(s, self._scope.events) for s in sources],
-            self._workspace_root,
+            self._session,
             preamble=None,
         )
 

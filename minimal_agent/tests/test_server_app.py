@@ -406,7 +406,7 @@ def test_single_agent_normalizes_to_default(tmp_path):
     app = App(agents=agent, sessions_dir=tmp_path / "sessions")
     assert list(app.agents) == ["default"]
     # Registration rebinds session storage onto the App's store.
-    assert agent.sessions is app.session_manager
+    assert agent.session_manager is app.session_manager
 
 
 def test_empty_registry_rejected(tmp_path):

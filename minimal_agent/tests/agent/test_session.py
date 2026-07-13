@@ -5,6 +5,7 @@ import pytest
 
 from minimal_agent.agent.context import _merge_into_user
 from minimal_agent.agent.session import SessionConfigMismatchError, SessionManager
+from minimal_agent.context_sources import GitStatusSource
 from minimal_agent.events import CallResponse, RunEnd, RunEndStatus, RunStart
 from minimal_agent.llm.types import Message, Role, Usage
 
@@ -229,8 +230,8 @@ class _RunSource:
     name = "liveProbe"
     placement = "run"
 
-    async def gather(self, workspace_root) -> str:
-        return f"root={workspace_root}"
+    async def gather(self, env) -> str:
+        return f"root={env.workspace_root}"
 
 
 async def test_create_forwards_live_sources_to_context(tmp_path):
@@ -266,11 +267,14 @@ async def test_load_reattaches_live_sources_with_persisted_root(tmp_path):
 
 
 async def test_load_without_persisted_root_degrades_silently(tmp_path):
+    """A legacy session (no persisted workspace_root) still gathers — the env
+    always exists — but hands sources workspace_root=None, and every built-in
+    bows out with None rather than injecting a block about nowhere."""
     session = _create(tmp_path)  # legacy: no workspace_root
     session.context.add(Message(role=Role.USER, content="hi"))
     sid = session.session_id
 
-    loaded = _load(sid, tmp_path, context_sources=[_RunSource()])
+    loaded = _load(sid, tmp_path, context_sources=[GitStatusSource()])
     msgs = await loaded.context.assemble()
 
     assert msgs == loaded.context.get_messages()

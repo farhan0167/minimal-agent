@@ -176,7 +176,7 @@ async def _run_two_call_session(tmp_path):
         prompt="you are a test agent",
         workspace_root=ws,
         enable_skills=False,
-        sessions=SessionManager(base_dir=tmp_path / "sessions"),
+        session_manager=SessionManager(base_dir=tmp_path / "sessions"),
     )
     session = await agent.create_session()
     session.context.add(Message(role=Role.USER, content="go"))

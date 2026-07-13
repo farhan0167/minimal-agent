@@ -15,9 +15,9 @@ from ..context_sources import (
     AgentsMdSource,
     ContextSource,
     DirectoryTreeSource,
-    EnvSource,
     GitStatusSource,
     SkillsContextSource,
+    WorkspaceSource,
 )
 from ..events import CallResponse, RunEnd, RunEndStatus, RunStart
 from ..llm import LLM, Message, Role, StreamAccumulator, StreamChunk
@@ -84,7 +84,7 @@ class Agent:
         max_turns: int = 10,
         workspace_root: Path | None = None,
         enable_skills: bool = True,
-        sessions: SessionManager | None = None,
+        session_manager: SessionManager | None = None,
     ) -> None:
         # Reasoning is agent-level config: attach the provider contract to the
         # LLM so every generate/stream carries it. Passing reasoning_config=...
@@ -97,7 +97,9 @@ class Agent:
         )
         # Identity lives here; persistence policy lives in the manager.
         # The default manager records under .minimal_agent/sessions.
-        self._sessions = sessions if sessions is not None else SessionManager()
+        self._session_manager = (
+            session_manager if session_manager is not None else SessionManager()
+        )
         self._tools_by_name: dict[str, BaseTool] = {t.name: t for t in tools}
         self._llm_tools: list[LLMTool] = [t.as_llm_tool() for t in tools]
         self._max_turns = max_turns
@@ -130,10 +132,13 @@ class Agent:
                 self._llm_tools.append(skill_tool.as_llm_tool())
                 resolved_sources.append(SkillsContextSource(skills))
 
-        # The <env> block rides every identity, default or custom — first,
+        # The <workspace> block rides every identity, default or custom — first,
         # so the model reads where it is before any other context. The
         # Context of each session partitions the full list by placement.
-        self._context_sources: list[ContextSource] = [EnvSource(), *resolved_sources]
+        self._context_sources: list[ContextSource] = [
+            WorkspaceSource(),
+            *resolved_sources,
+        ]
 
         # Canonical fingerprint of the tool schemas — computed once, after
         # skill discovery has registered its tool. Carried on run.start so
@@ -148,19 +153,19 @@ class Agent:
 
     @property
     def context_sources(self) -> list[ContextSource]:
-        """All context sources (every placement), EnvSource included."""
+        """All context sources (every placement), WorkspaceSource included."""
         return list(self._context_sources)
 
     @property
-    def sessions(self) -> SessionManager:
+    def session_manager(self) -> SessionManager:
         """The persistence policy this agent's session factories use."""
-        return self._sessions
+        return self._session_manager
 
-    @sessions.setter
-    def sessions(self, manager: SessionManager) -> None:
+    @session_manager.setter
+    def session_manager(self, manager: SessionManager) -> None:
         """Rebind the persistence policy (e.g. a host consolidating all
         registered agents onto one store)."""
-        self._sessions = manager
+        self._session_manager = manager
 
     @property
     def llm(self) -> LLM:
@@ -194,7 +199,7 @@ class Agent:
                 "workspace_root required — pass it to create_session() "
                 "or to the Agent constructor"
             )
-        return self._sessions.create_session(
+        return self._session_manager.create_session(
             model=self._llm.model,
             backend=self._llm.backend,
             behavior_prompt=self._behavior_prompt,
@@ -211,9 +216,9 @@ class Agent:
         the session's model, backend, or workspace don't match this
         agent's.
         """
-        meta = self._sessions.read_meta(session_id)
+        meta = self._session_manager.read_meta(session_id)
         self._resolve_load_root(meta)
-        return self._sessions.load_session(
+        return self._session_manager.load_session(
             session_id,
             model=self._llm.model,
             backend=self._llm.backend,
@@ -324,7 +329,7 @@ class Agent:
             for _turn in range(self._max_turns):
                 tool_ctx = ToolContext(
                     permission_callback=permission_callback,
-                    scope=context.scope,
+                    session=context.session,
                 )
                 messages = await context.assemble()
                 calls += 1

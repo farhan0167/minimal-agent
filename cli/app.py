@@ -65,7 +65,7 @@ def _build_agent(workspace: Path) -> Agent:
         llm=llm,
         tools=[*builtin_tools, spawn_agents],
         workspace_root=workspace,
-        sessions=SessionManager(base_dir=Path(settings.SESSIONS_DIR)),
+        session_manager=SessionManager(base_dir=Path(settings.SESSIONS_DIR)),
     )
 
 

@@ -85,11 +85,13 @@ class _LiveSource:
         self.name = name
         self.placement = placement
         self.calls = 0
+        self.seen_workspace_root = None
         self._raises = raises
         self._content = content
 
-    async def gather(self, workspace_root) -> str | None:
+    async def gather(self, env) -> str | None:
         self.calls += 1
+        self.seen_workspace_root = env.workspace_root
         if self._raises:
             raise RuntimeError("gather blew up")
         if self._content is None:
@@ -280,15 +282,19 @@ async def test_all_sources_none_returns_clean_projection():
     assert await ctx.assemble() == ctx.get_messages()
 
 
-async def test_no_workspace_root_skips_gathering():
+async def test_no_workspace_root_still_gathers():
+    """Gathering is not gated on a workspace root: the env always exists, so
+    every source runs and decides for itself whether it has anything to say
+    (the built-ins return None when env.workspace_root is None)."""
     src = _LiveSource(placement=Placement.RUN)
     ctx = _live_context(src, workspace_root=None)
     ctx.add(Message(role=Role.USER, content="hi"))
 
     msgs = await ctx.assemble()
 
-    assert src.calls == 0
-    assert msgs == ctx.get_messages()
+    assert src.calls == 1
+    assert src.seen_workspace_root is None
+    assert '<context name="live">' in msgs[-1].content
 
 
 async def test_raising_source_skipped_others_injected():
@@ -581,7 +587,7 @@ async def test_cancelled_first_gather_leaves_cache_ungathered():
         name = "slow"
         calls = 0
 
-        async def gather(self, workspace_root) -> str | None:
+        async def gather(self, env) -> str | None:
             type(self).calls += 1
             started.set()
             await release.wait()

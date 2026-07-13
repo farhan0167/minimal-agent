@@ -153,7 +153,7 @@ class SessionManager:
     factories to it; hosts construct one explicitly only to change policy:
 
         manager = SessionManager(base_dir=Path("/var/lib/app/sessions"))
-        agent = Agent(llm, tools, workspace_root=root, sessions=manager)
+        agent = Agent(llm, tools, workspace_root=root, session_manager=manager)
     """
 
     def __init__(

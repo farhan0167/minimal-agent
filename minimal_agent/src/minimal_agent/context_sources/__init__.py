@@ -17,18 +17,18 @@ from .base import (
     source_tag,
 )
 from .directory_tree import DirectoryTreeSource
-from .env_source import EnvSource
 from .git_status import GitStatusSource
 from .skills import SkillsContextSource
+from .workspace_source import WorkspaceSource
 
 __all__ = [
     "AgentsMdSource",
     "ContextSource",
     "DirectoryTreeSource",
-    "EnvSource",
     "GitStatusSource",
     "Placement",
     "SkillsContextSource",
+    "WorkspaceSource",
     "build_context_blocks",
     "source_placement",
     "source_tag",

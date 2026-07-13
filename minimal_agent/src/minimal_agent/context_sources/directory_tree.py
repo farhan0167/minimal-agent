@@ -1,6 +1,10 @@
 """Directory tree — a depth-limited file listing of the workspace."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..agent.view import SessionView
 
 
 class DirectoryTreeSource:
@@ -13,9 +17,11 @@ class DirectoryTreeSource:
     def name(self) -> str:
         return "directoryStructure"
 
-    async def gather(self, workspace_root: Path) -> str | None:
+    async def gather(self, session: "SessionView") -> str | None:
+        if session.workspace_root is None:
+            return None
         lines: list[str] = []
-        self._walk(workspace_root, "", 0, lines)
+        self._walk(session.workspace_root, "", 0, lines)
         return "\n".join(lines) if lines else None
 
     def _walk(self, path: Path, prefix: str, depth: int, lines: list[str]) -> None:

@@ -1,9 +1,12 @@
 """Git status — branch, short status, and recent commits, refreshed per run."""
 
 import asyncio
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .base import Placement
+
+if TYPE_CHECKING:
+    from ..agent.view import SessionView
 
 
 class GitStatusSource:
@@ -19,8 +22,9 @@ class GitStatusSource:
     def name(self) -> str:
         return "gitStatus"
 
-    async def gather(self, workspace_root: Path) -> str | None:
-        if not (workspace_root / ".git").is_dir():
+    async def gather(self, session: "SessionView") -> str | None:
+        workspace_root = session.workspace_root
+        if workspace_root is None or not (workspace_root / ".git").is_dir():
             return None
 
         async def _run(cmd: list[str]) -> str:

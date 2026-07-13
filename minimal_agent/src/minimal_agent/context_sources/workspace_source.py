@@ -1,19 +1,22 @@
-"""EnvSource — workspace metadata as an ordinary SESSION source.
+"""WorkspaceSource — workspace metadata as an ordinary SESSION source.
 
-The former system_prompt/env.py, absorbed wholesale: the <env> block is
-built inside gather(), and the framework dogfoods its own placement
+The former system_prompt/env.py, absorbed wholesale: the <workspace> block
+is built inside gather(), and the framework dogfoods its own placement
 protocol instead of hardcoding the block into a prompt builder.
 """
 
 import datetime
 import platform
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .base import Placement
 
+if TYPE_CHECKING:
+    from ..agent.view import SessionView
 
-class EnvSource:
-    """The <env> block — static facts about the workspace.
+
+class WorkspaceSource:
+    """The <workspace> block — static facts about where the agent acts.
 
     Attached unconditionally by the Agent (every identity gets one), so
     the model always knows where it is acting. SESSION-placed: gathered
@@ -21,10 +24,13 @@ class EnvSource:
     """
 
     placement = Placement.SESSION
-    tag = "env"
-    name = "env"
+    tag = "workspace"
+    name = "workspace"
 
-    async def gather(self, workspace_root: Path) -> str | None:
+    async def gather(self, session: "SessionView") -> str | None:
+        workspace_root = session.workspace_root
+        if workspace_root is None:
+            return None
         is_git = (workspace_root / ".git").is_dir()
         return (
             f"Working directory: {workspace_root}\n"

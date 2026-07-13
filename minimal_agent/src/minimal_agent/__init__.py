@@ -2,7 +2,15 @@
 
 from typing import TYPE_CHECKING
 
-from .agent import Agent, Context, Scope, Session, SessionManager
+from .agent import (
+    Agent,
+    Context,
+    Scope,
+    Session,
+    SessionManager,
+    SessionView,
+    Transcript,
+)
 from .audit import (
     ReconstructedCall,
     RunSummary,
@@ -51,8 +59,10 @@ __all__ = [
     "Scope",
     "Session",
     "SessionManager",
+    "SessionView",
     "Settings",
     "SpawnedAgent",
+    "Transcript",
     "find_agent_scope",
     "reconstruct_call",
     "run_summaries",
