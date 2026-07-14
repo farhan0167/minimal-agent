@@ -4,6 +4,7 @@ import json
 import pytest
 
 from minimal_agent.agent.context import Context, _merge_into_user
+from minimal_agent.agent.message_store import INTERRUPTED_RESPONSE_MARKER
 from minimal_agent.agent.session import SessionConfigMismatchError, SessionManager
 from minimal_agent.context_sources import GitStatusSource
 from minimal_agent.events import CallResponse, RunEnd, RunEndStatus, RunStart
@@ -481,6 +482,108 @@ def test_load_session_rejects_a_different_context_cls(tmp_path):
 
     msg = str(exc.value)
     assert "_SubContext" in msg and "minimal_agent.agent.context.Context" in msg
+
+
+# ---- read_messages: the transcript peek -------------------------------------
+
+
+def _dir_snapshot(session_dir):
+    """Every file under the session dir, mapped to its bytes."""
+    return {
+        p.relative_to(session_dir).as_posix(): p.read_bytes()
+        for p in sorted(session_dir.rglob("*"))
+        if p.is_file()
+    }
+
+
+def test_read_messages_returns_the_stored_transcript(tmp_path):
+    manager = SessionManager(base_dir=tmp_path)
+    session = manager.create_session(model=_MODEL, backend=_BACKEND)
+    session.context.add(Message(role=Role.USER, content="hi"))
+    session.context.add(Message(role=Role.ASSISTANT, content="hello"))
+
+    messages = manager.read_messages(session.session_id)
+
+    assert [(m.role, m.content) for m in messages] == [
+        (Role.USER, "hi"),
+        (Role.ASSISTANT, "hello"),
+    ]
+    assert messages == session.context.store.messages
+
+
+def test_read_messages_missing_session_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        SessionManager(base_dir=tmp_path).read_messages("nope")
+
+
+def test_read_messages_on_a_session_with_nothing_appended_is_empty(tmp_path):
+    """A created-but-unused session has no messages.jsonl yet — that is an
+    empty transcript, not a missing session."""
+    manager = SessionManager(base_dir=tmp_path)
+    session = manager.create_session(model=_MODEL, backend=_BACKEND)
+
+    assert not (session.session_dir / "messages.jsonl").exists()
+    assert manager.read_messages(session.session_id) == []
+
+
+def test_read_messages_ignores_context_cls(tmp_path):
+    """Inspection requires no identity: a session recorded under a custom
+    Context reads back without that class, and without a mismatch error."""
+    manager = SessionManager(base_dir=tmp_path)
+    session = manager.create_session(
+        model=_MODEL, backend=_BACKEND, context_cls=_SubContext
+    )
+    session.context.add(Message(role=Role.USER, content="hi"))
+    session.context.add(Message(role=Role.ASSISTANT, content="hello"))
+
+    messages = manager.read_messages(session.session_id)
+    assert [m.content for m in messages] == ["hi", "hello"]
+
+
+def test_read_messages_does_not_write(tmp_path):
+    """Inspection never writes: no events, no synthetic appends, no new files."""
+    manager = SessionManager(base_dir=tmp_path)
+    session = manager.create_session(model=_MODEL, backend=_BACKEND)
+    session.context.add(Message(role=Role.USER, content="hi"))
+    session.context.add(Message(role=Role.ASSISTANT, content="hello"))
+
+    before = _dir_snapshot(session.session_dir)
+    for _ in range(3):
+        manager.read_messages(session.session_id)
+
+    assert _dir_snapshot(session.session_dir) == before
+
+
+def test_read_messages_heals_in_memory_without_touching_the_file(tmp_path):
+    """A crash-interrupted transcript reads back healed — the same view a
+    resume would see — but the heal stays in memory: a GET must not rewrite
+    the user's conversation."""
+    manager = SessionManager(base_dir=tmp_path)
+    session = manager.create_session(model=_MODEL, backend=_BACKEND)
+    # Trailing unanswered user message: the crash artifact from_file() heals.
+    session.context.add(Message(role=Role.USER, content="hi"))
+
+    before = _dir_snapshot(session.session_dir)
+    messages = manager.read_messages(session.session_id)
+
+    assert [m.role for m in messages] == [Role.USER, Role.ASSISTANT]
+    assert messages[-1].content == INTERRUPTED_RESPONSE_MARKER
+    assert _dir_snapshot(session.session_dir) == before
+
+
+def test_read_messages_raises_on_mid_file_corruption(tmp_path):
+    """Crash-artifact handling matches from_file(): the loud cases stay loud."""
+    manager = SessionManager(base_dir=tmp_path)
+    session = manager.create_session(model=_MODEL, backend=_BACKEND)
+    session.context.add(Message(role=Role.USER, content="hi"))
+    session.context.add(Message(role=Role.ASSISTANT, content="hello"))
+
+    path = session.session_dir / "messages.jsonl"
+    lines = path.read_text().splitlines()
+    path.write_text("{not json\n" + "\n".join(lines) + "\n")
+
+    with pytest.raises(ValueError):
+        manager.read_messages(session.session_id)
 
 
 def test_list_sessions_skips_unreadable_meta_but_read_meta_stays_loud(tmp_path):

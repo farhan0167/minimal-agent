@@ -27,7 +27,7 @@ from ...llm.types import (
 )
 from ..deps import get_agents, get_manager
 from ..schemas import AttachmentContent, ChatRequest
-from ..service import UnknownAgentError, open_session_readonly, resume_session
+from ..service import UnknownAgentError, resume_session
 
 # PDF attachments need pdf2image (and system poppler underneath) — too
 # heavy to require of every server user, so support is feature-detected.
@@ -259,11 +259,10 @@ async def messages_route(
     manager: SessionManager = Depends(get_manager),
 ):
     try:
-        session = open_session_readonly(manager, session_id)
+        messages = manager.read_messages(session_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail="Session not found") from e
 
-    messages = session.context.get_messages()
     return {
         "messages": [
             {

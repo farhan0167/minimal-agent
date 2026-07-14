@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from minimal_agent import App
-from minimal_agent.agent import Agent
+from minimal_agent.agent import Agent, Context
 from minimal_agent.llm.types import GenerateResponse, StreamChunk, Usage
 
 # --- Stub LLM -----------------------------------------------------------
@@ -329,6 +329,80 @@ def test_chat_unknown_session_is_404(tmp_path):
     with TestClient(app) as client:
         resp = client.post("/api/sessions/nope/chat", json={"message": "hi"})
         assert resp.status_code == 404
+
+
+# --- Read-only inspection ------------------------------------------------
+
+
+class _WindowedContext(Context):
+    """A downstream projection that hides all but the last message from the
+    model. The chat UI must still show the whole conversation."""
+
+    def project(self):
+        return self.store.messages[-1:]
+
+
+def _custom_context_app(tmp_path):
+    agent = Agent(
+        llm=StubLLM(),
+        tools=[],
+        prompt="You are a test agent.",
+        context_sources=[],
+        workspace_root=tmp_path / "ws",
+        context_cls=_WindowedContext,
+    )
+    return make_app(tmp_path, agents=agent)
+
+
+def test_inspection_routes_work_for_a_custom_context_cls(tmp_path):
+    """Regression: inspection must not depend on the session's identity.
+    These routes used to drive load_session(), which cannot echo a class and
+    so failed its own context_cls check with a 500."""
+    with TestClient(_custom_context_app(tmp_path)) as client:
+        session_id = client.post("/api/sessions", json={}).json()["session_id"]
+        client.post(f"/api/sessions/{session_id}/chat", json={"message": "hi"})
+
+        assert client.get(f"/api/sessions/{session_id}").status_code == 200
+        resp = client.get(f"/api/sessions/{session_id}/messages")
+        assert resp.status_code == 200
+
+        # The record, not the projection: _WindowedContext would have shown
+        # only the last message to the model — the reader still sees both.
+        assert [m["role"] for m in resp.json()["messages"]] == ["user", "assistant"]
+
+
+def test_messages_unknown_session_is_404(tmp_path):
+    """The empty-store trap: a missing session must not 200 with []."""
+    app = make_app(tmp_path)
+    with TestClient(app) as client:
+        assert client.get("/api/sessions/nope/messages").status_code == 404
+        assert client.get("/api/sessions/nope").status_code == 404
+
+
+def test_inspection_does_not_write_to_the_session(tmp_path):
+    """Read-only GETs used to emit SessionLoaded, appending to events.jsonl."""
+    app = make_app(tmp_path)
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions", json={}).json()["session_id"]
+        client.post(f"/api/sessions/{session_id}/chat", json={"message": "hi"})
+
+        session_dir = tmp_path / "sessions" / session_id
+        before = {
+            p.relative_to(session_dir).as_posix(): p.read_bytes()
+            for p in sorted(session_dir.rglob("*"))
+            if p.is_file()
+        }
+
+        for _ in range(3):
+            client.get(f"/api/sessions/{session_id}")
+            client.get(f"/api/sessions/{session_id}/messages")
+
+        after = {
+            p.relative_to(session_dir).as_posix(): p.read_bytes()
+            for p in sorted(session_dir.rglob("*"))
+            if p.is_file()
+        }
+        assert after == before
 
 
 # --- User extension and UI mount -----------------------------------------
