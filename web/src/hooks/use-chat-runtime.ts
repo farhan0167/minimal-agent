@@ -15,7 +15,10 @@ import type {
 import { parsePartialJsonObject } from "assistant-stream/utils";
 import { sendMessage, getMessages } from "../api/chat";
 import type { FileAttachment, ReasoningEffort } from "../api/chat";
-import type { Message } from "../types/message";
+import type {
+  Message,
+  ContentPart as ServerContentPart,
+} from "../types/message";
 import { isAbortError } from "../lib/abort";
 import { getSessionTitle, setSessionTitle } from "../lib/session-titles";
 
@@ -105,6 +108,57 @@ function firstUserText(messages: Message[]): string | null {
  * We merge each such sequence into a single assistant ThreadMessageLike
  * containing tool-call parts (with results) + final text.
  */
+/**
+ * Is the user-role message at `i` one the agent loop generated, rather than
+ * one the human typed?
+ *
+ * The loop commits user-role messages mid-run: its flush of non-text parts
+ * (images from an image/PDF read) which can't ride a `tool` message and so
+ * land in the only API-legal slot — a user message after the tool batch.
+ * Those belong *inside* the assistant turn, not in a bubble of their own.
+ *
+ * The tell is position, and specifically which neighbor precedes it. The
+ * multimodal-tool-results spec guarantees the ordering
+ * `assistant → tool → tool → user(parts)`, so a flush ALWAYS directly follows
+ * a `tool` message. A typed message never does — it follows an assistant reply
+ * or begins the conversation. Keying on the preceding tool message (not on the
+ * parts being images-only) keeps this correct when the flush later carries
+ * audio/file parts, which the spec reserves as a future path.
+ */
+/**
+ * Convert server content parts (the wire format) into assistant-ui thread
+ * parts. The single source of truth for this mapping — used by the typed
+ * multimodal user branch, the harness-flush absorption in toThreadMessages,
+ * and the live `user_parts` handler, so the live and reload renderings of the
+ * same message can't drift apart. Parts outside the typed union surface as a
+ * visible placeholder rather than disappearing.
+ */
+function convertContentParts(
+  content: ServerContentPart[],
+): ({ type: "text"; text: string } | { type: "image"; image: string })[] {
+  return content.map((part) => {
+    switch (part.type) {
+      case "text":
+        return { type: "text" as const, text: part.text };
+      case "image_url":
+        return { type: "image" as const, image: part.image_url.url };
+      default:
+        return { type: "text" as const, text: "[unsupported content]" };
+    }
+  });
+}
+
+function isHarnessParts(messages: Message[], i: number): boolean {
+  const msg = messages[i];
+  const prev = messages[i - 1];
+  return (
+    msg.role === "user" &&
+    Array.isArray(msg.content) &&
+    !!prev &&
+    prev.role === "tool"
+  );
+}
+
 function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
   const result: ThreadMessageLike[] = [];
 
@@ -126,19 +180,10 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
       continue;
     }
 
-    if (msg.role === "user") {
+    if (msg.role === "user" && !isHarnessParts(messages, i)) {
       if (Array.isArray(msg.content)) {
         // Multimodal user message — convert server content parts.
-        const parts = msg.content.map((part) => {
-          if (part.type === "text") {
-            return { type: "text" as const, text: part.text };
-          }
-          if (part.type === "image_url") {
-            return { type: "image" as const, image: part.image_url.url };
-          }
-          return { type: "text" as const, text: "[unsupported content]" };
-        });
-        result.push({ role: "user", content: parts });
+        result.push({ role: "user", content: convertContentParts(msg.content) });
       } else {
         result.push({
           role: "user",
@@ -155,6 +200,7 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
     const parts: (
       | { type: "text"; text: string }
       | { type: "reasoning"; text: string }
+      | { type: "image"; image: string }
       | {
           type: "tool-call";
           toolCallId: string;
@@ -169,8 +215,19 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
     // A single turn is: optional text + tool_calls + tool results + optional trailing text.
     // When a new assistant message with text (and no tool_calls) appears after
     // we've already accumulated parts, flush the current turn and start a new one.
-    while (i < messages.length && messages[i].role !== "user") {
+    //
+    // The loop's image flush (see isHarnessParts) is a user-role message, but
+    // it belongs to this turn — absorb it rather than let it end the turn, so
+    // the images render inline exactly where the live adapter puts them.
+    while (
+      i < messages.length &&
+      (messages[i].role !== "user" || isHarnessParts(messages, i))
+    ) {
       const m = messages[i];
+
+      if (m.role === "user" && Array.isArray(m.content)) {
+        parts.push(...convertContentParts(m.content));
+      }
 
       if (m.role === "assistant") {
         const hasToolCalls = m.tool_calls && m.tool_calls.length > 0;
@@ -325,6 +382,12 @@ export function useChatRuntime(
         const toolCalls: ContentPart[] = [];
         const toolCallIndex = new Map<string, number>();
 
+        // Images the loop flushed after a tool batch (an image/PDF read).
+        // They render inside this assistant turn, after the tool calls that
+        // produced them — the same placement toThreadMessages gives them on
+        // reload, so a refresh doesn't rearrange the conversation.
+        const images: ContentPart[] = [];
+
         // Tool calls the model is still generating, keyed by the provider's
         // fragment index. The first fragment carries id + name; later ones
         // append incremental JSON string chunks to argsText. Cleared when
@@ -365,11 +428,13 @@ export function useChatRuntime(
             : parts;
 
         // Cumulative snapshot of the whole turn: committed tool calls, then
-        // in-flight ones, then the answer text (matching commit order).
+        // in-flight ones, then any images those calls read, then the answer
+        // text (matching commit order).
         const snapshot = (): ChatModelRunResult => ({
           content: withReasoning([
             ...toolCalls,
             ...partialParts(),
+            ...images,
             ...(currentText
               ? [{ type: "text" as const, text: currentText }]
               : []),
@@ -467,6 +532,18 @@ export function useChatRuntime(
                 } as ContentPart;
               }
 
+              yield snapshot();
+              break;
+            }
+
+            case "user_parts": {
+              // Images read by the tool batch that just ran. Fold them into
+              // this turn so they appear without a reload; text parts (if the
+              // loop ever flushes any) ride along as plain text.
+              const content = event.data.content;
+              if (Array.isArray(content)) {
+                images.push(...convertContentParts(content));
+              }
               yield snapshot();
               break;
             }

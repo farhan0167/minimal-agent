@@ -54,5 +54,11 @@ export type SSEEvent =
   | { type: "tool_call_delta"; data: { tool_calls: ToolCallDelta[] } }
   | { type: "assistant"; data: Message }
   | { type: "tool_result"; data: Message }
+  /**
+   * Non-text parts (images from an image/PDF read) that the agent loop flushes
+   * after a tool batch. Harness-generated, not user-typed, despite the
+   * user role it carries on the wire.
+   */
+  | { type: "user_parts"; data: Message }
   | { type: "error"; data: { detail: string; traceback?: string } }
   | { type: "done"; data: { usage: Usage } };

@@ -307,6 +307,99 @@ def test_chat_streams_tool_call_deltas(tmp_path):
         assert tool_result["content"] == "hi"
 
 
+_PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
+
+
+def test_chat_streams_image_parts_flushed_after_tool_batch(tmp_path):
+    """Images a tool reads reach the client live, not only on reload.
+
+    The loop can't put non-text parts on a `tool` message, so it flushes them
+    as a trailing user message. That message must be forwarded (as user_parts)
+    — otherwise the UI shows nothing until the session is reloaded.
+    """
+    from typing import ClassVar
+
+    from pydantic import BaseModel
+
+    from minimal_agent.llm.types import ContentPart, ImagePart, ImageUrl
+    from minimal_agent.tools.base import BaseTool
+    from minimal_agent.tools.context import ToolContext
+
+    class ShowInput(BaseModel):
+        path: str
+
+    class ShowImageTool(BaseTool[ShowInput, str]):
+        """Multimodal tool: text on the tool message, image relocated."""
+
+        name: ClassVar[str] = "echo"  # reuse ToolCallStubLLM's call
+        input_schema: ClassVar[type[BaseModel]] = ShowInput
+
+        async def invoke(self, args: ShowInput, ctx: ToolContext) -> str:
+            return "read 1 image"
+
+        def render_parts_for_assistant(self, out: str) -> list[ContentPart]:
+            return [ImagePart(image_url=ImageUrl(url=_PIXEL))]
+
+    class ShowStubLLM(ToolCallStubLLM):
+        async def stream(self, *, messages, **kw):
+            from minimal_agent.llm.types import ToolCallDelta
+
+            if not any(m.role.value == "tool" for m in messages):
+                yield StreamChunk(
+                    tool_calls=[ToolCallDelta(index=0, id="c1", name="echo")]
+                )
+                yield StreamChunk(
+                    tool_calls=[ToolCallDelta(index=0, arguments='{"path": "x.png"}')]
+                )
+                yield StreamChunk(finish_reason="tool_calls", usage=self._usage())
+            else:
+                yield StreamChunk(text="That's a pixel.")
+                yield StreamChunk(finish_reason="stop", usage=self._usage())
+
+    agent = Agent(
+        llm=ShowStubLLM(),
+        tools=[ShowImageTool()],
+        prompt="You are a test agent.",
+        context_sources=[],
+        workspace_root=tmp_path / "ws",
+    )
+    app = make_app(tmp_path, agents=agent)
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions", json={}).json()["session_id"]
+        resp = client.post(f"/api/sessions/{session_id}/chat", json={"message": "hi"})
+        events = parse_sse(resp.text)
+
+        # The flushed image is forwarded live, after the tool result.
+        (parts,) = [d for e, d in events if e == "user_parts"]
+        assert parts["role"] == "user"
+        assert parts["content"] == [
+            {"type": "image_url", "image_url": {"url": _PIXEL}}
+        ]
+
+        names = [e for e, _ in events]
+        assert names.index("tool_result") < names.index("user_parts")
+
+        # And the live stream agrees with what a reload would show.
+        history = client.get(f"/api/sessions/{session_id}/messages").json()["messages"]
+        flushed = [
+            m
+            for m in history
+            if m["role"] == "user" and isinstance(m["content"], list)
+        ]
+        assert flushed and flushed[-1]["content"] == parts["content"]
+
+        # The frontend's history renderer keys on the flush directly following
+        # a tool message (multimodal-tool-results ordering: assistant → tool →
+        # user(parts)) to tell it apart from a typed upload. Pin that ordering
+        # so a loop change that breaks it fails here, not silently in the UI.
+        flush_idx = next(
+            i
+            for i, m in enumerate(history)
+            if m["role"] == "user" and isinstance(m["content"], list)
+        )
+        assert history[flush_idx - 1]["role"] == "tool"
+
+
 def test_chat_routes_to_session_agent(tmp_path):
     agents = {
         "alpha": make_agent(tmp_path / "ws", text="I am alpha."),
