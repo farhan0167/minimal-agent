@@ -114,13 +114,22 @@ class RunEnd:
     duration_ms: int
 
 
+# One step of the audit recipe for a call's projection, in the order the model
+# saw it: either a [start, end) run of stored messages, by reference — or a
+# message the model saw that is not in the store (a rewrite, a summary), by
+# value. CallLogSink interns the by-value entries into blobs/ when it persists
+# the record, so on disk they read as {"blob": "sha256:…"}; carrying them
+# inline here keeps emission side-effect-free, with all I/O owned by sinks.
+ProjectionEntry = Union[tuple[int, int], Message]
+
+
 @dataclass(frozen=True)
 class CallRequest:
     type: ClassVar[EventType] = EventType.CALL_REQUEST
-    # [start, end) store-index ranges the projection selected, in order.
-    # None ⇒ the projection synthesized or reordered messages, so it is not
-    # expressible as store ranges and the call is not reconstructible.
-    projected: list[tuple[int, int]] | None
+    # The projection's audit recipe, in the order the model saw it. Everything
+    # the model saw is here, by reference or by value — so every call is
+    # reconstructible, including under a rewriting Context.project().
+    projected: list[ProjectionEntry]
     store_len: int  # ⇒ the reply lands at this index
     # The system prompt is a run-level fact — it rides run.start, not here.
     injected_run: InjectedBlock | None

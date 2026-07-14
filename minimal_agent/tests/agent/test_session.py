@@ -335,7 +335,7 @@ async def test_create_emits_session_created_and_assemble_writes_artifacts(
 
     assert _events(session_dir)[-1]["type"] == "call.request"
     (record,) = _calls(session_dir)
-    assert record["v"] == 2
+    assert record["v"] == 3
     # The system prompt is a run-level fact — interned on the run's open row.
     (run_open,) = _run_open_rows(session_dir)
     assert _blob_text(session_dir, run_open["system_prompt"]) == "you are helpful"

@@ -26,6 +26,7 @@ from ..events import (
     CallRequest,
     EventEmitter,
     InjectedBlock,
+    ProjectionEntry,
     SourceFailed,
     hash_messages,
 )
@@ -324,7 +325,7 @@ class Context:
         """
         self._scope.events.emit(
             CallRequest(
-                projected=self._projected_ranges(projected),
+                projected=self._projection_recipe(projected),
                 store_len=len(self._store),
                 injected_run=injected_run,
                 injected_call=injected_call,
@@ -332,45 +333,67 @@ class Context:
             )
         )
 
-    def _projected_ranges(
-        self, projected: list[Message]
-    ) -> list[tuple[int, int]] | None:
-        """Express this call's projection as [start, end) store-index ranges.
+    def _projection_recipe(self, projected: list[Message]) -> list[ProjectionEntry]:
+        """Express this call's projection as an ordered list of audit entries.
 
-        These ranges are the audit recipe: reconstruct_call() replays them
-        against messages.jsonl to rebuild the exact model input. So they
-        must describe what project() actually returned, not what the default
-        would have returned — a full-range claim under a windowing subclass
-        would make reconstruction produce the wrong input and report a
-        healthy session as unverified.
+        The recipe is what reconstruct_call() replays to rebuild the exact
+        model input, so it must describe what project() actually returned —
+        never what the default would have returned. Each entry is one of:
 
-        Matches by object identity against the store, so it is exact for any
-        projection that *selects* stored messages (the default, windows,
-        filters) and is O(len(projected)). Returns None — "not expressible as
-        ranges" — for a projection that synthesizes messages (a summary, a
-        rewrite) or reorders them; audit then reports the call
-        non-reconstructible instead of silently replaying a false range.
+        - `(start, end)` — a contiguous run of stored messages, by reference,
+          replayed as `messages.jsonl[start:end]`.
+        - `Message` — one message the model saw that is not in the store, by
+          value. `CallLogSink` interns it into `blobs/` at persist time, so
+          the record on disk holds a `{"blob": "sha256:…"}` ref.
+
+        Entries are in the order the model saw them, so the two forms compose:
+        a rewriting projection records ranges around the messages it left
+        alone and blobs for the ones it replaced.
+
+        Stored messages are matched by object identity, which is exact for any
+        projection that *selects* them (the default, windows, filters) and
+        O(len(projected)). A projection that rewrites (`model_copy()`) or
+        synthesizes a message misses that index by construction — the copy is
+        a different object — and the message is captured by value instead.
+        This is what makes a summarizing or eliding Context reconstructible:
+        the framework already holds project()'s return value here, so it can
+        quote what it cannot reference.
+
+        Recording position, never provenance: a by-value entry asserts only
+        "the model saw this message here". Which stored message a rewrite
+        derives from is the projection author's semantics, not something the
+        framework can know — and a value-similarity guess would be exactly the
+        dishonesty this recipe exists to refuse.
         """
         stored = self._store.messages
-        if not projected:
-            return []
         index = {id(m): i for i, m in enumerate(stored)}
 
-        ranges: list[tuple[int, int]] = []
+        entries: list[ProjectionEntry] = []
         start = prev = None
+
+        def close_range() -> None:
+            nonlocal start, prev
+            if start is not None:
+                entries.append((start, prev + 1))
+                start = prev = None
+
         for msg in projected:
             i = index.get(id(msg))
-            if i is None or (prev is not None and i <= prev):
-                return None  # synthesized or reordered — no honest range exists
-            if start is None:
-                start, prev = i, i
+            if i is None:
+                # Not in the store: a rewrite or a synthetic message. Quote it.
+                close_range()
+                entries.append(msg)
+            elif start is None:
+                start = prev = i
             elif i == prev + 1:
                 prev = i
             else:
-                ranges.append((start, prev + 1))
+                # A gap or a step backwards — both just start a new range, so
+                # reordering selections are expressible too.
+                close_range()
                 start = prev = i
-        ranges.append((start, prev + 1))
-        return ranges
+        close_range()
+        return entries
 
     async def _gather_blocks(self, sources: list[ContextSource]) -> str | None:
         """Gather and format one channel's sources, tolerating failures."""
@@ -396,12 +419,13 @@ class Context:
         - Called on every LLM call in the loop. Keep it cheap, or cache
           against the store's length.
 
-        Messages returned *as stored* (same objects, in store order) are
-        recorded as store-index ranges on call.request, which is what makes
-        a call replayable by audit.reconstruct_call(). A projection that
-        synthesizes messages (a summary, a rewrite) cannot be expressed as
-        ranges; such calls are recorded as non-reconstructible rather than
-        with a false range claim. See _projected_ranges().
+        Whatever this returns is replayable by audit.reconstruct_call().
+        Messages returned *as stored* (same objects) are recorded on
+        call.request as store-index ranges; messages this method rewrites or
+        synthesizes are captured by value into `blobs/`, since they exist
+        nowhere else. Either way the recorded recipe reproduces exactly what
+        the model saw — a summarizing or eliding subclass costs nothing but
+        the bytes of the messages it invents. See _projection_recipe().
         """
         return self._store.messages
 

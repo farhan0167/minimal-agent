@@ -1,7 +1,8 @@
 """Tests for the audit reader: on-demand reconstruction from a session dir."""
 
+import json
 from typing import ClassVar
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 from pydantic import BaseModel
@@ -515,10 +516,45 @@ class _WindowedContext(Context):
 
 
 class _SummarizingContext(Context):
-    """Synthesizes a message that is not in the store — no range expresses it."""
+    """Synthesizes a message that is not in the store — no range refers to it,
+    so the recipe must capture it by value."""
 
     def project(self):
         return [Message(role=Role.USER, content="summary of everything")]
+
+
+class _ElidingContext(Context):
+    """A miniature of the reporter's BrowserContext: identity below a
+    threshold, rewriting above it. Past four stored messages it replaces every
+    message but the last two with a redacted model_copy() — so a call's input
+    interleaves store references with messages that exist only in memory."""
+
+    THRESHOLD = 4
+
+    def project(self):
+        msgs = self._store.messages
+        if len(msgs) <= self.THRESHOLD:
+            return msgs
+        return [
+            # Elide to a *distinct* redaction per message, as a real elision
+            # would (it keeps the text and drops the images) — identical
+            # redactions would collapse into a single blob and hide whether
+            # dedup works across calls.
+            *(
+                m.model_copy(update={"content": f"[elided {m.content}]"})
+                for m in msgs[:-2]
+            ),
+            *msgs[-2:],
+        ]
+
+
+class _ReorderingContext(Context):
+    """Selects stored messages out of order — expressible as ranges, just not
+    ascending ones."""
+
+    def project(self):
+        msgs = self._store.messages
+        return [*msgs[-2:], *msgs[:-2]]
 
 
 async def _session_with_messages(tmp_path, context_cls, n=5):
@@ -560,13 +596,108 @@ async def test_reconstruct_replays_a_windowed_projection_verbatim(tmp_path):
     assert [m.content for m in result.messages[1:]] == ["m3", "m4"]
 
 
-async def test_synthesizing_projection_is_reported_non_reconstructible(tmp_path):
-    """No honest range exists, so the call says so — rather than replaying a
-    false range and reporting a healthy session as tampered."""
-    session, _ = await _session_with_messages(tmp_path, _SummarizingContext)
+async def test_synthesizing_projection_rebuilds_from_blobs(tmp_path):
+    """A message the store never held is quoted into the record by value, so
+    even a wholly synthetic projection reconstructs and verifies."""
+    session, assembled = await _session_with_messages(tmp_path, _SummarizingContext)
 
     (record,) = read_call_records(session.session_dir)
-    assert record["projected"] is None
+    assert [set(e) for e in record["projected"]] == [{"blob"}]
+
+    result = reconstruct_call(session.session_dir, record["call_id"])
+
+    assert result.messages == assembled
+    assert result.verified
+    assert result.unverified_reason is None
+    assert result.messages[1].content == "summary of everything"
+
+
+async def test_eliding_projection_rebuilds_the_elided_content(tmp_path):
+    """The load-bearing round trip: a rewriting projection (the reporter's
+    case) verifies, its recipe interleaves blobs with store ranges, and the
+    transcript still holds the originals — elision must never leak into the
+    durable store."""
+    session, assembled = await _session_with_messages(tmp_path, _ElidingContext, n=5)
+
+    (record,) = read_call_records(session.session_dir)
+    # Three rewritten messages by value, then the two untouched ones by range.
+    assert record["projected"] == [
+        *[{"blob": ANY}] * 3,
+        [3, 5],
+    ]
+
+    result = reconstruct_call(session.session_dir, record["call_id"])
+
+    assert result.messages == assembled
+    assert result.verified
+    assert [m.content for m in result.messages[1:]] == [
+        "[elided m0]",
+        "[elided m1]",
+        "[elided m2]",
+        "m3",
+        "m4",
+    ]
+    # Invariant: the store holds originals, only.
+    assert [m.content for m in session.context.store.messages] == [
+        f"m{i}" for i in range(5)
+    ]
+
+
+async def test_reordering_projection_records_ranges_in_projected_order(tmp_path):
+    """Reordering is a selection, so it costs no blobs — the ranges just come
+    in the order the model saw them, which the old ascending-only vocabulary
+    could not express."""
+    session, assembled = await _session_with_messages(tmp_path, _ReorderingContext)
+
+    (record,) = read_call_records(session.session_dir)
+    assert record["projected"] == [[3, 5], [0, 3]]
+
+    result = reconstruct_call(session.session_dir, record["call_id"])
+
+    assert result.messages == assembled
+    assert result.verified
+    assert [m.content for m in result.messages[1:]] == ["m3", "m4", "m0", "m1", "m2"]
+
+
+async def test_selecting_projection_writes_no_blobs(tmp_path):
+    """Zero cost when unused: a pure-selection projection's record is
+    equivalent to a pre-v3 one, and interns nothing."""
+    session, _ = await _session_with_messages(tmp_path, _WindowedContext)
+
+    (record,) = read_call_records(session.session_dir)
+    assert record["projected"] == [[3, 5]]
+
+    # Only the run's own blobs (system prompt, tool schemas) — no message ones.
+    blobs = session.session_dir / "blobs"
+    assert len(list(blobs.iterdir())) == 2
+
+
+async def test_identically_elided_messages_share_one_blob(tmp_path):
+    """Content addressing makes repetition free: the same elision across two
+    calls is one blob on disk, referenced twice."""
+    session, _ = await _session_with_messages(tmp_path, _ElidingContext, n=5)
+    await session.context.assemble()  # a second call, eliding identically
+
+    first, second = read_call_records(session.session_dir)
+    refs = [e["blob"] for e in first["projected"] if isinstance(e, dict)]
+    assert refs == [e["blob"] for e in second["projected"] if isinstance(e, dict)]
+
+    for ref in set(refs):
+        assert (session.session_dir / "blobs" / ref.removeprefix("sha256:")).exists()
+    # Three distinct elided messages, written once each despite two calls.
+    assert len(set(refs)) == 3
+
+
+async def test_legacy_null_projection_stays_unverifiable(tmp_path):
+    """A pre-v3 record whose rewriting projection had no range expression was
+    never persisted, so it does not retroactively become rebuildable — it
+    reconstructs unverified, with the reason."""
+    session, _ = await _session_with_messages(tmp_path, _WindowedContext)
+    calls = session.session_dir / "calls.jsonl"
+    record = json.loads(calls.read_text())
+    record["v"] = 2
+    record["projected"] = None
+    calls.write_text(json.dumps(record) + "\n")
 
     result = reconstruct_call(session.session_dir, record["call_id"])
 

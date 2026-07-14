@@ -211,7 +211,7 @@ def test_call_log_sink_records_only_per_call_facts(tmp_path):
     emitter.emit(_call_request())
 
     (record,) = _call_records(tmp_path)
-    assert record["v"] == 2
+    assert record["v"] == 3
     # Run-level facts are NOT on the call record — they live in runs.jsonl.
     for field in ("model", "backend", "tools", "system_prompt"):
         assert field not in record

@@ -119,6 +119,11 @@ def _run_records_by_id(session_dir: Path) -> dict[str, dict]:
 class ReconstructedCall:
     """One LLM call's exact input, rebuilt from the session directory.
 
+    Stored messages rebuild from the transcript by range; messages a rewriting
+    projection invented (an elision, a summary) rebuild by value from `blobs/`
+    — so a summarizing Context verifies with the same strength as a selecting
+    one.
+
     `verified` compares the recorded hash against one computed over the
     rebuilt messages. A mismatch means *unverifiable*, not *tampered* —
     the canonical serialization can drift across Pydantic/environment
@@ -134,10 +139,12 @@ class ReconstructedCall:
     messages: list[Message]  # exactly what the model saw, in order
     recorded_sha256: str
     computed_sha256: str
-    # Set when reconstruction is known-incomplete before hashing — e.g. the
-    # run record is missing (the run never reached run.end), so the system
-    # prompt cannot be recovered. None means the recipe ran fully; `verified`
-    # then reflects the hash comparison.
+    # Set when reconstruction is known-incomplete before hashing, which now
+    # happens in exactly two cases: the run record is missing (the run never
+    # reached run.end, so the system prompt cannot be recovered), or the record
+    # predates v3 and its projection rewrote messages whose bytes were never
+    # persisted. None means the recipe ran fully; `verified` then reflects the
+    # hash comparison.
     unverified_reason: str | None = None
 
     @property
@@ -150,11 +157,13 @@ class ReconstructedCall:
 def reconstruct_call(session_dir: Path, call_id: str) -> ReconstructedCall:
     """Rebuild the exact model input for one recorded call.
 
-    The audit recipe: system prompt from its blob, projected store ranges
-    from messages.jsonl, injected blocks re-applied verbatim (framing is
-    quoted in the record, so no framing constant is consulted). Raises
-    CallRecordNotFoundError for an unknown call_id and FileNotFoundError
-    if a referenced blob is missing (a dangling ref from a failed write).
+    The audit recipe: system prompt from its blob, then the projection replayed
+    entry by entry — stored messages sliced from messages.jsonl by range,
+    rewritten ones read back from blobs/ by value — then injected blocks
+    re-applied verbatim (framing is quoted in the record, so no framing
+    constant is consulted). Raises CallRecordNotFoundError for an unknown
+    call_id and FileNotFoundError if a referenced blob is missing (a dangling
+    ref from a failed write).
     """
     record = next(
         (r for r in read_call_records(session_dir) if r["call_id"] == call_id),
@@ -173,6 +182,30 @@ def _read_stored(session_dir: Path) -> list[Message]:
         Message.model_validate_json(line)
         for line in _read_lines(session_dir / "messages.jsonl")
     ]
+
+
+def _replay(session_dir: Path, recipe: list, stored: list[Message]) -> list[Message]:
+    """Replay a call record's projection recipe into the messages it names.
+
+    Two entry forms, distinguished by shape rather than by record version (a
+    v2 record's ranges therefore replay unchanged here):
+
+    - `[start, end]` — stored messages by reference, sliced from the transcript.
+    - `{"blob": "sha256:…"}` — one message the model saw that the store never
+      held (a rewrite, a summary), by value from `blobs/`. Blob resolution
+      walks upward, so a rewritten call inside a child scope finds the session
+      root's store for free.
+    """
+    msgs: list[Message] = []
+    for entry in recipe:
+        if isinstance(entry, dict):
+            msgs.append(
+                Message.model_validate_json(_read_blob(session_dir, entry["blob"]))
+            )
+        else:
+            start, end = entry
+            msgs.extend(stored[start:end])
+    return msgs
 
 
 def _rebuild(
@@ -194,12 +227,13 @@ def _rebuild(
         )
     system_prompt_ref = run["system_prompt"] if run else None
 
-    # A projection that synthesizes or reorders messages (a summarizing
-    # Context, say) has no store-range expression, so the transcript cannot
-    # rebuild what the model saw. Say so, rather than replaying a wrong input
-    # and reporting the mismatch as a failed verification.
-    ranges = record["projected"]
-    if ranges is None and unverified_reason is None:
+    # `projected: null` exists only in pre-v3 records, written when a rewriting
+    # projection had no expression in the ranges-only vocabulary. Those bytes
+    # were never persisted, so such a call is permanently unrebuildable — say
+    # so, rather than replaying a wrong input and reporting the mismatch as a
+    # failed verification. From v3 on, the recipe captures rewrites by value.
+    recipe = record["projected"]
+    if recipe is None and unverified_reason is None:
         unverified_reason = (
             "projection is not expressible as store ranges "
             "(Context.project() synthesized or reordered messages); "
@@ -214,14 +248,13 @@ def _rebuild(
                 content=_read_blob(session_dir, system_prompt_ref),
             )
         )
-    for start, end in ranges or []:
-        msgs.extend(stored[start:end])
+    msgs.extend(_replay(session_dir, recipe or [], stored))
 
     offset = 1 if system_prompt_ref else 0
     inj_run = record["injected"]["run"]
     inj_call = record["injected"]["call"]
     # Anchors index the projection, so they are meaningless without it.
-    if ranges is not None:
+    if recipe is not None:
         if inj_run:
             i = inj_run["anchor"] + offset
             msgs[i] = _merge_into_user(msgs[i], inj_run["text"])
