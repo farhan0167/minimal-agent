@@ -100,15 +100,6 @@ function firstUserText(messages: Message[]): string | null {
 }
 
 /**
- * Convert server messages to assistant-ui ThreadMessageLike format.
- *
- * The server stores messages as a flat sequence per agent turn:
- *   assistant {content:"", tool_calls:[...]}  → tool {result} → assistant {content:"final text"}
- *
- * We merge each such sequence into a single assistant ThreadMessageLike
- * containing tool-call parts (with results) + final text.
- */
-/**
  * Is the user-role message at `i` one the agent loop generated, rather than
  * one the human typed?
  *
@@ -159,23 +150,85 @@ function isHarnessParts(messages: Message[], i: number): boolean {
   );
 }
 
-function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
-  const result: ThreadMessageLike[] = [];
+type TurnPart =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
+  | { type: "image"; image: string }
+  | {
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      argsText: string;
+      args: Record<string, unknown>;
+      result?: unknown;
+    };
 
-  // Index tool results by tool_call_id for quick lookup.
+/**
+ * Flatten one agent turn — the committed messages between two typed user
+ * messages — into ordered assistant-ui parts.
+ *
+ * The single source of truth for what a turn looks like. The reload path
+ * (toThreadMessages) feeds it a slice of stored history; the live adapter
+ * feeds it the mirror of messages committed so far mid-run. Because both
+ * renderings come from the same walk, a refresh cannot rearrange a turn.
+ *
+ * Order is message order: each assistant message contributes its reasoning,
+ * then its tool calls, then its text; tool results attach to their call by id;
+ * a harness flush (user-role, see isHarnessParts) contributes its parts where
+ * it sits in the sequence.
+ */
+function turnToParts(turn: Message[]): TurnPart[] {
   const toolResults = new Map<string, string>();
-  for (const msg of messages) {
-    if (msg.role === "tool" && msg.tool_call_id) {
-      toolResults.set(msg.tool_call_id, (msg.content as string) ?? "");
+  for (const m of turn) {
+    if (m.role === "tool" && m.tool_call_id) {
+      toolResults.set(m.tool_call_id, (m.content as string) ?? "");
     }
   }
+
+  const parts: TurnPart[] = [];
+  for (const m of turn) {
+    if (m.role === "user" && Array.isArray(m.content)) {
+      parts.push(...convertContentParts(m.content));
+    }
+    if (m.role !== "assistant") continue;
+
+    if (m.reasoning) {
+      parts.push({ type: "reasoning", text: m.reasoning });
+    }
+    for (const tc of m.tool_calls ?? []) {
+      parts.push({
+        type: "tool-call",
+        toolCallId: tc.id,
+        toolName: tc.name,
+        argsText: JSON.stringify(tc.arguments),
+        args: tc.arguments,
+        result: toolResults.get(tc.id),
+      });
+    }
+    if (m.content) {
+      parts.push({ type: "text", text: m.content as string });
+    }
+  }
+  return parts;
+}
+
+/**
+ * Convert stored server history to assistant-ui ThreadMessageLike format.
+ *
+ * Typed user messages become user bubbles. Everything between them — the
+ * assistant's tool-call batches, tool results, interleaved commentary, and
+ * any harness image flush — is one agent turn, rendered as ONE assistant
+ * message whose parts sit in true message order (turnToParts). The live
+ * adapter yields the same shape, so live and reloaded turns match.
+ */
+function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
+  const result: ThreadMessageLike[] = [];
 
   let i = 0;
   while (i < messages.length) {
     const msg = messages[i];
 
-    // Skip system and tool messages (tool results are merged via the map).
-    if (msg.role === "system" || msg.role === "tool") {
+    if (msg.role === "system") {
       i++;
       continue;
     }
@@ -194,79 +247,15 @@ function toThreadMessages(messages: Message[]): readonly ThreadMessageLike[] {
       continue;
     }
 
-    // Assistant message — collect this and any continuation into one turn.
-    // A turn is: assistant(tool_calls) → tool(s) → assistant(text)
-    // Or just: assistant(text) alone.
-    const parts: (
-      | { type: "text"; text: string }
-      | { type: "reasoning"; text: string }
-      | { type: "image"; image: string }
-      | {
-          type: "tool-call";
-          toolCallId: string;
-          toolName: string;
-          argsText: string;
-          args: Record<string, unknown>;
-          result?: unknown;
-        }
-    )[] = [];
-
-    // Walk forward, merging assistant+tool messages into turns.
-    // A single turn is: optional text + tool_calls + tool results + optional trailing text.
-    // When a new assistant message with text (and no tool_calls) appears after
-    // we've already accumulated parts, flush the current turn and start a new one.
-    //
-    // The loop's image flush (see isHarnessParts) is a user-role message, but
-    // it belongs to this turn — absorb it rather than let it end the turn, so
-    // the images render inline exactly where the live adapter puts them.
+    // Agent turn: consume up to the next typed user message.
+    const start = i;
     while (
       i < messages.length &&
       (messages[i].role !== "user" || isHarnessParts(messages, i))
     ) {
-      const m = messages[i];
-
-      if (m.role === "user" && Array.isArray(m.content)) {
-        parts.push(...convertContentParts(m.content));
-      }
-
-      if (m.role === "assistant") {
-        const hasToolCalls = m.tool_calls && m.tool_calls.length > 0;
-        const hasText = !!m.content;
-
-        // If this assistant message has text but no tool calls, and we already
-        // have accumulated parts, it's a new standalone turn — flush first.
-        if (hasText && !hasToolCalls && parts.length > 0) {
-          result.push({
-            role: "assistant",
-            content: parts.splice(0) as ThreadMessageLike["content"],
-          });
-        }
-
-        // Reasoning leads the turn — surface it before this message's tool
-        // calls and text, matching the order the model produced it.
-        if (m.reasoning) {
-          parts.push({ type: "reasoning", text: m.reasoning });
-        }
-
-        if (hasToolCalls) {
-          for (const tc of m.tool_calls!) {
-            parts.push({
-              type: "tool-call",
-              toolCallId: tc.id,
-              toolName: tc.name,
-              argsText: JSON.stringify(tc.arguments),
-              args: tc.arguments,
-              result: toolResults.get(tc.id),
-            });
-          }
-        }
-        if (hasText) {
-          parts.push({ type: "text", text: m.content as string });
-        }
-      }
-      // Skip tool messages — already indexed above.
       i++;
     }
+    const parts = turnToParts(messages.slice(start, i));
 
     if (parts.length > 0) {
       result.push({
@@ -377,16 +366,17 @@ export function useChatRuntime(
           setSessionTitle(sessionId, userText);
         }
 
-        let currentText = "";
-        let reasoningText = "";
-        const toolCalls: ContentPart[] = [];
-        const toolCallIndex = new Map<string, number>();
+        // Mirror of the turn's committed messages, exactly as the server
+        // stores them. Snapshots derive their rendered parts from this via
+        // turnToParts — the same function the reload path uses — so the live
+        // rendering and the post-refresh rendering cannot drift apart.
+        const turn: Message[] = [];
 
-        // Images the loop flushed after a tool batch (an image/PDF read).
-        // They render inside this assistant turn, after the tool calls that
-        // produced them — the same placement toThreadMessages gives them on
-        // reload, so a refresh doesn't rearrange the conversation.
-        const images: ContentPart[] = [];
+        // In-flight state for the message the model is still generating.
+        // Deltas accumulate here; the committed `assistant` event moves the
+        // authoritative version into `turn` and these reset.
+        let pendingText = "";
+        let pendingReasoning = "";
 
         // Tool calls the model is still generating, keyed by the provider's
         // fragment index. The first fragment carries id + name; later ones
@@ -417,28 +407,22 @@ export function useChatRuntime(
                 }) as ContentPart,
             );
 
-        // Prepend the reasoning trace (when present) so it renders above the
-        // tool calls and answer, matching the order the model produced it.
-        const withReasoning = (parts: ContentPart[]): ContentPart[] =>
-          reasoningText
-            ? [
-                { type: "reasoning" as const, text: reasoningText } as ContentPart,
-                ...parts,
-              ]
-            : parts;
-
-        // Cumulative snapshot of the whole turn: committed tool calls, then
-        // in-flight ones, then any images those calls read, then the answer
-        // text (matching commit order).
+        // Cumulative snapshot of the whole turn: the committed messages in
+        // true message order, then the message still being generated —
+        // its streamed reasoning, in-flight tool calls, and streamed text,
+        // in the same relative order turnToParts gives them once committed,
+        // so nothing jumps around when the commit lands.
         const snapshot = (): ChatModelRunResult => ({
-          content: withReasoning([
-            ...toolCalls,
-            ...partialParts(),
-            ...images,
-            ...(currentText
-              ? [{ type: "text" as const, text: currentText }]
+          content: [
+            ...turnToParts(turn),
+            ...(pendingReasoning
+              ? [{ type: "reasoning" as const, text: pendingReasoning }]
               : []),
-          ]),
+            ...partialParts(),
+            ...(pendingText
+              ? [{ type: "text" as const, text: pendingText }]
+              : []),
+          ] as NonNullable<ChatModelRunResult["content"]>,
         });
 
         const { on: reasoningOn, effort } = reasoningRef.current;
@@ -457,14 +441,14 @@ export function useChatRuntime(
             case "reasoning": {
               // Thinking token — accumulate and yield a snapshot so the
               // reasoning block fills in live above the (still empty) answer.
-              reasoningText += event.data.text;
+              pendingReasoning += event.data.text;
               yield snapshot();
               break;
             }
 
             case "delta": {
               // Live token — append and yield a cumulative snapshot.
-              currentText += event.data.text;
+              pendingText += event.data.text;
               yield snapshot();
               break;
             }
@@ -488,80 +472,43 @@ export function useChatRuntime(
             }
 
             case "assistant": {
-              const msg = event.data;
-
-              // The committed message is authoritative: replace the streamed
-              // text rather than append (deltas already built it up).
-              if (msg.content) {
-                currentText = msg.content as string;
-              }
-              if (msg.reasoning) {
-                reasoningText = msg.reasoning;
-              }
-
-              // The committed message carries the assembled tool calls —
-              // drop the partial mirror built from deltas.
+              // The committed message is authoritative — move it into the
+              // turn mirror and drop the streamed mirrors of its text,
+              // reasoning, and tool calls (deltas already built them up).
+              turn.push(event.data);
+              pendingText = "";
+              pendingReasoning = "";
               partialToolCalls.clear();
-
-              if (msg.tool_calls) {
-                for (const tc of msg.tool_calls) {
-                  toolCallIndex.set(tc.id, toolCalls.length);
-                  toolCalls.push({
-                    type: "tool-call",
-                    toolCallId: tc.id,
-                    toolName: tc.name,
-                    argsText: JSON.stringify(tc.arguments),
-                    args: tc.arguments as never,
-                  } as ContentPart);
-                }
-              }
-
               yield snapshot();
               break;
             }
 
             case "tool_result": {
-              const msg = event.data;
-              const tcId = msg.tool_call_id;
-              if (tcId && toolCallIndex.has(tcId)) {
-                const idx = toolCallIndex.get(tcId)!;
-                const existing = toolCalls[idx] as Record<string, unknown>;
-                toolCalls[idx] = {
-                  ...existing,
-                  result: msg.content,
-                } as ContentPart;
-              }
-
+              // turnToParts attaches the result to its call by tool_call_id.
+              turn.push(event.data);
               yield snapshot();
               break;
             }
 
             case "user_parts": {
-              // Images read by the tool batch that just ran. Fold them into
-              // this turn so they appear without a reload; text parts (if the
-              // loop ever flushes any) ride along as plain text.
-              const content = event.data.content;
-              if (Array.isArray(content)) {
-                images.push(...convertContentParts(content));
-              }
+              // The loop's post-batch flush (images from an image/PDF read).
+              // It sits in the mirror where it sits in the stored history, so
+              // its parts render inline at the same spot live and on reload.
+              turn.push(event.data);
               yield snapshot();
               break;
             }
 
             case "error": {
               // Full traceback goes to the console for debugging; the chat
-              // shows the one-line detail.
+              // shows the one-line detail at the end of the turn.
               console.error(
                 "Agent error:",
                 event.data.detail,
                 event.data.traceback ?? "",
               );
-              currentText += `\n\n**Error:** ${event.data.detail}`;
-              yield {
-                content: withReasoning([
-                  { type: "text" as const, text: currentText },
-                ]),
-              };
+              pendingText += `\n\n**Error:** ${event.data.detail}`;
+              yield snapshot();
               break;
             }
 

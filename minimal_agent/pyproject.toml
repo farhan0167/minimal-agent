@@ -1,6 +1,6 @@
 [project]
 name = "mini-agent-kit"
-version = "0.1.10"
+version = "0.1.11"
 description = "General purpose agent harness inspired by Claude Code"
 readme = "README.md"
 requires-python = ">=3.11"
