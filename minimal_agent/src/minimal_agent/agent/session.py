@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from ..context_sources import ContextSource
 from ..events import SessionCreated, SessionLoaded, Sink
-from ..llm.types import Usage
+from ..llm.types import Message, Usage
 from .context import Context
 from .message_store import MessageStore
 from .scope import RecordedScope
@@ -312,6 +312,26 @@ class SessionManager:
         meta_path = self._base_dir / session_id / "session.json"
         with open(meta_path) as f:
             return SessionMeta.from_dict(json.load(f))
+
+    def read_messages(self, session_id: str) -> list[Message]:
+        """Read a session's stored transcript without resuming it.
+
+        The read-only counterpart to load_session(): no config validation —
+        a session recorded under a custom Context class stays inspectable
+        without importing that class — no Context, and no events emitted, so
+        inspection never writes to the session's artifacts. Returns the
+        messages as recorded (the store, not any projection): a Context that
+        elides history shapes what the *model* sees, never what a reader of
+        the conversation sees. Raises FileNotFoundError if the session
+        doesn't exist.
+        """
+        session_dir = self._base_dir / session_id
+        if not (session_dir / "session.json").exists():
+            # MessageStore returns an empty store for a missing file — fine for
+            # the create path, wrong here: existence means session.json opens,
+            # the same definition read_meta() uses.
+            raise FileNotFoundError(f"No session {session_id!r} under {self._base_dir}")
+        return MessageStore.read_only(session_dir / "messages.jsonl").messages
 
     def list_sessions(self) -> list[SessionMeta]:
         """List all sessions by reading their metadata files.

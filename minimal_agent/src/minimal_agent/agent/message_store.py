@@ -42,8 +42,28 @@ class MessageStore:
 
         Validates tool_use/tool_result pairing after loading.
         Handles corrupt last line (crash artifact) gracefully.
+
+        The store stays bound to `path`, so crash-healing appends are
+        persisted: a resumed session's file matches the history the model
+        is about to be given. For a read that must not touch the file, use
+        read_only() — same parse, same healing, no path to write through.
         """
-        store = cls(path=path)
+        return cls._load(path, bind=True)
+
+    @classmethod
+    def read_only(cls, path: Path) -> "MessageStore":
+        """Load a transcript for inspection — never writes to `path`.
+
+        Same parsing and crash-healing as from_file(), but the returned
+        store has no path, so the synthetic messages healing appends live
+        in memory only. The caller sees the healed transcript a resume
+        would see; the file on disk is untouched.
+        """
+        return cls._load(path, bind=False)
+
+    @classmethod
+    def _load(cls, path: Path, *, bind: bool) -> "MessageStore":
+        store = cls(path=path if bind else None)
 
         if path.exists():
             lines = path.read_text().splitlines()

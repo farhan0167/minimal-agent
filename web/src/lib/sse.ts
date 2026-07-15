@@ -90,6 +90,8 @@ function parseSSEBlock(block: string): SSEEvent | null {
         return { type: "assistant", data: data as Message };
       case "tool_result":
         return { type: "tool_result", data: data as Message };
+      case "user_parts":
+        return { type: "user_parts", data: data as Message };
       case "error":
         return {
           type: "error",

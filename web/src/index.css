@@ -270,3 +270,20 @@
 .aui-thread-viewport-footer {
   padding: 0.5rem 1rem 1.25rem;
 }
+
+/* Image attachments rendered inside the user bubble (see UserMessage.tsx).
+   Stacked above the text with a small gap; the image fills the bubble width
+   so live turns match the reload layout (image + text in one bubble). */
+.aui-user-message-attachments-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.aui-user-message-attachments-inline:not(:last-child) {
+  margin-bottom: 0.5rem;
+}
+.aui-user-message-image-attachment {
+  display: block;
+  width: 100%;
+  height: auto;
+}

@@ -27,7 +27,7 @@ from ...llm.types import (
 )
 from ..deps import get_agents, get_manager
 from ..schemas import AttachmentContent, ChatRequest
-from ..service import UnknownAgentError, open_session_readonly, resume_session
+from ..service import UnknownAgentError, resume_session
 
 # PDF attachments need pdf2image (and system poppler underneath) — too
 # heavy to require of every server user, so support is feature-detected.
@@ -214,6 +214,12 @@ async def _stream_agent(
                 yield {"event": "assistant", "data": _serialize_message(item)}
             elif item.role == Role.TOOL:
                 yield {"event": "tool_result", "data": _serialize_message(item)}
+            elif item.role == Role.USER:
+                # The loop's flush of non-text parts (images from an image/PDF
+                # read) after a tool batch. The turn's typed user message was
+                # committed before agent.run(), so a USER message arriving from
+                # the loop is always harness-generated, never user-typed.
+                yield {"event": "user_parts", "data": _serialize_message(item)}
     except (asyncio.CancelledError, GeneratorExit):
         # Stream was torn down before the turn finished. On a client
         # disconnect sse-starlette calls aclose() on this generator, which
@@ -259,11 +265,10 @@ async def messages_route(
     manager: SessionManager = Depends(get_manager),
 ):
     try:
-        session = open_session_readonly(manager, session_id)
+        messages = manager.read_messages(session_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail="Session not found") from e
 
-    messages = session.context.get_messages()
     return {
         "messages": [
             {

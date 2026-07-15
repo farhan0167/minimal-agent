@@ -4,8 +4,9 @@
 `RunLogSink` writes `runs.jsonl` + `blobs/` (one record per run: the agent
 fingerprint — model, backend, tool schemas, stable system prompt — plus the
 run's outcome). `CallLogSink` writes `calls.jsonl` (one record per LLM call:
-only what varies per call — projected ranges, injected blocks, the assembled
-hash). Call records join to their run record on `run_id`.
+only what varies per call — the projection recipe, injected blocks, the
+assembled hash) and interns any messages the projection rewrote into the same
+`blobs/`. Call records join to their run record on `run_id`.
 
 Run-level facts live on the run record, not repeated per call — the record
 tree (run → call) mirrors the span tree an OTel exporter builds. See
@@ -26,11 +27,23 @@ import os
 from dataclasses import asdict
 from pathlib import Path
 
-from ..events import CallRequest, Envelope, EventType, RunEnd, RunStart
+from ..events import (
+    CallRequest,
+    Envelope,
+    EventType,
+    ProjectionEntry,
+    RunEnd,
+    RunStart,
+)
+from ..llm.types import Message
 
 logger = logging.getLogger(__name__)
 
-_CALL_RECORD_VERSION = 2  # v2: run-level facts moved to runs.jsonl
+# v3: `projected` is a recipe — stored ranges *and* by-value blob refs for
+# messages a rewriting projection invented. v2 records (ranges, or null for a
+# rewrite it could not express) still read correctly: an array entry is a
+# range, an object is a blob ref, so the grammar needs no version branch.
+_CALL_RECORD_VERSION = 3
 _RUN_RECORD_VERSION = 1
 
 # Fields owned by the audit artifacts — never written to the trace.
@@ -187,12 +200,20 @@ class CallLogSink:
     Subscribes to `call.request`. Run-level facts (model, backend, tool
     schemas, system prompt) are not repeated here — they live on the run's
     `runs.jsonl` record, joined by `run_id`. This record carries the
-    projected store ranges, the injected live blocks, and the assembled
-    hash: everything needed to reconstruct the call *given its run record*.
+    projection recipe, the injected live blocks, and the assembled hash:
+    everything needed to reconstruct the call *given its run record*.
+
+    Rewritten messages are blob-interned here, exactly as `RunLogSink` interns
+    the system prompt and tool schemas: the event carries them by value (sinks
+    own all I/O, so emission stays side-effect-free), and this writes them into
+    the shared `blobs/` store, leaving a ref on disk. Content addressing makes
+    the common case cheap — a message elided identically across ten calls is
+    one blob and ten refs.
     """
 
-    def __init__(self, scope_dir: Path) -> None:
+    def __init__(self, scope_dir: Path, *, blobs: BlobStore | None = None) -> None:
         self._path = scope_dir / "calls.jsonl"
+        self._blobs = blobs if blobs is not None else BlobStore(scope_dir / "blobs")
 
     def handle(self, env: Envelope) -> None:
         if not isinstance(env.event, CallRequest):
@@ -205,7 +226,7 @@ class CallLogSink:
                 "call_id": env.call_id,
                 "run_id": env.run_id,
                 "ts": env.ts,
-                "projected": e.projected,
+                "projected": [self._entry(x) for x in e.projected],
                 "store_len": e.store_len,
                 "injected": {
                     "run": asdict(e.injected_run) if e.injected_run else None,
@@ -214,3 +235,17 @@ class CallLogSink:
                 "assembled_sha256": e.assembled_sha256,
             },
         )
+
+    def _entry(self, entry: ProjectionEntry) -> list[int] | dict[str, str]:
+        """One recipe entry as it lands on disk: a stored range by reference,
+        or a message the model saw but the store never held, by blob ref.
+
+        The two forms are distinguishable without a version branch — an array
+        is a range, an object is a blob — which is why the v2 grammar (ranges
+        only) reads correctly under v3's reader.
+        """
+        if isinstance(entry, Message):
+            # The same canonical serialization hash_messages() consumes, so
+            # the replayed bytes hash to the recorded assembled_sha256.
+            return {"blob": self._blobs.put(entry.model_dump_json())}
+        return list(entry)

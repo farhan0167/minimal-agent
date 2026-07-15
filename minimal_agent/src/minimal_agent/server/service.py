@@ -92,19 +92,3 @@ async def resume_session(
     _, agent = resolve_agent(agents, name)
     session = await agent.load_session(session_id)
     return agent, session
-
-
-def open_session_readonly(manager: SessionManager, session_id: str) -> Session:
-    """Load a session for inspection only (metadata + stored messages).
-
-    Deliberately promptless: read-only consumers serialize the stored
-    conversation and never run the agent. To run the agent, use
-    resume_session().
-    """
-    meta = manager.read_meta(session_id)
-    return manager.load_session(
-        session_id,
-        model=meta.model,
-        backend=meta.backend,
-        behavior_prompt=None,
-    )

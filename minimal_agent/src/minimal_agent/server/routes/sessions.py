@@ -7,12 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...agent import Agent, Session, SessionManager, SessionMeta
 from ..deps import get_agents, get_manager
 from ..schemas import CreateSessionRequest, SessionListResponse, SessionResponse
-from ..service import (
-    UnknownAgentError,
-    create_session,
-    load_agent_name,
-    open_session_readonly,
-)
+from ..service import UnknownAgentError, create_session, load_agent_name
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -77,10 +72,10 @@ async def get_session_route(
     manager: SessionManager = Depends(get_manager),
 ):
     try:
-        session = open_session_readonly(manager, session_id)
+        meta = manager.read_meta(session_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail="Session not found") from e
-    return _session_response(session, agent=_agent_name_or_none(manager, session_id))
+    return _session_response(meta, agent=_agent_name_or_none(manager, session_id))
 
 
 @router.delete("/{session_id}", status_code=204)

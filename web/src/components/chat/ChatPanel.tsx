@@ -9,6 +9,8 @@ import { getTools } from "../../api/tools";
 import { buildToolUIs } from "../tools";
 import { ShikiSyntaxHighlighter } from "./ShikiHighlighter";
 import { makeAssistantMessage } from "./AssistantMessage";
+import { UserMessage } from "./UserMessage";
+import { Composer } from "./Composer";
 import { HtmlCodeHeader } from "../markdown/HtmlPreview";
 import { NullCodeHeader, SvgBlock } from "../markdown/SvgBlock";
 import { MermaidBlock } from "../markdown/MermaidBlock";
@@ -78,7 +80,7 @@ export function ChatPanel({ sessionId, agent }: ChatPanelProps) {
       <div className="flex flex-col h-full min-h-0">
         <ReasoningControls value={reasoning} onChange={setReasoning} />
         <div className="flex-1 min-h-0">
-          <Thread components={{ AssistantMessage }} />
+          <Thread components={{ AssistantMessage, UserMessage, Composer }} />
         </div>
       </div>
     </AssistantRuntimeProvider>

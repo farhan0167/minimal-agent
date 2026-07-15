@@ -234,7 +234,7 @@ class RecordedScope:
             sinks=[
                 TraceSink(scope_dir),
                 RunLogSink(scope_dir, blobs=blobs),
-                CallLogSink(scope_dir),
+                CallLogSink(scope_dir, blobs=blobs),
                 self._meta_sink,
                 *self._extra_sinks,
             ]

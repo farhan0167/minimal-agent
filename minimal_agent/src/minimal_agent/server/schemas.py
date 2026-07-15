@@ -136,6 +136,22 @@ class CallRecordListResponse(BaseModel):
     calls: list[dict]
 
 
+# Mirrors ReconstructedCall.unverified_reason (audit.py), which is the source
+# of truth — both call-shaped schemas below carry it, so anything the library
+# knows about a call's verifiability, the API says. If _rebuild() grows a third
+# producer of the reason, name it here too.
+UNVERIFIED_REASON_DESC = (
+    "Why this call could not be verified, when it could not. When set, "
+    "`messages` is INCOMPLETE — it holds only what the recipe could truthfully "
+    "recover (typically the system prompt) and must not be read as the full "
+    "model input. Set when the run record is missing (the run never completed, "
+    "so the system prompt is unrecoverable), or when the call predates record "
+    "v3 and its projection rewrote messages whose bytes were never persisted. "
+    "None means the recipe ran fully and `verified` reflects the hash "
+    "comparison alone."
+)
+
+
 class ReconstructedCallResponse(BaseModel):
     """One LLM call's exact input, rebuilt from the session directory.
 
@@ -153,8 +169,12 @@ class ReconstructedCallResponse(BaseModel):
     verified: bool = Field(
         description=(
             "Whether the rebuilt messages hash to the recorded value. False "
-            "means unverifiable (e.g. serialization drift), not tampered."
+            "means unverifiable, not tampered — see unverified_reason."
         )
+    )
+    unverified_reason: str | None = Field(
+        default=None,
+        description=UNVERIFIED_REASON_DESC,
     )
     recorded_sha256: str
     computed_sha256: str
@@ -181,8 +201,12 @@ class CallInputResponse(BaseModel):
     verified: bool = Field(
         description=(
             "Whether the rebuilt messages hash to the recorded value. False "
-            "means unverifiable (e.g. serialization drift), not tampered."
+            "means unverifiable, not tampered — see unverified_reason."
         )
+    )
+    unverified_reason: str | None = Field(
+        default=None,
+        description=UNVERIFIED_REASON_DESC,
     )
     recorded_sha256: str
     computed_sha256: str
