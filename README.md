@@ -111,7 +111,7 @@ if __name__ == "__main__":
 
 `python my_app.py` serves the chat UI at `/`, the JSON API under `/api`, and interactive docs at `/docs`. Responses stream over SSE, sessions persist to disk and resume across restarts, and with multiple agents registered the UI's new-session dialog lets you pick one. `App` subclasses `FastAPI`, so routes, middleware, `lifespan`, and `uvicorn my_app:app --reload` all work as usual.
 
-A ready-to-run two-agent example lives in [example/my_app.py](example/my_app.py) — see [example/README.md](example/README.md). The UI's source is in [web/](web/); from a source checkout, build it once into the package with `make ui` (needs Node), or hack on it live with `npm run dev` against a running `App`.
+Ready-to-run examples live in [example/](example/) — a [swe_agent/](example/swe_agent/) (full read/write/shell toolset plus sub-agents) and a [research_agent/](example/research_agent/) (web search + read-only files, reasoning on). Each is one `main.py` you can copy as a starting point; see [example/README.md](example/README.md). The UI's source is in [web/](web/); from a source checkout, build it once into the package with `make ui` (needs Node), or hack on it live with `npm run dev` against a running `App`.
 
 ## Development
 
