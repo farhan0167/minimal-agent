@@ -8,7 +8,7 @@ delegates to `LLMTool.from_model` (and in turn the OpenAI SDK's
 """
 
 from abc import ABC, abstractmethod
-from typing import ClassVar, Generic, TypeVar
+from typing import Generic, TypeVar
 
 from pydantic import BaseModel
 
@@ -30,9 +30,12 @@ class BaseTool(Generic[InputModel, Out], ABC):
     `__init__` and live on `self`.
     """
 
-    # Required class-level metadata — set by subclasses.
-    name: ClassVar[str]
-    input_schema: ClassVar[type[BaseModel]]
+    # Required metadata — set by subclasses, usually at class level. Plain
+    # annotations (not ClassVar) so adapter-style tools whose identity is
+    # only known at runtime (e.g. MCP tools discovered from a server) may
+    # set them per-instance in __init__ instead.
+    name: str
+    input_schema: type[BaseModel]
 
     # --- Required: execution ------------------------------------------------
 
@@ -47,7 +50,7 @@ class BaseTool(Generic[InputModel, Out], ABC):
 
     # --- Optional hooks (override when needed) ------------------------------
 
-    is_read_only: ClassVar[bool] = False
+    is_read_only: bool = False
     """Tools that only read state (no filesystem/network writes, no subprocess
     side-effects) set this True so the harness can gate destructive tools in
     safe/dry-run modes."""
@@ -98,12 +101,13 @@ class BaseTool(Generic[InputModel, Out], ABC):
 
     # --- Wire-format projection ---------------------------------------------
 
-    @classmethod
-    def as_llm_tool(cls) -> LLMTool:
+    def as_llm_tool(self) -> LLMTool:
         """Produce the neutral LLMTool dataclass the LLM facade consumes.
 
         Delegates to `LLMTool.from_model`, which delegates to the OpenAI
         SDK's `pydantic_function_tool` — the strict JSON Schema lives in
-        exactly one place.
+        exactly one place. An instance method (not a classmethod) so tools
+        with per-instance identity — MCP adapters carrying a server-provided
+        JSON Schema — can override it to ship their own schema.
         """
-        return LLMTool.from_model(cls.input_schema, name=cls.name)
+        return LLMTool.from_model(self.input_schema, name=self.name)

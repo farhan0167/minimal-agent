@@ -225,6 +225,55 @@ Tools are how the agent interacts with the world. Each tool is a class that inhe
 | `Grep` | Search file contents using ripgrep |
 | `Glob` | Find files by name pattern |
 
+### MCP tools
+
+Tools from any [MCP](https://modelcontextprotocol.io) server can sit alongside the built-ins — same dispatcher, same permission flow, same observability. Requires the mcp extra (`pip install "mini-agent-kit[mcp]"`).
+
+`MCPToolProvider` is an async context manager that owns the server connections: on enter it connects to each configured server (`MCPServerStdio` for local subprocesses, `MCPServerHTTP` for streamable-HTTP endpoints), discovers its tools, and returns one ready `BaseTool` instance per remote tool; on exit it closes everything. Pass the instances to `Agent(tools=[...])` like any other tool, and keep the provider open for the agent's whole life:
+
+```python
+from minimal_agent.tools.mcp import MCPServerStdio, MCPToolProvider
+
+async with MCPToolProvider(
+    servers=[MCPServerStdio(name="fs", command="npx",
+                            args=["-y", "@modelcontextprotocol/server-filesystem", "."])],
+) as mcp_tools:
+    agent = Agent(llm=llm, tools=[*my_tools, *mcp_tools], workspace_root=workspace)
+    ...
+```
+
+Servers can also be declared in `.minimal_agent/mcp.json` using the ecosystem-standard `mcpServers` format that MCP marketplaces publish, so a server's install snippet pastes in unchanged:
+
+```json
+{
+  "mcpServers": {
+    "notionApi": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {
+        "OPENAPI_MCP_HEADERS": "{\"Authorization\": \"Bearer ${NOTION_TOKEN}\", \"Notion-Version\": \"2022-06-28\"}"
+      }
+    },
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
+      "headers": { "Authorization": "Bearer ${LINEAR_TOKEN}" }
+    }
+  }
+}
+```
+
+```python
+from minimal_agent.tools.mcp import MCPToolProvider
+
+async with MCPToolProvider.from_json() as mcp_tools:   # reads .minimal_agent/mcp.json
+    agent = Agent(llm=llm, tools=[*my_tools, *mcp_tools], workspace_root=workspace)
+    ...
+```
+
+Entries with `command` run as stdio subprocesses; entries with `url` connect over streamable HTTP. `${VAR}` references are expanded from the environment at load time — failing fast if unset — so tokens stay in `.env` rather than the checked-in file. `MCPToolProvider.from_json(path)` accepts a custom location, and `load_mcp_servers(path)` returns the parsed configs if you want to filter or extend them before constructing the provider.
+
+Remote tool names are prefixed `mcp__<server>__<tool>` so nothing collides. The server's own JSON Schema is shipped to the model verbatim, and the server validates arguments authoritatively — a bad call comes back as an ordinary tool error the model can correct. Tools the server declares read-only (`readOnlyHint`) skip permission prompts; everything else asks through the session's `permission_callback` unless the server is configured with `require_permission=False`.
+
 ### Spawning sub-agents
 
 The built-in `spawn_agents` tool lets the orchestrator LLM fan work out to concurrent sub-agents. Each sub-agent is a fully separate `Agent` with its own isolated `Context` — it doesn't share history with the orchestrator or with other sub-agents. It runs to completion inside the tool call and returns its final text as the tool result. Sub-agents cannot spawn further sub-agents (the tool excludes itself from any sub-agent's tool set, so there's no recursion).

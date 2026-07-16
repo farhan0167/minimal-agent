@@ -372,9 +372,7 @@ def test_chat_streams_image_parts_flushed_after_tool_batch(tmp_path):
         # The flushed image is forwarded live, after the tool result.
         (parts,) = [d for e, d in events if e == "user_parts"]
         assert parts["role"] == "user"
-        assert parts["content"] == [
-            {"type": "image_url", "image_url": {"url": _PIXEL}}
-        ]
+        assert parts["content"] == [{"type": "image_url", "image_url": {"url": _PIXEL}}]
 
         names = [e for e, _ in events]
         assert names.index("tool_result") < names.index("user_parts")
@@ -382,9 +380,7 @@ def test_chat_streams_image_parts_flushed_after_tool_batch(tmp_path):
         # And the live stream agrees with what a reload would show.
         history = client.get(f"/api/sessions/{session_id}/messages").json()["messages"]
         flushed = [
-            m
-            for m in history
-            if m["role"] == "user" and isinstance(m["content"], list)
+            m for m in history if m["role"] == "user" and isinstance(m["content"], list)
         ]
         assert flushed and flushed[-1]["content"] == parts["content"]
 
@@ -579,3 +575,40 @@ def test_single_agent_normalizes_to_default(tmp_path):
 def test_empty_registry_rejected(tmp_path):
     with pytest.raises(ValueError):
         App(agents={}, sessions_dir=tmp_path / "sessions")
+
+
+def test_serve_rejects_reload(tmp_path):
+    app = make_app(tmp_path)
+    with pytest.raises(ValueError, match="reload"):
+        app.serve(reload=True)
+
+
+async def test_a_serve_runs_on_current_loop(tmp_path, unused_tcp_port):
+    """a_serve serves on the already-running loop — the property serve() lacks."""
+    app = make_app(tmp_path)
+    with pytest.raises(ValueError, match="reload"):
+        await app.a_serve(reload=True)
+
+    # Start it for real on an ephemeral port, confirm it answers, shut down.
+    import asyncio
+
+    import httpx
+
+    task = asyncio.create_task(app.a_serve(host="127.0.0.1", port=unused_tcp_port))
+    try:
+        async with httpx.AsyncClient() as client:
+            for _ in range(50):
+                try:
+                    response = await client.get(
+                        f"http://127.0.0.1:{unused_tcp_port}/api/agents"
+                    )
+                    break
+                except httpx.ConnectError:
+                    await asyncio.sleep(0.1)
+            else:
+                pytest.fail("a_serve never came up")
+        assert response.status_code == 200
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
