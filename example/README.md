@@ -7,7 +7,7 @@ UI — from one process on one port.
 | Example | What it is |
 |---|---|
 | [swe_agent/](swe_agent/) | A software engineer: file read/write/edit, shell, search, web, sub-agents |
-| [research_agent/](research_agent/) | A researcher: web search + read-only files, with reasoning turned on |
+| [research_agent/](research_agent/) | A researcher: web search + read-only files, reasoning turned on, MCP servers loaded from `.minimal_agent/mcp.json` when present |
 
 ## Quick start
 
