@@ -68,7 +68,7 @@ class TestSkillTool:
         assert "Do the thing." in rendered
 
     async def test_as_llm_tool(self):
-        llm_tool = SkillTool.as_llm_tool()
+        llm_tool = SkillTool(skills=[]).as_llm_tool()
         assert llm_tool.name == "skill"
         # Has the two documented fields in its schema.
         schema_str = str(llm_tool.parameters)
