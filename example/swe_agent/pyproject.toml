@@ -1,0 +1,17 @@
+[project]
+name = "swe-agent-example"
+version = "0.0.0"
+description = "Runnable SWE-agent example for mini-agent-kit (local, editable)."
+requires-python = ">=3.11"
+dependencies = [
+    "mini-agent-kit[server]",
+]
+
+[tool.uv]
+package = false
+
+# Point at the sibling source checkout, installed editable, so changes under
+# ../../minimal_agent are picked up without a reinstall. Swap this for the
+# PyPI release (drop this whole section) to run against an installed wheel.
+[tool.uv.sources]
+mini-agent-kit = { path = "../../minimal_agent", editable = true }

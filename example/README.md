@@ -1,63 +1,38 @@
-# Example: Serving Agents with `App`
+# Examples
 
-[my_app.py](my_app.py) is the whole example: two agents — a **software engineer** (file read/write/edit, shell, search, sub-agent spawning) and a **researcher** (web search, read-only file access) — registered on one `App` and served from one process.
+Two self-contained, runnable starting points. Each is one `main.py` that wires
+up an `Agent`, hands it to an `App`, and serves it — API plus bundled chat web
+UI — from one process on one port.
+
+| Example | What it is |
+|---|---|
+| [swe_agent/](swe_agent/) | A software engineer: file read/write/edit, shell, search, web, sub-agents |
+| [research_agent/](research_agent/) | A researcher: web search + read-only files, with reasoning turned on |
+
+## Quick start
+
+Pick one, then:
+
+```bash
+cd swe_agent            # or research_agent
+cp .env.example .env    # then edit — set your API key
+uv sync
+uv run main.py          # → http://localhost:8000
+```
+
+Each directory has its own README with the details.
+
+## The shape
+
+Every example follows the same three lines you'll find in the top-level
+[README](../README.md):
 
 ```python
-from minimal_agent import Agent, App
-
-app = App(agents={"swe": swe_agent, "research": research_agent})
-
-if __name__ == "__main__":
-    app.serve()  # → http://localhost:8000 — API + chat web UI
+llm = LLM(model="gpt-4o-mini", backend="openai", api_key=os.environ["OPENAI_API_KEY"])
+agent = Agent(llm=llm, tools=[...], workspace_root=Path.cwd())
+app = App(agents=agent)
 ```
 
-The UI's new-session dialog shows both agents with their workspace, model, and toolset; pick one and chat. With a single registered agent (`App(agents=my_agent)`) the dialog disappears entirely — "New Session" just creates one.
-
-## Prerequisites
-
-- Python 3.11+
-- An API key for your chosen LLM backend
-- Optional: PDF attachment support needs the `pdf` extra (`pip install "mini-agent-kit[server,pdf]"`) plus system [Poppler](https://poppler.freedesktop.org/) (`sudo apt-get install poppler-utils` / `brew install poppler`)
-
-## Run it
-
-This directory is a small uv project ([pyproject.toml](pyproject.toml)) that depends on the sibling package `../minimal_agent`, installed **editable** — so changes to the library are picked up without reinstalling. Sync the environment:
-
-```bash
-uv sync
-```
-
-From a source checkout also build the UI once (`make ui` at the repo root — needs Node) before serving the chat UI; installs from a released wheel ship the UI prebuilt.
-
-> Prefer plain pip / the PyPI release instead? `pip install "mini-agent-kit[server]"` also works — the scripts only import the installed package.
-
-Configure the LLM via environment variables or a `.env` file in this directory:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes | API key (or dummy value like `sk-local` for local servers) |
-| `LLM_MODEL` | Yes | Model name, e.g. `gpt-4o-mini` |
-| `LLM_BACKEND` | No | `openai` (default), `anthropic`, `openrouter`, or `localhost` |
-| `OPENAI_BASE_URL` | No | Override for OpenAI-compatible servers (vLLM, llama.cpp, Ollama) |
-| `TAVILY_API_KEY` | No | Enables `web_search` and `web_extract` tools |
-| `SESSIONS_DIR` | No | Where to store session data (defaults to `.minimal_agent/sessions`) |
-
-Then:
-
-```bash
-uv run my_app.py
-```
-
-Open `http://localhost:8000`. The API docs live at `/docs`, endpoints under `/api`.
-
-## It's just FastAPI
-
-`App` subclasses `FastAPI`, so everything FastAPI works: add routes and middleware, pass a `lifespan`, or run it with uvicorn directly — including hot reload, which `serve()` itself can't do (it holds a live object):
-
-```bash
-uvicorn my_app:app --reload
-```
-
-## Adding an agent
-
-Construct another `Agent` — its tools, prompt, and workspace are the configuration — and add it to the `agents` dict. It appears in the UI's agent picker on restart. Each session remembers which agent it belongs to and routes back to it on resume.
+Values are read straight from the environment or written inline — no config
+indirection. Change the tools, the model, or the prompt and you have a
+different agent.
