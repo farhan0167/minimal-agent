@@ -43,6 +43,7 @@ export function ReasoningControls({ value, onChange }: ReasoningControlsProps) {
       {/* Effort is meaningless with thinking off; it fades rather than
           disappearing so the toolbar doesn't reflow on every toggle. */}
       <Select
+        size="toolbar"
         label="Effort"
         value={effort ?? ""}
         disabled={!on}
@@ -54,10 +55,7 @@ export function ReasoningControls({ value, onChange }: ReasoningControlsProps) {
               : undefined,
           })
         }
-        wrapperClassName={`flex-row items-center gap-1.5 transition-app ${
-          on ? "opacity-100" : "opacity-40"
-        }`}
-        className="w-auto px-1.5 py-0.5 text-xs"
+        wrapperClassName={`transition-app ${on ? "opacity-100" : "opacity-40"}`}
       >
         {EFFORT_OPTIONS.map((opt) => (
           <option key={opt.value} value={opt.value}>

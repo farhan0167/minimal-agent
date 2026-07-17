@@ -3,7 +3,7 @@ import { Maximize2Icon } from "lucide-react";
 import { useMessagePartText } from "@assistant-ui/react";
 import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
 import { ShikiSyntaxHighlighter } from "../chat/ShikiHighlighter";
-import { useIsDark } from "../../hooks/use-is-dark";
+import { useThemeTokens } from "../../hooks/use-theme-tokens";
 import { CodeHeaderBar, HeaderButton } from "./CodeHeaderBar";
 import { PreviewDialog, ZoomControls, ZoomPane } from "./PreviewDialog";
 import { useZoom } from "./use-zoom";
@@ -54,7 +54,7 @@ function MermaidPreviewDialog({
  */
 export const MermaidBlock: FC<SyntaxHighlighterProps> = (props) => {
   const { code, language } = props;
-  const isDark = useIsDark();
+  const { theme, mode } = useThemeTokens();
   const { status } = useMessagePartText();
   const isStreaming = status.type === "running";
 
@@ -72,7 +72,9 @@ export const MermaidBlock: FC<SyntaxHighlighterProps> = (props) => {
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: "strict",
-          theme: isDark ? "dark" : "default",
+          // The theme's Mermaid companion, not a hardcoded default/dark:
+          // mermaid draws to SVG and cannot read --app-*.
+          theme: mode === "dark" ? theme.mermaid.dark : theme.mermaid.light,
         });
         // parse() first: it reports invalid input without mermaid.render's
         // side effect of appending an error element to <body>.
@@ -97,7 +99,9 @@ export const MermaidBlock: FC<SyntaxHighlighterProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [code, isDark, isStreaming]);
+    // Re-renders on theme as well as mode: switching palette must redraw the
+    // diagram, not just recolour the chrome around it.
+  }, [code, mode, theme, isStreaming]);
 
   let body;
   if (svg) {

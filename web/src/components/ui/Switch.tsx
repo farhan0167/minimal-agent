@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { Text } from "./Text";
 
 /**
  * The toggle.
@@ -43,7 +44,11 @@ export function Switch({
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={
-          "relative inline-flex h-4 w-7 shrink-0 items-center rounded-badge " +
+          // rounded-full, not rounded-badge: a toggle track is round by
+          // nature. --app-radius-badge is the pill-vs-square *tag* axis (it
+          // squares off Badge in the graphite theme) — a switch does not
+          // belong to that axis, so it opts out with a shape constant.
+          "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full " +
           "transition-app focus-visible:outline-none focus-visible:ring-2 " +
           "focus-visible:ring-app-ring focus-visible:ring-offset-1 " +
           "focus-visible:ring-offset-app-bg " +
@@ -56,15 +61,17 @@ export function Switch({
         <span
           aria-hidden
           className={
-            "inline-block h-3 w-3 rounded-badge bg-app-accent-fg transition-app " +
+            "inline-block h-3 w-3 rounded-full bg-app-accent-fg transition-app " +
             (checked ? "translate-x-3.5" : "translate-x-0.5")
           }
         />
       </button>
       {label && (
-        <span id={labelId} className="font-ui text-xs font-medium">
+        // Text variant="label" carries text-app-fg — a raw span here inherited
+        // the ambient colour and went dark-on-dark in dark mode.
+        <Text variant="label" as="span" id={labelId}>
           {label}
-        </span>
+        </Text>
       )}
     </span>
   );
