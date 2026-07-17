@@ -3,6 +3,7 @@ import type { Session, CreateSessionRequest } from "../../types/session";
 import { SessionList } from "../session/SessionList";
 import { NewSessionDialog } from "../session/NewSessionDialog";
 import { Terminal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Button } from "../ui/Button";
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 480;
@@ -79,31 +80,35 @@ export function Sidebar({
               </span>
             </div>
           )}
-          <button
+          <Button
+            variant="icon"
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className={`p-1.5 rounded-md hover:bg-[hsl(var(--claude-hover))] transition-colors shrink-0
-              ${isCollapsed ? "mx-auto" : ""}`}
+            className={`shrink-0 ${isCollapsed ? "mx-auto" : ""}`}
             title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!isCollapsed}
           >
             {isCollapsed ? (
-              <PanelLeftOpen className="w-4 h-4 text-[hsl(var(--aui-muted-foreground))]" />
+              <PanelLeftOpen className="w-4 h-4" />
             ) : (
-              <PanelLeftClose className="w-4 h-4 text-[hsl(var(--aui-muted-foreground))]" />
+              <PanelLeftClose className="w-4 h-4" />
             )}
-          </button>
+          </Button>
         </div>
 
         {/* New session button */}
         <div className={isCollapsed ? "p-1.5" : "p-3"}>
           {isCollapsed ? (
-            <button
+            <Button
+              variant="ghost"
+              block
               onClick={() => setIsCollapsed(false)}
-              className="flex items-center justify-center w-full p-2 rounded-md
-                hover:bg-[hsl(var(--claude-hover))] transition-colors"
+              className="p-2"
               title="New Session"
+              aria-label="New Session"
             >
-              <span className="text-lg text-[hsl(var(--aui-muted-foreground))]">+</span>
-            </button>
+              <span className="text-lg">+</span>
+            </Button>
           ) : (
             <NewSessionDialog onCreate={onCreate} />
           )}

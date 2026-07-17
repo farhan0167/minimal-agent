@@ -2,6 +2,8 @@ import type { Session } from "../../types/session";
 import { formatTokens } from "../../lib/format";
 import { Bot, Moon, Sun } from "lucide-react";
 import { useTheme } from "../../hooks/use-theme";
+import { Button } from "../ui/Button";
+import { Badge } from "../ui/Badge";
 
 interface HeaderProps {
   session: Session | null;
@@ -9,14 +11,16 @@ interface HeaderProps {
 
 function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
+  const label = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
   return (
-    <button
+    <Button
+      variant="icon"
       onClick={toggleTheme}
-      title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-      className="p-1.5 rounded-md text-[hsl(var(--aui-muted-foreground))] hover:text-[hsl(var(--aui-foreground))] hover:bg-[hsl(var(--claude-hover))] transition-colors"
+      title={label}
+      aria-label={label}
     >
       {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-    </button>
+    </Button>
   );
 }
 
@@ -39,9 +43,9 @@ export function Header({ session }: HeaderProps) {
         <span className="text-sm font-medium text-[hsl(var(--aui-foreground))] font-serif">
           {session.model}
         </span>
-        <span className="text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--aui-primary)/0.08)] text-[hsl(var(--aui-primary))] border border-[hsl(var(--aui-primary)/0.19)]">
+        <Badge variant="accent" size="md">
           {session.backend}
-        </span>
+        </Badge>
       </div>
 
       <div className="flex items-center gap-3">

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, CircleAlert, Loader2 } from "lucide-react";
+import { Badge } from "../ui/Badge";
 
 export type ToolStatus = "running" | "complete" | "error" | "interrupted";
 
@@ -50,15 +51,13 @@ export function ToolCallCard({
           <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-[hsl(var(--aui-primary))]" />
         )}
         {status === "error" && (
-          <span className="inline-flex items-center gap-1 shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[hsl(var(--aui-destructive)/0.08)] text-[hsl(var(--aui-destructive))] border border-[hsl(var(--aui-destructive)/0.2)]">
+          <Badge variant="danger">
             <CircleAlert className="w-3 h-3" />
             failed
-          </span>
+          </Badge>
         )}
         {status === "interrupted" && (
-          <span className="inline-flex items-center shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[hsl(var(--claude-hover))] text-[hsl(var(--aui-muted-foreground))] border border-[hsl(var(--claude-border))]">
-            interrupted
-          </span>
+          <Badge variant="neutral">interrupted</Badge>
         )}
       </button>
 

@@ -1,35 +1,27 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
+import { Button } from "../ui/Button";
 import { useWheelZoom, type Zoom } from "./use-zoom";
-
-const zoomButtonClass =
-  "p-1.5 rounded hover:bg-[hsl(var(--claude-hover))] transition-colors";
 
 export function ZoomControls({ zoom, zoomBy, reset }: Zoom) {
   return (
     <div className="flex items-center font-sans text-[hsl(var(--aui-foreground))]">
-      <button
-        onClick={() => zoomBy(1 / 1.25)}
-        className={zoomButtonClass}
-        title="Zoom out"
-      >
+      <Button variant="icon" onClick={() => zoomBy(1 / 1.25)} title="Zoom out" aria-label="Zoom out">
         <MinusIcon className="w-4 h-4" />
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="icon"
         onClick={reset}
-        className="w-12 py-1 text-xs text-center tabular-nums rounded hover:bg-[hsl(var(--claude-hover))] transition-colors"
         title="Reset zoom"
+        aria-label="Reset zoom"
+        className="w-12 py-1 text-xs tabular-nums"
       >
         {Math.round(zoom * 100)}%
-      </button>
-      <button
-        onClick={() => zoomBy(1.25)}
-        className={zoomButtonClass}
-        title="Zoom in"
-      >
+      </Button>
+      <Button variant="icon" onClick={() => zoomBy(1.25)} title="Zoom in" aria-label="Zoom in">
         <PlusIcon className="w-4 h-4" />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -88,7 +80,7 @@ export function PreviewDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-app-overlay p-4"
       onClick={onClose}
     >
       <div
@@ -101,13 +93,9 @@ export function PreviewDialog({
           </span>
           <div className="flex items-center gap-2">
             {controls}
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded hover:bg-[hsl(var(--claude-hover))] transition-colors"
-              title="Close (Esc)"
-            >
+            <Button variant="icon" onClick={onClose} title="Close (Esc)" aria-label="Close preview">
               <XIcon className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
         </div>
         {children}

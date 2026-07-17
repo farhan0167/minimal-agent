@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CreateSessionRequest, Session } from "../../types/session";
 import { type ServerConfig, getConfig } from "../../api/config";
 import { FolderOpen, Plus, X } from "lucide-react";
+import { Button } from "../ui/Button";
+import { Badge } from "../ui/Badge";
 
 interface NewSessionDialogProps {
   onCreate: (req: CreateSessionRequest) => Promise<Session>;
@@ -80,16 +82,16 @@ export function NewSessionDialog({ onCreate }: NewSessionDialogProps) {
 
   return (
     <>
-      <button
+      <Button
+        variant="ghost"
+        block
         onClick={handleButtonClick}
         disabled={isCreating}
-        className="flex items-center justify-center gap-2 w-full px-3 py-2 text-sm
-          font-medium text-[hsl(var(--aui-foreground))] bg-[hsl(var(--claude-composer))] border border-[hsl(var(--claude-border))] rounded-lg
-          hover:bg-[hsl(var(--claude-hover))] transition-colors font-serif disabled:opacity-50"
+        className="px-3 py-2 text-sm bg-app-composer border border-app-border text-app-fg font-serif"
       >
         <Plus className="w-4 h-4" />
         {isCreating && !isOpen ? "Creating..." : "New Session"}
-      </button>
+      </Button>
 
       <dialog
         ref={dialogRef}
@@ -102,13 +104,15 @@ export function NewSessionDialog({ onCreate }: NewSessionDialogProps) {
             <h2 className="text-base font-semibold text-[hsl(var(--aui-foreground))] font-serif">
               New Session
             </h2>
-            <button
-              type="button"
+            <Button
+              variant="icon"
+              size="sm"
               onClick={handleClose}
-              className="p-1 rounded hover:bg-[hsl(var(--claude-hover))]"
+              title="Close"
+              aria-label="Close"
             >
-              <X className="w-4 h-4 text-[hsl(var(--aui-muted-foreground))]" />
-            </button>
+              <X className="w-4 h-4" />
+            </Button>
           </div>
 
           {/* Agent picker — only a choice when more than one is registered */}
@@ -145,18 +149,9 @@ export function NewSessionDialog({ onCreate }: NewSessionDialogProps) {
                 </span>
               </div>
               <div className="flex flex-wrap gap-1">
-                <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium
-                  rounded-full bg-[hsl(var(--claude-hover))] text-[hsl(var(--aui-muted-foreground))] border border-[hsl(var(--claude-border))]">
-                  {selectedAgent.model}
-                </span>
-                <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium
-                  rounded-full bg-[hsl(var(--aui-primary)/0.06)] text-[hsl(var(--aui-primary))] border border-[hsl(var(--aui-primary)/0.15)]">
-                  {selectedAgent.backend}
-                </span>
-                <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium
-                  rounded-full bg-[hsl(var(--claude-hover))] text-[hsl(var(--aui-muted-foreground))] border border-[hsl(var(--claude-border))]">
-                  {selectedAgent.tools.length} tools
-                </span>
+                <Badge variant="neutral">{selectedAgent.model}</Badge>
+                <Badge variant="accent">{selectedAgent.backend}</Badge>
+                <Badge variant="neutral">{selectedAgent.tools.length} tools</Badge>
               </div>
             </div>
           )}
@@ -168,23 +163,16 @@ export function NewSessionDialog({ onCreate }: NewSessionDialogProps) {
           )}
 
           <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={handleClose}
-              className="px-4 py-2 text-sm font-medium text-[hsl(var(--aui-muted-foreground))]
-                rounded-lg hover:bg-[hsl(var(--claude-hover))] transition-colors"
-              disabled={isCreating}
-            >
+            <Button variant="ghost" onClick={handleClose} disabled={isCreating}>
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="primary"
               type="submit"
               disabled={isCreating || !agentName}
-              className="px-4 py-2 text-sm font-medium text-[hsl(var(--aui-primary-foreground))] bg-[hsl(var(--aui-primary))]
-                rounded-lg hover:bg-[hsl(var(--claude-primary-hover))] disabled:opacity-50 transition-colors"
             >
               {isCreating ? "Creating..." : "Create Session"}
-            </button>
+            </Button>
           </div>
         </form>
       </dialog>

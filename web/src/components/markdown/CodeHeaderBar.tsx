@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
+import { Button } from "../ui/Button";
 
 /**
  * Replacement code-block header for fences with extra controls: language
@@ -31,17 +32,13 @@ export function CodeHeaderBar({
       <span className="aui-code-header-language lowercase">{language}</span>
       <div className="flex items-center gap-3">
         {children}
-        <button
-          onClick={onCopy}
-          className="p-1.5 rounded hover:bg-[hsl(var(--claude-active))] transition-colors"
-          title="Copy"
-        >
+        <Button variant="icon" onClick={onCopy} title="Copy" aria-label="Copy code">
           {isCopied ? (
             <CheckIcon className="w-3.5 h-3.5" />
           ) : (
             <CopyIcon className="w-3.5 h-3.5" />
           )}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -58,12 +55,8 @@ export function HeaderButton({
   children: ReactNode;
 }) {
   return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-1 px-2 py-1 text-xs font-sans rounded hover:bg-[hsl(var(--claude-active))] transition-colors"
-      title={title}
-    >
+    <Button variant="ghost" size="sm" onClick={onClick} title={title} className="px-2 py-1 font-sans">
       {children}
-    </button>
+    </Button>
   );
 }

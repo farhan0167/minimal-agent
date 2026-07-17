@@ -2,6 +2,8 @@ import type { Session } from "../../types/session";
 import { formatTimestamp } from "../../lib/format";
 import { useSessionTitle } from "../../lib/session-titles";
 import { Trash2, FolderOpen } from "lucide-react";
+import { Button } from "../ui/Button";
+import { Badge } from "../ui/Badge";
 
 interface SessionItemProps {
   session: Session;
@@ -24,83 +26,83 @@ export function SessionItem({
 
   if (isCollapsed) {
     return (
-      <button
+      <Button
+        variant="ghost"
+        block
         onClick={onSelect}
         title={title}
-        className={`
-          flex items-center justify-center w-full p-2 rounded-md transition-colors
-          ${isActive ? "bg-[hsl(var(--claude-active))]" : "hover:bg-[hsl(var(--claude-hover))]"}
-        `}
+        aria-label={title}
+        aria-current={isActive ? "true" : undefined}
+        className={`p-2 ${isActive ? "bg-app-active" : ""}`}
       >
-        <div className={`w-2 h-2 rounded-full ${isActive ? "bg-[hsl(var(--aui-primary))]" : "bg-[hsl(var(--aui-muted-foreground))]"}`} />
-      </button>
+        <span
+          aria-hidden
+          className={`w-2 h-2 rounded-full ${
+            isActive ? "bg-app-accent" : "bg-app-fg-muted"
+          }`}
+        />
+      </Button>
     );
   }
 
+  // The row is a container, not a control: the selectable area and the delete
+  // action are siblings inside it. Previously delete was a <button> nested in
+  // the row's <button> — invalid HTML, and it put an interactive <code> inside
+  // a button too. Overlaying delete keeps the row's full width clickable
+  // while leaving both controls independently reachable by keyboard.
   return (
-    <button
-      onClick={onSelect}
-      className={`
-        group flex items-center justify-between w-full px-3 py-2.5 text-left
-        text-sm rounded-md transition-colors
-        ${isActive ? "bg-[hsl(var(--claude-active))] text-[hsl(var(--aui-foreground))]" : "text-[hsl(var(--aui-muted-foreground))] hover:bg-[hsl(var(--claude-hover))]"}
-      `}
-    >
-      <div className="min-w-0 flex-1">
-        <div
-          className="truncate font-medium text-xs font-serif"
-          title={session.session_id}
-        >
-          {title}
-        </div>
-        <code
-          onClick={(e) => {
-            e.stopPropagation();
-            const range = document.createRange();
-            range.selectNodeContents(e.currentTarget.querySelector("span")!);
-            const sel = window.getSelection();
-            sel?.removeAllRanges();
-            sel?.addRange(range);
-          }}
-          className="flex items-center gap-1 text-[10px] text-[hsl(var(--aui-muted-foreground))] truncate mt-0.5
-          bg-[hsl(var(--claude-hover))] rounded px-1.5 py-0.5 font-mono cursor-text select-text">
-          <FolderOpen className="w-3 h-3 shrink-0" />
-          <span className="truncate">{session.workspace_root ?? "no workspace"}</span>
-        </code>
-
-        {/* Agent, model & backend tags */}
-        <div className="flex flex-wrap gap-1 mt-1.5">
-          {session.agent && (
-            <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium
-              rounded-full bg-[hsl(var(--aui-primary)/0.12)] text-[hsl(var(--aui-primary))] border border-[hsl(var(--aui-primary)/0.25)]">
-              {session.agent}
-            </span>
-          )}
-          <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium
-            rounded-full bg-[hsl(var(--claude-hover))] text-[hsl(var(--aui-muted-foreground))] border border-[hsl(var(--claude-border))]">
-            {session.model}
-          </span>
-          <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium
-            rounded-full bg-[hsl(var(--aui-primary)/0.06)] text-[hsl(var(--aui-primary))] border border-[hsl(var(--aui-primary)/0.15)]">
-            {session.backend}
-          </span>
-        </div>
-
-        <div className="text-[10px] text-[hsl(var(--aui-muted-foreground))] mt-1">
-          {formatTimestamp(session.updated_at)}
-        </div>
-      </div>
-
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete();
-        }}
-        className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[hsl(var(--claude-active))] transition-opacity"
-        title="Delete session"
+    <div className="group relative">
+      <Button
+        variant="ghost"
+        block
+        onClick={onSelect}
+        aria-current={isActive ? "true" : undefined}
+        className={`justify-between px-3 py-2.5 pr-9 text-sm text-left ${
+          isActive ? "bg-app-active text-app-fg" : ""
+        }`}
       >
-        <Trash2 className="w-3 h-3 text-[hsl(var(--aui-muted-foreground))]" />
-      </button>
-    </button>
+        {/* min-w-0 is what lets the truncations below actually truncate. */}
+        <span className="block min-w-0 flex-1">
+          <span
+            className="block truncate font-medium text-xs font-serif"
+            title={session.session_id}
+          >
+            {title}
+          </span>
+
+          <span
+            className="flex items-center gap-1 text-[10px] text-app-fg-muted truncate mt-0.5
+            bg-app-hover rounded px-1.5 py-0.5 font-mono"
+          >
+            <FolderOpen className="w-3 h-3 shrink-0" />
+            <span className="truncate">
+              {session.workspace_root ?? "no workspace"}
+            </span>
+          </span>
+
+          {/* Agent, model & backend tags */}
+          <span className="flex flex-wrap gap-1 mt-1.5">
+            {session.agent && <Badge variant="accent">{session.agent}</Badge>}
+            <Badge variant="neutral">{session.model}</Badge>
+            <Badge variant="accent">{session.backend}</Badge>
+          </span>
+
+          <span className="block text-[10px] text-app-fg-muted mt-1">
+            {formatTimestamp(session.updated_at)}
+          </span>
+        </span>
+      </Button>
+
+      <Button
+        variant="danger"
+        size="sm"
+        onClick={onDelete}
+        title="Delete session"
+        aria-label={`Delete session ${title}`}
+        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+      >
+        <Trash2 className="w-3 h-3" />
+      </Button>
+    </div>
   );
 }
