@@ -1,6 +1,23 @@
+/* Establish cascade-layer order before anything else. Tailwind's own layers
+   (theme, base, components, utilities) are declared by its import; we slot the
+   vendor `aui` layer BEFORE utilities so our utility classes outrank the
+   assistant-ui reset. The order of a @layer statement is what counts, not where
+   the rules are later written. */
+@layer theme, base, components, aui, utilities;
+
 @import "tailwindcss";
-@import "@assistant-ui/react-ui/styles/index.css";
-@import "@assistant-ui/react-ui/styles/markdown.css";
+/* assistant-ui ships an unlayered Preflight-style reset scoped to .aui-root
+   (`:where(.aui-root) * { border-width: 0 }`, `button { padding: 0 }`, …).
+   Unlayered CSS beats *all* layered CSS regardless of specificity, so that
+   reset silently defeated every Tailwind utility on our own components that
+   render inside the thread (the tool card's border, its header padding and
+   ground). Importing the vendor styles into a named layer puts them under
+   Tailwind's `utilities` layer in the cascade, so our utilities win again.
+   Our explicit .aui-* overrides below stay unlayered and still win over both. */
+@import "@assistant-ui/react-ui/styles/index.css" layer(aui);
+@import "@assistant-ui/react-ui/styles/markdown.css" layer(aui);
+/* The contract's documentation — no values; themes/ fills it, and themes/index.ts
+   imports the active theme's CSS so a theme is never half-registered. */
 @import "./tokens.css";
 
 /*
@@ -142,6 +159,17 @@
   --aui-input: var(--app-border-opaque);
 }
 
+/* Native <option> lists render in an OS popup that ignores page CSS and a
+   Tailwind class on the option. Only these two properties, set on the element
+   itself, are honoured across browsers — without them the popup falls back to
+   OS defaults (black-on-white) and unselected items vanish in dark mode. The
+   opaque ground is deliberate: a translucent --app-surface would let the OS
+   popup's own backdrop bleed through. */
+select option {
+  color: hsl(var(--app-fg));
+  background-color: hsl(var(--app-surface));
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  * assistant-ui structural overrides — QUARANTINED.
  *
@@ -170,15 +198,34 @@
   line-height: 1.7;
 }
 
-/* Markdown content — match Claude's tight, readable spacing */
-.aui-md h1 { font-size: var(--app-md-h1); font-weight: 700; margin-top: 1rem; margin-bottom: 0.375rem; }
-.aui-md h2 { font-size: var(--app-md-h2); font-weight: 700; margin-top: 0.75rem; margin-bottom: 0.25rem; }
-.aui-md h3 { font-size: var(--app-md-h3); font-weight: 700; margin-top: 0.625rem; margin-bottom: 0.25rem; }
-.aui-md p { margin-top: 0.25rem; margin-bottom: 0.25rem; }
-.aui-md ul, .aui-md ol { margin-top: 0.125rem; margin-bottom: 0.125rem; padding-left: 1.25rem; }
-.aui-md li { margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; line-height: 1.5; }
-.aui-md li p { margin: 0; }
-.aui-md hr { margin-top: 0.625rem; margin-bottom: 0.625rem; border-color: hsl(var(--app-border)); }
+/* Markdown content — readable prose rhythm.
+ *
+ * assistant-ui 0.12 emits per-element classes (aui-md-p, aui-md-ul, …), NOT
+ * `p` inside a `.aui-md` wrapper — an earlier version of this block targeted
+ * `.aui-md p` and matched nothing, so the thread rendered on the vendor's raw
+ * markdown.css defaults (0 paragraph spacing, 20px list gaps, no bullet
+ * indent). These class names are vendor internals pinned to 0.12; verify them
+ * against the DOM on upgrade.
+ *
+ * The spacing is a designed vertical rhythm: paragraphs and lists breathe at
+ * ~0.7rem, headings open a larger gap above than below so a section binds to
+ * the text it introduces, and list items carry a real left indent so bullets
+ * share one spine. */
+.aui-md-h1 { font-size: var(--app-md-h1); font-weight: 700; margin-top: 1.4rem; margin-bottom: 0.5rem; line-height: 1.3; }
+.aui-md-h2 { font-size: var(--app-md-h2); font-weight: 700; margin-top: 1.2rem; margin-bottom: 0.45rem; line-height: 1.3; }
+.aui-md-h3 { font-size: var(--app-md-h3); font-weight: 700; margin-top: 1rem; margin-bottom: 0.4rem; line-height: 1.3; }
+.aui-md-p { margin-top: 0.7rem; margin-bottom: 0.7rem; }
+.aui-md-ul, .aui-md-ol { margin-top: 0.7rem; margin-bottom: 0.7rem; padding-left: 1.5rem; }
+/* List items carry no vendor class — target the bare <li> within our lists. */
+.aui-md-ul > li, .aui-md-ol > li { margin-top: 0.25rem; margin-bottom: 0.25rem; padding-left: 0.15rem; }
+.aui-md-ul > li > .aui-md-p, .aui-md-ol > li > .aui-md-p { margin: 0; }
+.aui-md-ul .aui-md-ul, .aui-md-ul .aui-md-ol,
+.aui-md-ol .aui-md-ul, .aui-md-ol .aui-md-ol { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+.aui-md-hr { margin-top: 1.1rem; margin-bottom: 1.1rem; border: none; border-top: 1px solid hsl(var(--app-border)); }
+/* The first block in a message carries no top margin — the message row already
+   owns that gap, and a doubled gap is what made turns look unevenly spaced. */
+.aui-md-p:first-child, .aui-md-h1:first-child, .aui-md-h2:first-child, .aui-md-h3:first-child, .aui-md-ul:first-child, .aui-md-ol:first-child { margin-top: 0; }
+.aui-md-p:last-child, .aui-md-ul:last-child, .aui-md-ol:last-child { margin-bottom: 0; }
 /* Code blocks — warm off-white with visible contrast against page.
    Long blocks scroll internally (the header bar above stays put) instead of
    stretching the message and hijacking the chat scroll. */
@@ -239,19 +286,26 @@
   color: var(--shiki-dark) !important;
 }
 
-.aui-md table { font-size: 0.875rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; }
-.aui-md th, .aui-md td { padding: 0.5rem 0.5rem; }
-.aui-md th { font-weight: 600; }
-.aui-md tr { border-bottom: 1px solid hsl(var(--app-border-subtle)); }
-.aui-md thead tr { border-bottom: 1px solid hsl(var(--app-border)); }
-.aui-md strong { font-weight: 700; }
+.aui-md-table { font-size: 0.875rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; margin-top: 0.7rem; margin-bottom: 0.7rem; }
+.aui-md-th, .aui-md-td { padding: 0.5rem 0.5rem; text-align: left; }
+.aui-md-th { font-weight: 600; }
+.aui-md-tr { border-bottom: 1px solid hsl(var(--app-border-subtle)); }
+.aui-md-table thead .aui-md-tr { border-bottom: 1px solid hsl(var(--app-border)); }
+/* Bold text carries no vendor class; the bare <strong> is styled directly. */
+.aui-md-p strong, .aui-md-ul strong, .aui-md-ol strong { font-weight: 700; }
 
-/* User messages — right-aligned within the centered content column */
+/* User messages — right-aligned within the centered content column.
+ *
+ * A user bubble is a short utterance, not prose: it gets its own snug padding
+ * and a tighter line-height than the assistant answer's 1.7 reading rhythm.
+ * With 1.7 and 1rem vertical padding the single line floated inside an
+ * oversized box — the bubble read as bottom-heavy with dead space on top. */
 .aui-user-message-content {
   background-color: hsl(var(--app-bubble-user));
   color: hsl(var(--aui-foreground));
-  padding: 1rem 1.25rem;
+  padding: 0.55rem 0.95rem;
   border-radius: var(--app-radius-bubble);
+  line-height: 1.5;
 }
 
 /* Remove assistant avatar circle */
