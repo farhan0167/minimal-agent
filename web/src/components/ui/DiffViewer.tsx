@@ -512,7 +512,13 @@ export function DiffViewer({
             showIcon={showIcon}
             showStats={showStats}
           />
-          <div data-slot="diff-viewer-content" className="overflow-x-auto py-1">
+          {/* Long diffs scroll internally (the file header above stays put)
+              instead of stretching the card and hijacking the chat scroll —
+              the same cap the markdown code blocks use. */}
+          <div
+            data-slot="diff-viewer-content"
+            className="overflow-x-auto overflow-y-auto max-h-[min(26rem,60vh)] py-1"
+          >
             {viewMode === "split"
               ? (splitLinePairs[fileIndex] ?? []).map((pair, pairIndex) => (
                   <DiffViewerSplitLine
