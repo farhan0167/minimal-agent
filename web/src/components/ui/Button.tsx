@@ -13,7 +13,10 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
  */
 
 export type ButtonVariant = "primary" | "ghost" | "icon" | "danger";
-export type ButtonSize = "sm" | "md";
+// `icon` is the square, glyph-driven size — a primary send button and a ghost
+// toolbar button share it, so it is a size on every variant rather than a
+// variant of its own.
+export type ButtonSize = "sm" | "md" | "icon";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
@@ -46,10 +49,10 @@ const VARIANTS: Record<ButtonVariant, string> = {
 
 // Icon buttons are square — their padding is driven by the glyph, not by text.
 const SIZES: Record<ButtonVariant, Record<ButtonSize, string>> = {
-  primary: { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2 text-sm" },
-  ghost: { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2 text-sm" },
-  icon: { sm: "p-1", md: "p-1.5" },
-  danger: { sm: "p-1", md: "px-4 py-2 text-sm" },
+  primary: { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2 text-sm", icon: "p-2" },
+  ghost: { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2 text-sm", icon: "p-1.5" },
+  icon: { sm: "p-1", md: "p-1.5", icon: "p-1.5" },
+  danger: { sm: "p-1", md: "px-4 py-2 text-sm", icon: "p-1.5" },
 };
 
 export function Button({

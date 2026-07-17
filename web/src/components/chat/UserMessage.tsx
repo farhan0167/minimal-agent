@@ -1,70 +1,94 @@
-import { MessagePrimitive } from "@assistant-ui/react";
 import {
-  AttachmentUI,
-  BranchPicker,
-  UserActionBar,
-  UserMessage as DefaultUserMessage,
-} from "@assistant-ui/react-ui";
+  AuiIf,
+  ActionBarPrimitive,
+  MessagePartPrimitive,
+  MessagePrimitive,
+} from "@assistant-ui/react";
+import { PencilIcon } from "lucide-react";
+import { Button } from "../ui/Button";
 import { AttachmentImage } from "./AttachmentImage";
+import { AttachmentChip } from "./AttachmentChip";
+import { BranchPicker } from "./BranchPicker";
+import { EditComposer } from "./EditComposer";
+import { ImagePart } from "./ImagePart";
 
 /**
- * Inline image attachment for the user's own message.
- *
- * The prebuilt <Thread> renders a sent image as an attachment *chip*
- * (thumbnail + "image.png / Image"), while the reload path renders the same
- * image as an inline `image` content part (the core's default Image slot). So
- * the live turn and the reloaded turn look different — a chip live, the full
- * image after refresh. Rendering the image inline closes that gap; non-image
- * attachments (PDFs) fall through to the default chip.
+ * Inline image attachment for the user's own message. A reloaded turn comes
+ * back from the server as inline `image` content parts (ImagePart), so the
+ * live turn renders its attachments the same way — a real image in the
+ * bubble, not a chip. Non-image attachments (PDFs) fall through to the chip.
  */
 function MessageAttachment() {
   return (
     <AttachmentImage
-      Fallback={AttachmentUI}
-      className="aui-user-message-image-attachment"
+      Fallback={AttachmentChip}
+      className="block w-full h-auto"
       maxHeight="20rem"
     />
   );
 }
 
+/** User text is an utterance, not markdown — preserve the typed line breaks. */
+function UserText() {
+  return (
+    <p className="whitespace-pre-wrap break-words">
+      <MessagePartPrimitive.Text />
+    </p>
+  );
+}
+
 /**
- * User message body that renders image attachments *inside* the message bubble,
- * above the text.
- *
- * The prebuilt layout puts attachments in their own grid row (grid-row 1, no
- * bubble) and the text in a separate bubbled row (grid-row 2) — so a live turn
- * shows the image floating above a detached text bubble. On reload the image
- * comes back as an inline `image` content part *inside* that bubble, so the two
- * look different (separated live, contained after refresh).
- *
- * We close that gap by rendering the attachments and the text in one shared
- * `aui-user-message-content` bubble. When the message has attachments we build
- * the bubble ourselves (images stacked over text); when it has none we defer to
- * the default Content so a plain text turn is untouched.
+ * User message: a right-aligned bubble holding attachments (stacked above the
+ * text, inside the bubble, so live and reloaded turns look identical), with
+ * an edit pencil on hover and a branch picker once an edit created branches.
+ * While the message's composer is editing, the bubble is replaced in place by
+ * the EditComposer.
  */
 export function UserMessage() {
   return (
-    <DefaultUserMessage.Root>
-      <MessagePrimitive.If hasAttachments>
-        <div className="aui-user-message-content">
-          <div className="aui-user-message-attachments-inline">
-            <MessagePrimitive.Attachments
-              components={{ Attachment: MessageAttachment }}
+    <MessagePrimitive.Root className="flex w-full flex-col items-end py-2">
+      <AuiIf condition={(s) => s.message.composer.isEditing}>
+        <div className="w-full max-w-[80%]">
+          <EditComposer />
+        </div>
+      </AuiIf>
+      <AuiIf condition={(s) => !s.message.composer.isEditing}>
+        <div className="flex max-w-[80%] items-center gap-1">
+          {/* Fixed-width slot: the edit pencil mounts/unmounts with hover
+              (autohide), and inside this width-capped row a long bubble would
+              otherwise shrink and rewrap the moment it appears. */}
+          <div className="flex w-7 shrink-0 justify-center">
+            <ActionBarPrimitive.Root
+              hideWhenRunning
+              autohide="always"
+              className="flex items-center"
+            >
+              <ActionBarPrimitive.Edit asChild>
+                <Button variant="icon" size="sm" aria-label="Edit message">
+                  <PencilIcon className="w-3.5 h-3.5" />
+                </Button>
+              </ActionBarPrimitive.Edit>
+            </ActionBarPrimitive.Root>
+          </div>
+          <div className="chat-user-bubble min-w-0">
+            <AuiIf
+              condition={(s) =>
+                s.message.role === "user" && s.message.attachments.length > 0
+              }
+            >
+              <div className="chat-user-attachments">
+                <MessagePrimitive.Attachments>
+                  {() => <MessageAttachment />}
+                </MessagePrimitive.Attachments>
+              </div>
+            </AuiIf>
+            <MessagePrimitive.Parts
+              components={{ Text: UserText, Image: ImagePart }}
             />
           </div>
-          <MessagePrimitive.If hasContent>
-            <MessagePrimitive.Content />
-          </MessagePrimitive.If>
         </div>
-        <UserActionBar />
-      </MessagePrimitive.If>
-      <MessagePrimitive.If hasAttachments={false}>
-        <MessagePrimitive.If hasContent>
-          <UserActionBar />
-          <DefaultUserMessage.Content />
-        </MessagePrimitive.If>
-      </MessagePrimitive.If>
-      <BranchPicker />
-    </DefaultUserMessage.Root>
+        <BranchPicker className="mt-1" />
+      </AuiIf>
+    </MessagePrimitive.Root>
   );
 }

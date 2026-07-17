@@ -29,8 +29,8 @@
  * ── Interaction ────────────────────────────────────────────────────────────
  *   --app-hover --app-active --app-border --app-border-subtle --app-ring
  *   --app-border-opaque   the same edge pre-flattened against --app-bg, for
- *                         consumers that compose without alpha (--aui-border,
- *                         Switch's off-state track)
+ *                         consumers that need a solid ground (Switch's
+ *                         off-state track)
  *
  * ── Accent & semantic ──────────────────────────────────────────────────────
  *   --app-accent --app-accent-fg --app-accent-hover --app-accent-text

@@ -41,7 +41,7 @@ A CI guard (`npm run check:tokens`) enforces the top two rows by grep. See
 ```
 src/
   tokens.css              the contract: every --app-* role, with no values (documentation)
-  index.css               the @theme bridge (roles → Tailwind utilities) + the vendor quarantine
+  index.css               the @theme bridge (roles → Tailwind utilities) + the chat chrome
   components/ui/          the ten primitives — the only floor allowed raw utilities
   themes/
     types.ts              ThemeManifest — what a theme must declare beyond CSS
@@ -173,9 +173,6 @@ the mode on top:
 }
 ```
 
-Also assign the `--aui-*` vendor aliases in the same file if your theme changes
-the chat-area grounds — see [The assistant-ui bridge](#the-assistant-ui-bridge).
-
 **`--app-accent-fg` is not decoration.** A theme with a light accent (graphite's
 near-white button in dark mode) needs *dark* text on it. That token is the whole
 reason a button stays legible when the accent inverts. If you skip it, a light
@@ -279,35 +276,26 @@ this way.
 
 ---
 
-## The assistant-ui bridge
+## The chat chrome
 
-The chat area is `@assistant-ui/react-ui`, which owns its own `--aui-*` CSS
-variables. We don't maintain a second palette — each theme assigns the `--aui-*`
-names *from the same `--app-*` roles*. One source of truth, two spellings; the
-second is imposed by the vendor.
+The chat is built directly on `@assistant-ui/react` **primitives**
+(`ThreadPrimitive`, `ComposerPrimitive`, `MessagePrimitive`, …), which render
+their own elements — the thread viewport, the composer form and textarea,
+markdown output. There is no vendor CSS in the app and no `--aui-*` second
+palette; themes fill only the `--app-*` contract.
 
-There is one cascade subtlety worth knowing, because it caused a real bug.
-assistant-ui ships an **unlayered** reset scoped to `.aui-root`
-(`:where(.aui-root) * { border-width: 0 }`, `button { padding: 0 }`, …).
-**Unlayered CSS beats all layered CSS regardless of specificity** — so that
-reset silently defeated Tailwind utilities on our own components rendered inside
-the thread (a tool card lost its border, header padding, and ground). The fix,
-at the top of `index.css`:
+Because those primitive-rendered elements can't be wrapped in a
+`components/ui/` primitive, their look lives in `index.css` under the
+**chat chrome** section, on class names *we* own (`.chat-thread`,
+`.chat-composer`, `.chat-user-bubble`, `.chat-prose`, `.chat-code-header`),
+assigned by `components/chat/` and reading the same `--app-*` roles a
+primitive would. Same contract, different consumer — and since the class names
+are first-party, nothing there pins a package version.
 
-```css
-@layer theme, base, components, aui, utilities;   /* declare order FIRST */
-@import "tailwindcss";
-@import "@assistant-ui/react-ui/styles/index.css"   layer(aui);
-@import "@assistant-ui/react-ui/styles/markdown.css" layer(aui);
-```
-
-Importing the vendor styles *into a named layer* drops them below Tailwind's
-`utilities` layer, so our utilities win again. The explicit `@layer` statement
-is required — an undeclared layer sorts *last*, which reintroduces the bug. Our
-own `.aui-*` overrides stay unlayered and still win over both.
-
-If you upgrade assistant-ui and something inside the thread loses its styling,
-this is the first place to look.
+`.chat-prose` is the markdown rhythm: `MarkdownText` renders bare elements
+(`p`, `h1`, `ul`, `pre`, …) inside a `.chat-prose` container, and the chrome
+block styles them by element selector. `ToolMarkdown` reuses the same class
+for tool-result markdown, so thread prose and card prose can't drift apart.
 
 ---
 

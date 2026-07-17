@@ -50,7 +50,7 @@ function getHighlighter() {
 export const ShikiSyntaxHighlighter: FC<SyntaxHighlighterProps> = ({
   language,
   code,
-  components: { Code },
+  components: { Pre, Code },
 }) => {
   const [html, setHtml] = useState<string | null>(null);
   const { theme } = useThemeTokens();
@@ -94,5 +94,11 @@ export const ShikiSyntaxHighlighter: FC<SyntaxHighlighterProps> = ({
     return <div className="shiki-wrapper" dangerouslySetInnerHTML={{ __html: html }} />;
   }
 
-  return <Code>{code}</Code>;
+  // Not highlighted yet (first paint, or grammar still loading) — render the
+  // plain pre/code pair so the block keeps its shape until Shiki lands.
+  return (
+    <Pre>
+      <Code>{code}</Code>
+    </Pre>
+  );
 };

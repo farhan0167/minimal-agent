@@ -24,16 +24,16 @@ interface ReasoningControlsProps {
 /**
  * A "Thinking" toggle plus an effort selector for the current turn.
  *
- * Phase-one placement is a small toolbar above the prebuilt <Thread> — the
- * prebuilt composer has no slot for extra controls, and inlining it there
- * would require a custom ComposerPrimitive. The state lives in ChatPanel and
- * is read by the runtime adapter at send time (see use-chat-runtime).
+ * Lives in the composer's bottom row, beside the attach button — the input is
+ * where you decide how the next turn should think. The state lives in
+ * ChatPanel (it must outlive the composer and reach the runtime adapter at
+ * send time — see use-chat-runtime) and threads down via Thread → Composer.
  */
 export function ReasoningControls({ value, onChange }: ReasoningControlsProps) {
   const { on, effort } = value;
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2">
+    <div className="flex items-center gap-3">
       <Switch
         checked={on}
         onChange={(next) => onChange({ ...value, on: next })}

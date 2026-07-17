@@ -1,21 +1,4 @@
-/* Establish cascade-layer order before anything else. Tailwind's own layers
-   (theme, base, components, utilities) are declared by its import; we slot the
-   vendor `aui` layer BEFORE utilities so our utility classes outrank the
-   assistant-ui reset. The order of a @layer statement is what counts, not where
-   the rules are later written. */
-@layer theme, base, components, aui, utilities;
-
 @import "tailwindcss";
-/* assistant-ui ships an unlayered Preflight-style reset scoped to .aui-root
-   (`:where(.aui-root) * { border-width: 0 }`, `button { padding: 0 }`, …).
-   Unlayered CSS beats *all* layered CSS regardless of specificity, so that
-   reset silently defeated every Tailwind utility on our own components that
-   render inside the thread (the tool card's border, its header padding and
-   ground). Importing the vendor styles into a named layer puts them under
-   Tailwind's `utilities` layer in the cascade, so our utilities win again.
-   Our explicit .aui-* overrides below stay unlayered and still win over both. */
-@import "@assistant-ui/react-ui/styles/index.css" layer(aui);
-@import "@assistant-ui/react-ui/styles/markdown.css" layer(aui);
 /* The contract's documentation — no values; themes/ fills it, and themes/index.ts
    imports the active theme's CSS so a theme is never half-registered. */
 @import "./tokens.css";
@@ -46,9 +29,9 @@
   --color-app-border: hsl(var(--app-border));
   --color-app-border-subtle: hsl(var(--app-border-subtle));
   --color-app-ring: hsl(var(--app-ring));
-  /* The flattened edge. Bridged as a utility (not just as --aui-border) because
-     Switch's off-state needs a *ground*, and the alpha tokens above tint their
-     host rather than paint it — a translucent knob track shows the row through. */
+  /* The flattened edge. Bridged as a utility because Switch's off-state needs
+     a *ground*, and the alpha tokens above tint their host rather than paint
+     it — a translucent knob track shows the row through. */
   --color-app-border-opaque: hsl(var(--app-border-opaque));
 
   /* Accent & semantic */
@@ -108,57 +91,6 @@
   transition-timing-function: var(--app-transition-easing);
 }
 
-/*
- * The assistant-ui vendor bridge.
- *
- * assistant-ui owns the --aui-* names, so we assign them from the same --app-*
- * roles rather than maintaining a second palette. One source of truth, two
- * spellings — the second imposed by a vendor.
- *
- * These are var() aliases, so the .dark block in tokens.css drives both
- * families at once: redirect --app-bg and --aui-background follows. But the
- * aliases must be repeated under `.dark` as well. assistant-ui ships its own
- * `.dark { --aui-*: ... }` block with its stock grey palette, and a bare
- * `:root` alias (specificity 0,0,1) loses to it (0,1,0) — dark mode would
- * silently render in the vendor's greys. Same values, stated at both
- * specificities, so ours wins in both modes.
- */
-:root,
-.dark {
-  --aui-background: var(--app-bg);
-  --aui-foreground: var(--app-fg);
-
-  --aui-card: var(--app-surface);
-  --aui-card-foreground: var(--app-fg);
-
-  --aui-popover: var(--app-surface);
-  --aui-popover-foreground: var(--app-fg);
-
-  --aui-primary: var(--app-accent);
-  --aui-primary-foreground: var(--app-accent-fg);
-
-  --aui-secondary: var(--app-sidebar);
-  --aui-secondary-foreground: var(--app-fg);
-
-  --aui-muted: var(--app-sidebar);
-  --aui-muted-foreground: var(--app-fg-muted);
-
-  --aui-accent: var(--app-sidebar);
-  --aui-accent-foreground: var(--app-fg);
-
-  --aui-destructive: var(--app-danger);
-  --aui-destructive-foreground: 0 0% 98%;
-
-  --aui-ring: var(--app-ring);
-  --aui-radius: var(--app-radius-surface);
-  --aui-thread-max-width: 50rem;
-
-  /* assistant-ui composes these without alpha, so they cannot read the
-     alpha-bearing --app-border. They get their own opaque contract token. */
-  --aui-border: var(--app-border-opaque);
-  --aui-input: var(--app-border-opaque);
-}
-
 /* Native <option> lists render in an OS popup that ignores page CSS and a
    Tailwind class on the option. Only these two properties, set on the element
    itself, are honoured across browsers — without them the popup falls back to
@@ -171,104 +103,146 @@ select option {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * assistant-ui structural overrides — QUARANTINED.
+ * Chat chrome — the thread's structural styles.
  *
- * The assistant's own prose (markdown, headings, code blocks in the thread)
- * is rendered by assistant-ui internals, not by our components, so primitives
- * cannot reach it. It is themed anyway: every rule below reads the --app-*
- * contract, same as a primitive would. Same contract, different consumer.
- *
- * This block is the only place in the app allowed to style what it does not
- * own, and it pins assistant-ui 0.12 — these class names are vendor internals
- * and may move on upgrade. Nothing outside this block may target .aui-*.
+ * assistant-ui primitives render their own elements (the thread viewport,
+ * the composer form/textarea, markdown output), so their look cannot live in
+ * a components/ui primitive. It lives here instead, on class names WE own
+ * (components/chat assigns them), reading the same --app-* contract a
+ * primitive would. Since the migration off @assistant-ui/react-ui there is
+ * no vendor CSS in the app — nothing here pins a package version.
  * ═══════════════════════════════════════════════════════════════════════ */
 
-/* The chat area speaks in the theme's prose voice. */
-.aui-thread-root {
+/* The chat area speaks in the theme's prose voice — face, weight, AND color:
+   nothing above the thread sets a text color, so without --app-fg here the
+   prose inherits the browser's black and vanishes in dark mode. */
+.chat-thread {
   font-family: var(--app-font-prose);
   font-weight: var(--app-prose-weight);
-  background-color: hsl(var(--aui-background));
+  color: hsl(var(--app-fg));
   -webkit-font-smoothing: antialiased;
 }
 
-/* Tighter font sizing for messages */
-.aui-assistant-message-content,
-.aui-user-message-content {
+/* Assistant answer — reading rhythm. (Reasoning traces deliberately inherit
+   their smaller size from the disclosure that wraps them.) */
+.chat-message-body {
   font-size: 1rem;
   line-height: 1.7;
 }
 
-/* Markdown content — readable prose rhythm.
- *
- * assistant-ui 0.12 emits per-element classes (aui-md-p, aui-md-ul, …), NOT
- * `p` inside a `.aui-md` wrapper — an earlier version of this block targeted
- * `.aui-md p` and matched nothing, so the thread rendered on the vendor's raw
- * markdown.css defaults (0 paragraph spacing, 20px list gaps, no bullet
- * indent). These class names are vendor internals pinned to 0.12; verify them
- * against the DOM on upgrade.
+/* User bubble — a short utterance, not prose: snug padding and a tighter
+   line-height than the answer's 1.7 reading rhythm. With 1.7 and 1rem
+   vertical padding a single line floats in an oversized, bottom-heavy box. */
+.chat-user-bubble {
+  background-color: hsl(var(--app-bubble-user));
+  border-radius: var(--app-radius-bubble);
+  padding: 0.55rem 0.95rem;
+  line-height: 1.5;
+}
+
+/* Image attachments inside the user bubble (see UserMessage.tsx): stacked
+   above the text with a small gap; full bubble width so live turns match the
+   reload layout (image + text in one bubble). */
+.chat-user-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.chat-user-attachments:not(:last-child) {
+  margin-bottom: 0.5rem;
+}
+
+/* Composer frame — the floating centered input: ground + shadow, no border;
+   the shadow is the edge. */
+.chat-composer {
+  background-color: hsl(var(--app-composer));
+  box-shadow: var(--app-shadow);
+  border-radius: var(--app-radius-composer);
+}
+
+/* Markdown prose — readable rhythm on the bare elements MarkdownText emits
+ * (our MarkdownTextPrimitive adds no per-element classes; the `.chat-prose`
+ * container scopes them).
  *
  * The spacing is a designed vertical rhythm: paragraphs and lists breathe at
  * ~0.7rem, headings open a larger gap above than below so a section binds to
  * the text it introduces, and list items carry a real left indent so bullets
  * share one spine. */
-.aui-md-h1 { font-size: var(--app-md-h1); font-weight: 700; margin-top: 1.4rem; margin-bottom: 0.5rem; line-height: 1.3; }
-.aui-md-h2 { font-size: var(--app-md-h2); font-weight: 700; margin-top: 1.2rem; margin-bottom: 0.45rem; line-height: 1.3; }
-.aui-md-h3 { font-size: var(--app-md-h3); font-weight: 700; margin-top: 1rem; margin-bottom: 0.4rem; line-height: 1.3; }
-.aui-md-p { margin-top: 0.7rem; margin-bottom: 0.7rem; }
-.aui-md-ul, .aui-md-ol { margin-top: 0.7rem; margin-bottom: 0.7rem; padding-left: 1.5rem; }
-/* List items carry no vendor class — target the bare <li> within our lists. */
-.aui-md-ul > li, .aui-md-ol > li { margin-top: 0.25rem; margin-bottom: 0.25rem; padding-left: 0.15rem; }
-.aui-md-ul > li > .aui-md-p, .aui-md-ol > li > .aui-md-p { margin: 0; }
-.aui-md-ul .aui-md-ul, .aui-md-ul .aui-md-ol,
-.aui-md-ol .aui-md-ul, .aui-md-ol .aui-md-ol { margin-top: 0.25rem; margin-bottom: 0.25rem; }
-.aui-md-hr { margin-top: 1.1rem; margin-bottom: 1.1rem; border: none; border-top: 1px solid hsl(var(--app-border)); }
+.chat-prose h1 { font-size: var(--app-md-h1); font-weight: 700; margin-top: 1.4rem; margin-bottom: 0.5rem; line-height: 1.3; }
+.chat-prose h2 { font-size: var(--app-md-h2); font-weight: 700; margin-top: 1.2rem; margin-bottom: 0.45rem; line-height: 1.3; }
+.chat-prose h3 { font-size: var(--app-md-h3); font-weight: 700; margin-top: 1rem; margin-bottom: 0.4rem; line-height: 1.3; }
+.chat-prose p { margin-top: 0.7rem; margin-bottom: 0.7rem; }
+.chat-prose ul, .chat-prose ol { margin-top: 0.7rem; margin-bottom: 0.7rem; padding-left: 1.5rem; }
+.chat-prose ul { list-style-type: disc; }
+.chat-prose ol { list-style-type: decimal; }
+.chat-prose li { margin-top: 0.25rem; margin-bottom: 0.25rem; padding-left: 0.15rem; }
+.chat-prose li > p { margin: 0; }
+.chat-prose li ul, .chat-prose li ol { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+.chat-prose hr { margin-top: 1.1rem; margin-bottom: 1.1rem; border: none; border-top: 1px solid hsl(var(--app-border)); }
+.chat-prose a { color: hsl(var(--app-accent-text)); text-decoration: underline; }
+.chat-prose blockquote { border-left: 2px solid hsl(var(--app-border)); padding-left: 0.75rem; color: hsl(var(--app-fg-muted)); margin: 0.7rem 0; }
+.chat-prose strong { font-weight: 700; }
 /* The first block in a message carries no top margin — the message row already
    owns that gap, and a doubled gap is what made turns look unevenly spaced. */
-.aui-md-p:first-child, .aui-md-h1:first-child, .aui-md-h2:first-child, .aui-md-h3:first-child, .aui-md-ul:first-child, .aui-md-ol:first-child { margin-top: 0; }
-.aui-md-p:last-child, .aui-md-ul:last-child, .aui-md-ol:last-child { margin-bottom: 0; }
-/* Code blocks — warm off-white with visible contrast against page.
+.chat-prose > :first-child { margin-top: 0; }
+.chat-prose > :last-child { margin-bottom: 0; }
+
+/* Code blocks — the code ground with visible contrast against the page.
    Long blocks scroll internally (the header bar above stays put) instead of
-   stretching the message and hijacking the chat scroll. */
-.aui-md-pre {
+   stretching the message and hijacking the chat scroll.
+
+   Scoped with :not(.shiki): once Shiki lands, the highlighted <pre class=
+   "shiki"> sits INSIDE .shiki-wrapper, which already owns the max-height and
+   vertical scroll — giving the inner pre its own cap would nest two
+   scrollbars. This rule styles only the plain fallback pre (first paint /
+   grammar still loading). */
+.chat-prose pre:not(.shiki) {
+  font-family: var(--app-font-mono);
   font-size: 0.8rem;
   margin-top: 0.375rem;
   margin-bottom: 0.375rem;
-  background-color: hsl(var(--app-code-bg)) !important;
-  border: 1px solid hsl(var(--app-border));
+  padding: 1rem;
+  background-color: hsl(var(--app-code-bg));
+  border-radius: 0 0 var(--app-radius-surface) var(--app-radius-surface);
   max-height: min(26rem, 60vh);
-  overflow-y: auto;
+  overflow: auto;
 }
-.aui-md-pre code {
+.chat-prose pre code {
   font-size: 0.8rem;
-  background-color: transparent !important;
+  background-color: transparent;
+  border: none;
+  padding: 0;
 }
-/* Code header (language label bar) */
-.aui-code-header-root {
-  background-color: hsl(var(--app-code-bg)) !important;
-  color: hsl(var(--app-code-header)) !important;
-  border-bottom: none !important;
-}
-.aui-code-header-root button {
-  color: hsl(var(--app-code-button)) !important;
-}
-/* Inline code — warm tinted background, matching text color */
-.aui-md-inline-code {
+/* Inline code — tinted background, matching text color. */
+.chat-prose :not(pre) > code {
+  font-family: var(--app-font-mono);
   font-size: 0.8rem;
-  background-color: hsl(var(--app-inline-code-bg)) !important;
-  color: hsl(var(--app-inline-code-fg)) !important;
+  background-color: hsl(var(--app-inline-code-bg));
+  color: hsl(var(--app-inline-code-fg));
   padding: 0.15em 0.4em;
   border-radius: 0.25rem;
-  border: 1px solid hsl(var(--app-border)) !important;
-  font-weight: 500 !important;
+  border: 1px solid hsl(var(--app-border));
+  font-weight: 500;
 }
-/* Shiki code body — same background as header */
+
+/* Code header (language label bar above a fence — CodeHeaderBar.tsx). */
+.chat-code-header {
+  background-color: hsl(var(--app-code-bg));
+  color: hsl(var(--app-code-header));
+}
+.chat-code-header button {
+  color: hsl(var(--app-code-button));
+}
+
+/* Shiki code body — same ground as the header above it. */
 .shiki-wrapper {
   background-color: hsl(var(--app-code-bg));
   border-radius: 0 0 var(--app-radius-surface) var(--app-radius-surface);
   max-height: min(26rem, 60vh);
   overflow-y: auto;
 }
-/* Shiki syntax highlighter — dual theme support */
+/* Shiki syntax highlighter — both modes compiled to CSS variables
+   (defaultColor: false); these rules pick between them. */
 .shiki {
   --shiki-light-bg: transparent !important;
   --shiki-dark-bg: transparent !important;
@@ -286,107 +260,9 @@ select option {
   color: var(--shiki-dark) !important;
 }
 
-.aui-md-table { font-size: 0.875rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; margin-top: 0.7rem; margin-bottom: 0.7rem; }
-.aui-md-th, .aui-md-td { padding: 0.5rem 0.5rem; text-align: left; }
-.aui-md-th { font-weight: 600; }
-.aui-md-tr { border-bottom: 1px solid hsl(var(--app-border-subtle)); }
-.aui-md-table thead .aui-md-tr { border-bottom: 1px solid hsl(var(--app-border)); }
-/* Bold text carries no vendor class; the bare <strong> is styled directly. */
-.aui-md-p strong, .aui-md-ul strong, .aui-md-ol strong { font-weight: 700; }
-
-/* User messages — right-aligned within the centered content column.
- *
- * A user bubble is a short utterance, not prose: it gets its own snug padding
- * and a tighter line-height than the assistant answer's 1.7 reading rhythm.
- * With 1.7 and 1rem vertical padding the single line floated inside an
- * oversized box — the bubble read as bottom-heavy with dead space on top. */
-.aui-user-message-content {
-  background-color: hsl(var(--app-bubble-user));
-  color: hsl(var(--aui-foreground));
-  padding: 0.55rem 0.95rem;
-  border-radius: var(--app-radius-bubble);
-  line-height: 1.5;
-}
-
-/* Remove assistant avatar circle */
-.aui-avatar-root {
-  display: none;
-}
-
-/* Icon buttons (edit pencil, branch-picker chevrons, copy…) hold a
-   position:absolute screen-reader label, but .aui-button itself isn't
-   positioned — the label anchors to the document, escapes the thread
-   viewport's clipping, and can land below the window, stretching the page
-   into a second window-level scrollbar. Anchor labels to their button. */
-.aui-button {
-  position: relative;
-}
-
-/* Composer — match Claude's centered rounded input */
-.aui-composer-root {
-  background-color: hsl(var(--app-composer));
-  box-shadow: var(--app-shadow);
-  border: none;
-  border-radius: var(--app-radius-composer);
-  padding: 0.25rem;
-  align-items: flex-end;
-}
-
-/* Input takes full width — forces its own row above the buttons */
-.aui-composer-input {
-  font-family: var(--app-font-prose);
-  font-size: 1rem;
-  padding: 1.25rem 1.5rem;
-  min-height: 2.5rem;
-  width: 100%;
-  order: -1;
-}
-
-/* Attachment button — bottom-left, mirrors send button spacing */
-.aui-composer-attach {
-  margin-bottom: 0.5rem;
-  margin-left: 0.75rem;
-}
-
-/* Send button — Claude's rounded orange, bottom-right */
-.aui-composer-send {
-  background-color: hsl(var(--aui-primary));
-  border-radius: var(--app-radius-ctl);
-  margin-bottom: 0.5rem;
-  margin-left: auto;
-  margin-right: 0.75rem;
-}
-.aui-composer-send:hover {
-  background-color: hsl(var(--app-accent-hover));
-}
-
-/* Cancel button — same position as send */
-.aui-composer-cancel {
-  background-color: hsl(var(--aui-primary));
-  border-radius: var(--app-radius-ctl);
-  margin-bottom: 0.5rem;
-  margin-left: auto;
-  margin-right: 0.75rem;
-}
-
-/* Composer footer area */
-.aui-thread-viewport-footer {
-  padding: 0.5rem 1rem 1.25rem;
-}
-
-/* Image attachments rendered inside the user bubble (see UserMessage.tsx).
-   Stacked above the text with a small gap; the image fills the bubble width
-   so live turns match the reload layout (image + text in one bubble). */
-.aui-user-message-attachments-inline {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.aui-user-message-attachments-inline:not(:last-child) {
-  margin-bottom: 0.5rem;
-}
-.aui-user-message-image-attachment {
-  display: block;
-  width: 100%;
-  height: auto;
-}
+/* Tables — bordered rows, scrolling horizontally when too wide. */
+.chat-prose table { font-size: 0.875rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; margin-top: 0.7rem; margin-bottom: 0.7rem; }
+.chat-prose th, .chat-prose td { padding: 0.5rem 0.5rem; text-align: left; }
+.chat-prose th { font-weight: 600; }
+.chat-prose tr { border-bottom: 1px solid hsl(var(--app-border-subtle)); }
+.chat-prose thead tr { border-bottom: 1px solid hsl(var(--app-border)); }

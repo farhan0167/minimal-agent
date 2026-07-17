@@ -13,7 +13,7 @@ No test framework is configured.
 
 ## Backend Proxy
 
-Vite proxies `/api/*` to `http://localhost:8000` (stripping the `/api` prefix). The FastAPI backend must be running separately for the app to function. In production, set `VITE_API_BASE_URL` to the server's URL.
+Vite proxies `/api/*` to `http://localhost:8000` (prefix preserved — the backend serves under `/api`). The FastAPI backend must be running separately for the app to function. In production, set `VITE_API_BASE_URL` to the server's URL.
 
 ## Architecture
 
@@ -25,6 +25,7 @@ This is a React + TypeScript chat frontend for the `minimal-agent` project. It u
 - **`lib/sse.ts`** — Pure async generator that parses raw SSE text streams into typed `SSEEvent` objects (event types: `delta`, `assistant`, `tool_result`, `error`, `done`). `delta` carries streamed assistant text token-by-token; the following `assistant` event carries the committed full text (authoritative).
 - **`hooks/use-chat-runtime.ts`** — The central integration layer. Converts flat server message history into assistant-ui's `ThreadMessageLike` format (merging assistant+tool messages into single turns), and wires up the SSE streaming adapter for `useLocalRuntime`.
 - **`hooks/use-sessions.ts`** — Session state management (list, create, select, delete).
+- **`components/chat/`** — The chat surface, built directly on `@assistant-ui/react` primitives (no prebuilt/styled vendor components). `Thread.tsx` owns the shell (viewport, message list, sticky composer footer); `Composer.tsx`/`EditComposer.tsx` the input forms; `AssistantMessage.tsx`/`UserMessage.tsx` the per-role message bodies via `MessagePrimitive.Parts` slots (`Text`, `Reasoning`, `Image`); `MarkdownText.tsx` the markdown renderer (`MarkdownTextPrimitive` + Shiki + per-language fence renderers). Structural styles live in `index.css` under "chat chrome" (`.chat-*` classes).
 - **`components/tools/`** — Tool call rendering system. `index.tsx` registers a `makeAssistantToolUI` for each tool name fetched from `GET /tools`. `registry.ts` maps tool names to dedicated renderers (file, shell, search, web tools); `ToolCallRenderer` is the generic fallback. All renderers compose the `ToolCallCard` shell. See `README.md` — "Writing a renderer for a new tool".
 - **`types/`** — Shared TypeScript interfaces mirroring the backend API schema (`Message`, `Session`, `SSEEvent`, etc.).
 
