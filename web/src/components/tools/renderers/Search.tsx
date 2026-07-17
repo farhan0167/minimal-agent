@@ -32,12 +32,12 @@ export function SearchRenderer({ name, args, result, status }: ToolRenderProps) 
         {typeof result === "string" ? (
           <div>
             {caption && (
-              <div className="text-xs text-[hsl(var(--aui-muted-foreground))] mb-1.5">
+              <div className="text-xs text-app-fg-muted mb-1.5">
                 {caption}
               </div>
             )}
             {lines.length > 0 && (
-              <ul className="text-[0.8rem] font-mono bg-[hsl(var(--claude-hover))] p-3 rounded-lg overflow-x-auto max-h-80 overflow-y-auto">
+              <ul className="text-[0.8rem] font-mono bg-app-hover p-3 rounded-ctl overflow-x-auto max-h-80 overflow-y-auto">
                 {lines.map((line, i) => (
                   <li key={i} className="whitespace-pre">
                     {line}

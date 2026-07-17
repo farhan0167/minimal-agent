@@ -62,7 +62,7 @@ export function ChatPanel({ sessionId, agent }: ChatPanelProps) {
 
   if (!isLoaded) {
     return (
-      <div className="flex items-center justify-center h-full text-sm text-[hsl(var(--aui-muted-foreground))]">
+      <div className="flex items-center justify-center h-full text-sm text-app-fg-muted">
         Loading conversation...
       </div>
     );

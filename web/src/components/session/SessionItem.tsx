@@ -4,6 +4,7 @@ import { useSessionTitle } from "../../lib/session-titles";
 import { Trash2, FolderOpen } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
+import { Text } from "../ui/Text";
 
 interface SessionItemProps {
   session: Session;
@@ -63,12 +64,14 @@ export function SessionItem({
       >
         {/* min-w-0 is what lets the truncations below actually truncate. */}
         <span className="block min-w-0 flex-1">
-          <span
-            className="block truncate font-medium text-xs font-serif"
+          <Text
+            variant="prose"
+            as="span"
+            className="block truncate font-medium text-xs"
             title={session.session_id}
           >
             {title}
-          </span>
+          </Text>
 
           <span
             className="flex items-center gap-1 text-[10px] text-app-fg-muted truncate mt-0.5

@@ -14,7 +14,7 @@ export default function App() {
   } = useSessions();
 
   return (
-    <div className="flex h-screen bg-[hsl(var(--aui-background))]">
+    <div className="flex h-screen bg-app-bg">
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSession?.session_id ?? null}

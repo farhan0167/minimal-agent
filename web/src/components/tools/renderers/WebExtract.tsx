@@ -69,7 +69,7 @@ export function WebExtractRenderer({ name, args, result, status }: ToolRenderPro
                   href={section.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="block text-sm font-medium mb-1 truncate text-[hsl(var(--aui-primary))] hover:underline"
+                  className="block text-sm font-medium mb-1 truncate text-app-accent hover:underline"
                 >
                   {section.url}
                 </a>
@@ -79,7 +79,7 @@ export function WebExtractRenderer({ name, args, result, status }: ToolRenderPro
             {parsed.failures.map((failure, i) => (
               <div
                 key={i}
-                className="text-xs p-2 rounded-lg bg-[hsl(var(--aui-destructive)/0.08)] text-[hsl(var(--aui-destructive))]"
+                className="text-xs p-2 rounded-ctl bg-app-danger/10 text-app-danger"
               >
                 {failure}
               </div>

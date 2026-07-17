@@ -1,5 +1,6 @@
-import { useState, type ComponentType } from "react";
+import { type ComponentType } from "react";
 import type { ReasoningMessagePartProps } from "@assistant-ui/react";
+import { Disclosure } from "../ui/Disclosure";
 
 /** Last non-empty line of the trace — a peek at the current thought. */
 function tailOfThought(text: string): string {
@@ -24,8 +25,6 @@ function tailOfThought(text: string): string {
  */
 export function makeReasoningPart(Markdown: ComponentType) {
   return function ReasoningPart({ text, status }: ReasoningMessagePartProps) {
-    const [open, setOpen] = useState(false);
-
     // Nothing to disclose yet — stay out of the layout entirely.
     if (!text) return null;
 
@@ -34,36 +33,31 @@ export function makeReasoningPart(Markdown: ComponentType) {
       status?.type === "incomplete" && status.reason === "cancelled";
 
     return (
-      <div className="my-2">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="flex items-center gap-1 w-full min-w-0 text-xs text-[hsl(var(--aui-muted-foreground))] hover:text-[hsl(var(--aui-foreground))] transition-colors"
-        >
-          <span
-            className="inline-block transition-transform"
-            style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
-          >
-            ▸
-          </span>
-          <span className={isThinking ? "animate-pulse" : undefined}>
-            {isThinking ? "Thinking…" : "Reasoning"}
-          </span>
-          {isInterrupted && <span className="italic">(interrupted)</span>}
-          {isThinking && !open && (
-            <span className="ml-2 truncate italic opacity-70">
-              {tailOfThought(text)}
+      <Disclosure
+        variant="inline"
+        className="my-2"
+        // The preview is only meaningful while collapsed *and* still thinking;
+        // once open, the full trace below says it better.
+        summary={(open) => (
+          <>
+            <span
+              className={`text-xs ${isThinking ? "motion-safe:animate-pulse" : ""}`}
+            >
+              {isThinking ? "Thinking…" : "Reasoning"}
             </span>
-          )}
-        </button>
-
-        {open && (
-          <div className="mt-1.5 border-l-2 border-[hsl(var(--aui-border))] pl-3 text-sm text-[hsl(var(--aui-muted-foreground))]">
-            <Markdown />
-          </div>
+            {isInterrupted && <span className="text-xs italic">(interrupted)</span>}
+            {isThinking && !open && (
+              <span className="ml-2 truncate text-xs italic opacity-70">
+                {tailOfThought(text)}
+              </span>
+            )}
+          </>
         )}
-      </div>
+      >
+        <div className="mt-1.5 border-l-2 border-app-border pl-3 text-sm text-app-fg-muted">
+          <Markdown />
+        </div>
+      </Disclosure>
     );
   };
 }

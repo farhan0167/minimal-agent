@@ -33,7 +33,7 @@ export function ReadFileRenderer({ name, args, result, status }: ToolRenderProps
       <ResultSection result={result} status={status}>
         {parsed ? (
           <div>
-            <div className="text-xs text-[hsl(var(--aui-muted-foreground))] mb-1.5">
+            <div className="text-xs text-app-fg-muted mb-1.5">
               {parsed.header}
             </div>
             <CodeBlock code={parsed.code} language={languageForPath(filePath)} />

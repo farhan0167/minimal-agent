@@ -1,5 +1,7 @@
 import type { ReasoningEffort } from "../../api/chat";
 import type { ReasoningState } from "../../hooks/use-chat-runtime";
+import { Switch } from "../ui/Switch";
+import { Select } from "../ui/Field";
 
 /** Effort levels offered in the dropdown, in ascending order. The values are
  *  the neutral ReasoningEffort vocabulary; labels are the human-facing names.
@@ -31,57 +33,38 @@ export function ReasoningControls({ value, onChange }: ReasoningControlsProps) {
   const { on, effort } = value;
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2 text-xs text-[hsl(var(--aui-muted-foreground))]">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        onClick={() => onChange({ ...value, on: !on })}
-        className="flex items-center gap-2 hover:text-[hsl(var(--aui-foreground))] transition-colors"
-      >
-        <span
-          aria-hidden
-          className="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors"
-          style={{
-            backgroundColor: on
-              ? "hsl(var(--aui-primary))"
-              : "hsl(var(--aui-border))",
-          }}
-        >
-          <span
-            className="inline-block h-3 w-3 rounded-full bg-white transition-transform"
-            style={{ transform: on ? "translateX(14px)" : "translateX(2px)" }}
-          />
-        </span>
-        <span className="font-medium">Thinking</span>
-      </button>
+    <div className="flex items-center gap-3 px-4 py-2">
+      <Switch
+        checked={on}
+        onChange={(next) => onChange({ ...value, on: next })}
+        label="Thinking"
+      />
 
-      <label
-        className={`flex items-center gap-1.5 transition-opacity ${
+      {/* Effort is meaningless with thinking off; it fades rather than
+          disappearing so the toolbar doesn't reflow on every toggle. */}
+      <Select
+        label="Effort"
+        value={effort ?? ""}
+        disabled={!on}
+        onChange={(e) =>
+          onChange({
+            ...value,
+            effort: e.target.value
+              ? (e.target.value as ReasoningEffort)
+              : undefined,
+          })
+        }
+        wrapperClassName={`flex-row items-center gap-1.5 transition-app ${
           on ? "opacity-100" : "opacity-40"
         }`}
+        className="w-auto px-1.5 py-0.5 text-xs"
       >
-        <span>Effort</span>
-        <select
-          value={effort ?? ""}
-          disabled={!on}
-          onChange={(e) =>
-            onChange({
-              ...value,
-              effort: e.target.value
-                ? (e.target.value as ReasoningEffort)
-                : undefined,
-            })
-          }
-          className="rounded border border-[hsl(var(--aui-border))] bg-transparent px-1.5 py-0.5 text-xs text-[hsl(var(--aui-foreground))] disabled:cursor-not-allowed focus:outline-none focus:ring-1 focus:ring-[hsl(var(--aui-primary))]"
-        >
-          {EFFORT_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      </label>
+        {EFFORT_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </Select>
     </div>
   );
 }

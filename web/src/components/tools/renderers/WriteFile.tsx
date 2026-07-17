@@ -24,7 +24,7 @@ export function WriteFileRenderer({ name, args, result, status }: ToolRenderProp
         <ResultSection result={result} status={status} />
       ) : (
         typeof result === "string" && (
-          <div className="text-xs text-[hsl(var(--aui-muted-foreground))]">
+          <div className="text-xs text-app-fg-muted">
             {result}
           </div>
         )

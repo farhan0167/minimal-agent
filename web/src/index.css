@@ -29,6 +29,10 @@
   --color-app-border: hsl(var(--app-border));
   --color-app-border-subtle: hsl(var(--app-border-subtle));
   --color-app-ring: hsl(var(--app-ring));
+  /* The flattened edge. Bridged as a utility (not just as --aui-border) because
+     Switch's off-state needs a *ground*, and the alpha tokens above tint their
+     host rather than paint it — a translucent knob track shows the row through. */
+  --color-app-border-opaque: hsl(var(--app-border-opaque));
 
   /* Accent & semantic */
   --color-app-accent: hsl(var(--app-accent));

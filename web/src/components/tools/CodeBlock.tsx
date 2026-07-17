@@ -15,7 +15,7 @@ export function CodeBlock({
   // (index.css). A second cap on this wrapper would nest two scroll
   // containers and show double scrollbars.
   return (
-    <div className="text-sm rounded-lg overflow-hidden bg-[hsl(var(--claude-code-bg))] border border-[hsl(var(--claude-border))]">
+    <div className="text-sm rounded-ctl overflow-hidden bg-app-code-bg border border-app-border">
       <ShikiSyntaxHighlighter
         language={language}
         code={code}

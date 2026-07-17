@@ -1,6 +1,11 @@
-import { useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, CircleAlert, Loader2 } from "lucide-react";
+import { type ReactNode } from "react";
+import { CircleAlert } from "lucide-react";
 import { Badge } from "../ui/Badge";
+import { Surface } from "../ui/Surface";
+import { Text } from "../ui/Text";
+import { Disclosure } from "../ui/Disclosure";
+import { Spinner } from "../ui/Spinner";
+import { StatusDot } from "../ui/StatusDot";
 
 export type ToolStatus = "running" | "complete" | "error" | "interrupted";
 
@@ -26,52 +31,47 @@ export function ToolCallCard({
   subtitle,
   children,
 }: ToolCallCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
   return (
-    <div className="my-2 border border-[hsl(var(--claude-border))] rounded-lg overflow-hidden">
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-2 w-full px-4 py-2.5 bg-[hsl(var(--claude-hover))] hover:bg-[hsl(var(--claude-active))] transition-colors text-left"
+    <Surface variant="outline" className="my-2">
+      <Disclosure
+        summary={
+          <>
+            <span className="font-mono text-sm font-medium shrink-0 text-app-fg">
+              {name}
+            </span>
+            {subtitle && (
+              <Text variant="code" as="span" className="min-w-0 truncate">
+                {subtitle}
+              </Text>
+            )}
+            {status === "running" && <Spinner />}
+            {status === "error" && (
+              <Badge variant="danger">
+                <CircleAlert className="w-3 h-3" />
+                failed
+              </Badge>
+            )}
+            {status === "interrupted" && (
+              <Badge variant="neutral">
+                <StatusDot status="interrupted" />
+                interrupted
+              </Badge>
+            )}
+          </>
+        }
       >
-        {isExpanded ? (
-          <ChevronDown className="w-4 h-4 shrink-0 text-[hsl(var(--aui-muted-foreground))]" />
-        ) : (
-          <ChevronRight className="w-4 h-4 shrink-0 text-[hsl(var(--aui-muted-foreground))]" />
-        )}
-        <span className="font-mono text-sm font-medium shrink-0 text-[hsl(var(--aui-foreground))]">
-          {name}
-        </span>
-        {subtitle && (
-          <span className="min-w-0 truncate font-mono text-xs text-[hsl(var(--aui-muted-foreground))]">
-            {subtitle}
-          </span>
-        )}
-        {status === "running" && (
-          <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-[hsl(var(--aui-primary))]" />
-        )}
-        {status === "error" && (
-          <Badge variant="danger">
-            <CircleAlert className="w-3 h-3" />
-            failed
-          </Badge>
-        )}
-        {status === "interrupted" && (
-          <Badge variant="neutral">interrupted</Badge>
-        )}
-      </button>
-
-      {isExpanded && <div className="px-4 py-3 space-y-3">{children}</div>}
-    </div>
+        <div className="px-4 py-3 space-y-3">{children}</div>
+      </Disclosure>
+    </Surface>
   );
 }
 
 /** Small muted label above a section of the card body. */
 export function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="text-xs font-medium text-[hsl(var(--aui-muted-foreground))] mb-1">
+    <Text variant="label" as="div" muted className="mb-1">
       {children}
-    </div>
+    </Text>
   );
 }
 
@@ -80,9 +80,9 @@ export function ArgsSection({ args }: { args: Record<string, unknown> }) {
   return (
     <div>
       <SectionLabel>Args</SectionLabel>
-      <pre className="text-sm bg-[hsl(var(--claude-hover))] p-3 rounded-lg overflow-x-auto font-mono">
-        {JSON.stringify(args, null, 2)}
-      </pre>
+      <Surface variant="inset" className="p-3 overflow-x-auto">
+        <pre className="text-sm font-mono">{JSON.stringify(args, null, 2)}</pre>
+      </Surface>
     </div>
   );
 }
@@ -95,12 +95,14 @@ export function RawResult({
   result: unknown;
   isError?: boolean;
 }) {
+  // The error ground is a semantic tint rather than a Surface variant: it says
+  // "this failed", not "this is a container", and only --app-danger can say it.
   return (
     <pre
-      className={`text-sm p-3 rounded-lg overflow-x-auto max-h-64 overflow-y-auto font-mono whitespace-pre-wrap break-words ${
+      className={`text-sm p-3 rounded-ctl overflow-x-auto max-h-64 overflow-y-auto font-mono whitespace-pre-wrap break-words ${
         isError
-          ? "bg-[hsl(var(--aui-destructive)/0.08)] text-[hsl(var(--aui-destructive))] border border-[hsl(var(--aui-destructive)/0.25)]"
-          : "bg-[hsl(var(--claude-hover))]"
+          ? "bg-app-danger/10 text-app-danger border border-app-danger/20"
+          : "bg-app-hover"
       }`}
     >
       {typeof result === "string" ? result : JSON.stringify(result, null, 2)}

@@ -19,7 +19,7 @@ export function SessionList({
   if (sessions.length === 0) {
     if (isCollapsed) return null;
     return (
-      <p className="px-4 py-3 text-xs text-[hsl(var(--aui-muted-foreground))]">No sessions yet.</p>
+      <p className="px-4 py-3 text-xs text-app-fg-muted">No sessions yet.</p>
     );
   }
 

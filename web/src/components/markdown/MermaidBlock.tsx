@@ -36,7 +36,7 @@ function MermaidPreviewDialog({
       <ZoomPane
         zoom={zoom.zoom}
         zoomBy={zoom.zoomBy}
-        className="bg-[hsl(var(--aui-background))]"
+        className="bg-app-bg"
       >
         <div dangerouslySetInnerHTML={{ __html: svg }} />
       </ZoomPane>
@@ -103,13 +103,13 @@ export const MermaidBlock: FC<SyntaxHighlighterProps> = (props) => {
   if (svg) {
     body = (
       <div
-        className="p-4 flex justify-center bg-[hsl(var(--claude-code-bg))] rounded-b-lg max-h-[min(26rem,60vh)] overflow-auto"
+        className="p-4 flex justify-center bg-app-code-bg rounded-b-lg max-h-[min(26rem,60vh)] overflow-auto"
         dangerouslySetInnerHTML={{ __html: svg }}
       />
     );
   } else if (isStreaming || !failed) {
     body = (
-      <div className="p-4 text-xs animate-pulse text-[hsl(var(--aui-muted-foreground))] bg-[hsl(var(--claude-code-bg))] rounded-b-lg">
+      <div className="p-4 text-xs animate-pulse text-app-fg-muted bg-app-code-bg rounded-b-lg">
         Generating diagram…
       </div>
     );
@@ -117,7 +117,7 @@ export const MermaidBlock: FC<SyntaxHighlighterProps> = (props) => {
     // Invalid diagram — keep the source visible rather than hiding the block.
     body = (
       <div>
-        <div className="px-4 py-1.5 text-xs text-[hsl(var(--aui-muted-foreground))] bg-[hsl(var(--claude-code-bg))]">
+        <div className="px-4 py-1.5 text-xs text-app-fg-muted bg-app-code-bg">
           Mermaid couldn't render this diagram — showing source.
         </div>
         <ShikiSyntaxHighlighter {...props} language="text" />

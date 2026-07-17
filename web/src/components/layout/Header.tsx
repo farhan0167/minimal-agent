@@ -4,6 +4,7 @@ import { Bot, Moon, Sun } from "lucide-react";
 import { useTheme } from "../../hooks/use-theme";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
+import { Text } from "../ui/Text";
 
 interface HeaderProps {
   session: Session | null;
@@ -27,22 +28,22 @@ function ThemeToggle() {
 export function Header({ session }: HeaderProps) {
   if (!session) {
     return (
-      <header className="flex items-center justify-between h-14 px-6 border-b border-[hsl(var(--claude-border))] bg-[hsl(var(--aui-background))]">
-        <h1 className="text-sm font-medium text-[hsl(var(--aui-muted-foreground))] font-serif">
+      <header className="flex items-center justify-between h-14 px-6 border-b border-app-border bg-app-bg">
+        <Text variant="prose" as="h1" muted className="text-sm font-medium">
           minimal-agent
-        </h1>
+        </Text>
         <ThemeToggle />
       </header>
     );
   }
 
   return (
-    <header className="flex items-center justify-between h-14 px-6 border-b border-[hsl(var(--claude-border))] bg-[hsl(var(--aui-background))]">
+    <header className="flex items-center justify-between h-14 px-6 border-b border-app-border bg-app-bg">
       <div className="flex items-center gap-3">
-        <Bot className="w-4 h-4 text-[hsl(var(--aui-primary))]" />
-        <span className="text-sm font-medium text-[hsl(var(--aui-foreground))] font-serif">
+        <Bot className="w-4 h-4 text-app-accent" />
+        <Text variant="prose" as="span" className="text-sm font-medium">
           {session.model}
-        </span>
+        </Text>
         <Badge variant="accent" size="md">
           {session.backend}
         </Badge>
@@ -50,9 +51,9 @@ export function Header({ session }: HeaderProps) {
 
       <div className="flex items-center gap-3">
         {session.usage && (
-          <div className="text-xs text-[hsl(var(--aui-muted-foreground))]">
+          <Text variant="caption">
             {formatTokens(session.usage.total_tokens)} tokens
-          </div>
+          </Text>
         )}
         <ThemeToggle />
       </div>

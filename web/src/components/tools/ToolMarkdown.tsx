@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
  */
 export function ToolMarkdown({ text }: { text: string }) {
   return (
-    <div className="aui-md text-sm max-h-80 overflow-y-auto p-3 rounded-lg bg-[hsl(var(--claude-hover))]">
+    <div className="aui-md text-sm max-h-80 overflow-y-auto p-3 rounded-ctl bg-app-hover">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -17,7 +17,7 @@ export function ToolMarkdown({ text }: { text: string }) {
               {...props}
               target="_blank"
               rel="noreferrer"
-              className="underline text-[hsl(var(--aui-primary))]"
+              className="underline text-app-accent"
             />
           ),
         }}
