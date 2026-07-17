@@ -15,7 +15,7 @@ def test_metadata():
 
 
 def test_as_llm_tool_schema():
-    wire = WebSearch.as_llm_tool()
+    wire = WebSearch().as_llm_tool()
     assert wire.name == "web_search"
     assert "search" in wire.description.lower()
     assert "query" in wire.parameters["required"]

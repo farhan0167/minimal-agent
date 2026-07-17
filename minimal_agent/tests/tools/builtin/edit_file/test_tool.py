@@ -31,7 +31,7 @@ def test_metadata():
 
 
 def test_as_llm_tool_schema():
-    wire = EditFile.as_llm_tool()
+    wire = EditFile(workspace_root=Path("/tmp"), read_timestamps={}).as_llm_tool()
     assert wire.name == "edit_file"
     assert "find-and-replace" in wire.description.lower()
     assert set(wire.parameters["required"]) == {"file_path", "old_string", "new_string"}

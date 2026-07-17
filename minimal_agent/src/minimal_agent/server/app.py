@@ -116,13 +116,34 @@ class App(FastAPI):
 
             self.add_route("/", fallback, methods=["GET"], include_in_schema=False)
 
-    def serve(self, host: str = "0.0.0.0", port: int = 8000, **uvicorn_kwargs):
-        """Run the app with uvicorn. Blocks until interrupted."""
+    @staticmethod
+    def _reject_reload(uvicorn_kwargs: dict) -> None:
         if uvicorn_kwargs.get("reload"):
             raise ValueError(
                 "reload needs an import string, not a live app — run "
                 "`uvicorn my_app:app --reload` instead"
             )
+
+    def serve(self, host: str = "0.0.0.0", port: int = 8000, **uvicorn_kwargs):
+        """Run the app with uvicorn. Blocks until interrupted."""
+        self._reject_reload(uvicorn_kwargs)
         import uvicorn
 
         uvicorn.run(self, host=host, port=port, **uvicorn_kwargs)
+
+    async def a_serve(self, host: str = "0.0.0.0", port: int = 8000, **uvicorn_kwargs):
+        """Serve on the *current* event loop; awaits until interrupted.
+
+        Use instead of `serve()` when the app must run inside an async
+        context whose resources live on this loop — e.g. an
+        `MCPToolProvider` block, whose server connections the agent's tool
+        calls reach through the serving loop. `serve()` there would raise:
+        `uvicorn.run` calls `asyncio.run`, which refuses to nest inside a
+        running loop.
+        """
+        self._reject_reload(uvicorn_kwargs)
+        import uvicorn
+
+        await uvicorn.Server(
+            uvicorn.Config(self, host=host, port=port, **uvicorn_kwargs)
+        ).serve()

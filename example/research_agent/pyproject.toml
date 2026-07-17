@@ -4,7 +4,7 @@ version = "0.0.0"
 description = "Runnable research-agent example for mini-agent-kit (local, editable)."
 requires-python = ">=3.11"
 dependencies = [
-    "mini-agent-kit[server]",
+    "mini-agent-kit[server,mcp]",
 ]
 
 [tool.uv]

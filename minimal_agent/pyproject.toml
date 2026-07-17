@@ -1,6 +1,6 @@
 [project]
 name = "mini-agent-kit"
-version = "0.1.11"
+version = "0.1.12"
 description = "General purpose agent harness inspired by Claude Code"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,9 @@ server = [
 # feature detection advertise support that fails at conversion time.
 pdf = [
     "pdf2image>=1.17.0",
+]
+mcp = [
+    "mcp>=1.9.0",
 ]
 
 [build-system]
@@ -93,4 +96,6 @@ dev = [
     # pdf extra, so the dev env covers PDF reading/attachments end to end
     # (real conversion also needs system poppler).
     "pdf2image>=1.17.0",
+    # mcp extra, so the dev env covers the MCP tool tests (in-memory + stdio).
+    "mcp>=1.9.0",
 ]

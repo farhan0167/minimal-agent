@@ -6,8 +6,12 @@ Web search plus read-only file access — no writing, no shell. Run it with:
 
 Set your API key in the environment (or a .env file in this directory) first —
 see .env.example.
+
+MCP servers declared in `.minimal_agent/mcp.json` (the standard `mcpServers`
+format) are connected at startup and their tools handed to the agent.
 """
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -22,6 +26,7 @@ from minimal_agent.tools.builtin import (
     WebExtract,
     WebSearch,
 )
+from minimal_agent.tools.mcp import MCPToolProvider
 
 load_dotenv()
 
@@ -44,20 +49,31 @@ llm = LLM(
     reasoning_config=reasoning,
 )
 
-agent = Agent(
-    llm=llm,
-    tools=[
-        ReadFile(workspace_root=workspace, read_timestamps={}),
-        Grep(workspace_root=workspace),
-        Glob(workspace_root=workspace),
-        WebSearch(),
-        WebExtract(),
-    ],
-    prompt=behavior,
-    workspace_root=workspace,
-)
 
-app = App(agents=agent)
+async def main():
+    # from_json() reads .minimal_agent/mcp.json (e.g. a Notion server) and
+    # fails fast if it's missing; ${VAR} references in the file are expanded
+    # from the environment at load time. The provider owns the MCP server
+    # connections and must stay open for the agent's whole life, so the app
+    # is constructed and served inside the block — with the async `a_serve()`,
+    # because the blocking `app.serve()` would try to own its own event loop.
+    async with MCPToolProvider.from_json() as mcp_tools:
+        agent = Agent(
+            llm=llm,
+            tools=[
+                ReadFile(workspace_root=workspace, read_timestamps={}),
+                Grep(workspace_root=workspace),
+                Glob(workspace_root=workspace),
+                WebSearch(),
+                WebExtract(),
+                *mcp_tools,  # e.g. mcp__notionApi__* from .minimal_agent/mcp.json
+            ],
+            prompt=behavior,
+            workspace_root=workspace,
+        )
+        app = App(agents=agent)
+        await app.a_serve()
+
 
 if __name__ == "__main__":
-    app.serve()
+    asyncio.run(main())

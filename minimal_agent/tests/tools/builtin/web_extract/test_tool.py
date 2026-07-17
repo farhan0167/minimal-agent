@@ -15,7 +15,7 @@ def test_metadata():
 
 
 def test_as_llm_tool_schema():
-    wire = WebExtract.as_llm_tool()
+    wire = WebExtract().as_llm_tool()
     assert wire.name == "web_extract"
     assert "extract" in wire.description.lower()
     assert "urls" in wire.parameters["required"]
