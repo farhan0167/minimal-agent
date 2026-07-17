@@ -1,0 +1,161 @@
+/*
+ * The token contract.
+ *
+ * Every --app-* token a theme must answer, documented in one place. This file
+ * declares the contract's shape and its fallback values; a theme fills it.
+ * Nothing here is a look — these are roles. --app-hover says what a thing is
+ * *for*, never what it looks like, which is what lets a second theme be one
+ * file instead of a twenty-file diff.
+ *
+ * Two rules keep the contract honest:
+ *   1. Primitives (components/ui/) reference these tokens and never literals.
+ *   2. A theme must define every token, in both modes.
+ *
+ * Color tokens are bare HSL triplets ("40 20% 96%") so call sites can compose
+ * alpha: hsl(var(--app-bg) / 0.5). The bridge in index.css maps them to
+ * Tailwind utilities, so components read `bg-app-bg`, not `bg-[hsl(var(...))]`.
+ *
+ * Alpha-bearing tokens (--app-border, --app-hover, --app-active, --app-overlay)
+ * are the exception: they carry their own opacity ("0 0% 0% / 0.08") because
+ * their whole job is to tint whatever they sit on. They bridge as full colors.
+ */
+
+:root {
+  /* ── Ground ────────────────────────────────────────────────────────────
+     The surfaces the app is built on, back to front. */
+  --app-bg: 40 20% 96%;
+  --app-fg: 90 6% 10%;
+  --app-fg-muted: 40 2% 41%;
+  --app-surface: 0 0% 100%;
+  --app-sidebar: 40 14% 90%;
+  --app-composer: 0 0% 100%;
+
+  /* ── Interaction ───────────────────────────────────────────────────────
+     Tints and edges. These carry alpha — they modify their host. */
+  --app-hover: 0 0% 0% / 0.06;
+  --app-active: 0 0% 0% / 0.08;
+  --app-border: 0 0% 0% / 0.08;
+  --app-border-subtle: 0 0% 0% / 0.06;
+  --app-ring: 18 56% 43%;
+  /* The same edge, pre-flattened against --app-bg. Exists because some
+     consumers (assistant-ui's --aui-border) compose colors without alpha
+     and cannot read the tinted token above. */
+  --app-border-opaque: 40 8% 85%;
+
+  /* ── Accent & semantic ─────────────────────────────────────────────────
+     --app-accent-fg is not decoration: a theme with a light accent needs
+     dark text on it. Soft variants are composed via alpha at the call site. */
+  --app-accent: 18 56% 43%;
+  --app-accent-fg: 0 0% 100%;
+  --app-accent-hover: 18 56% 38%;
+  --app-accent-text: 14 67% 36%;
+  --app-danger: 0 84% 60%;
+  --app-success: 142 28% 33%;
+  --app-warning: 38 49% 36%;
+
+  /* ── Chat ──────────────────────────────────────────────────────────────
+     --app-overlay replaces the bg-black/50 literal in PreviewDialog. */
+  --app-bubble-user: 37 14% 91%;
+  --app-overlay: 0 0% 0% / 0.5;
+  --app-shadow: 0 0.25rem 1.25rem hsl(0 0% 0% / 0.04), 0 0 0 1px hsl(0 0% 0% / 0.06);
+
+  /* ── Code ──────────────────────────────────────────────────────────────
+     Consumed by both components and the assistant-ui override block. */
+  --app-code-bg: 40 14% 98%;
+  --app-code-header: 60 5% 16%;
+  --app-code-button: 50 3% 34%;
+  --app-inline-code-bg: 40 12% 89%;
+  --app-inline-code-fg: 14 67% 36%;
+
+  /* ── Terminal ──────────────────────────────────────────────────────────
+     RunShell's chrome. Dark in both modes today, but that is now a theme's
+     decision to make rather than a hardcoded zinc/emerald palette. */
+  --app-terminal-bg: 240 6% 10%;
+  --app-terminal-fg: 240 5% 96%;
+  --app-terminal-muted: 240 5% 65%;
+  --app-terminal-dim: 240 4% 46%;
+  --app-terminal-accent: 158 64% 52%;
+  --app-terminal-border: 240 4% 16%;
+
+  /* ── Typography ────────────────────────────────────────────────────────
+     --app-font-prose is the theme's voice — the serif that is currently
+     hardcoded in index.css and five component files. --app-font-ui is
+     chrome, and stays sans in every theme we expect to write. */
+  --app-font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --app-font-prose: Georgia, "Times New Roman", serif;
+  --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --app-prose-weight: 450;
+  --app-md-h1: 1.125rem;
+  --app-md-h2: 1rem;
+  --app-md-h3: 0.9375rem;
+
+  /* ── Shape ─────────────────────────────────────────────────────────────
+     --app-radius-badge is the pill-vs-square axis: the one token that makes
+     a theme structurally, not just chromatically, different. */
+  --app-radius-ctl: 0.5rem;
+  --app-radius-badge: 999px;
+  --app-radius-bubble: 1.25rem;
+  --app-radius-composer: 1.5rem;
+  --app-radius-surface: 0.75rem;
+
+  /* ── Motion ────────────────────────────────────────────────────────────
+     One duration and easing for every state change, so transition-colors and
+     transition-opacity stop being coin flips. Split into two roles because
+     CSS has no single property that takes both without also resetting
+     transition-property; the `transition-app` utility in index.css spends
+     them. --app-transition composes the pair for shorthand consumers. */
+  --app-transition-duration: 140ms;
+  --app-transition-easing: ease;
+  --app-transition: var(--app-transition-duration) var(--app-transition-easing);
+}
+
+.dark {
+  /* Ground */
+  --app-bg: 36 6% 15%;
+  --app-fg: 40 14% 93%;
+  --app-fg-muted: 36 4% 59%;
+  --app-surface: 40 7% 12%;
+  --app-sidebar: 36 5% 13%;
+  --app-composer: 40 7% 12%;
+
+  /* Interaction */
+  --app-hover: 0 0% 100% / 0.06;
+  --app-active: 0 0% 100% / 0.08;
+  --app-border: 0 0% 100% / 0.08;
+  --app-border-subtle: 0 0% 100% / 0.06;
+  --app-ring: 18 56% 43%;
+  --app-border-opaque: 40 4% 25%;
+
+  /* Accent & semantic */
+  --app-accent: 18 56% 43%;
+  --app-accent-fg: 0 0% 100%;
+  --app-accent-hover: 18 50% 50%;
+  --app-accent-text: 18 56% 55%;
+  --app-danger: 0 84% 60%;
+  --app-success: 142 24% 60%;
+  --app-warning: 38 55% 59%;
+
+  /* Chat */
+  --app-bubble-user: 40 3% 22%;
+  --app-overlay: 0 0% 0% / 0.6;
+  --app-shadow: 0 0.25rem 1.25rem hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(0 0% 100% / 0.06);
+
+  /* Code */
+  --app-code-bg: 40 5% 18%;
+  --app-code-header: 40 14% 85%;
+  --app-code-button: 36 4% 59%;
+  --app-inline-code-bg: 40 5% 20%;
+  --app-inline-code-fg: 18 56% 55%;
+
+  /* Terminal — unchanged from light: the shell reads as a shell in both. */
+  --app-terminal-bg: 240 6% 10%;
+  --app-terminal-fg: 240 5% 96%;
+  --app-terminal-muted: 240 5% 65%;
+  --app-terminal-dim: 240 4% 46%;
+  --app-terminal-accent: 158 64% 52%;
+  --app-terminal-border: 240 4% 16%;
+
+  /* Typography, Shape, Motion are mode-invariant — a theme sets them once
+     in :root. Only a theme that wants a different dark *voice* overrides
+     them here, and none does today. */
+}

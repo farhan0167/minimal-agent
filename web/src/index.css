@@ -1,115 +1,160 @@
 @import "tailwindcss";
 @import "@assistant-ui/react-ui/styles/index.css";
 @import "@assistant-ui/react-ui/styles/markdown.css";
+@import "./tokens.css";
 
 /*
- * Claude-inspired theme for assistant-ui.
- * Warm cream background, serif typography, orange-brown accent.
- * Based on: https://www.assistant-ui.com/examples/claude
+ * The Tailwind v4 bridge. Written once, never per-theme.
+ *
+ * Maps the --app-* contract in tokens.css onto Tailwind's namespaces, so call
+ * sites read `bg-app-hover rounded-ctl font-prose` instead of the
+ * `bg-[hsl(var(--claude-hover))]` arbitrary-value syntax. That makes the lint
+ * rule a trivial grep: outside components/ui/ and themes/, no bg-[hsl( at all.
+ *
+ * `inline` matters here — it resolves var() references at use site rather than
+ * copying values, so the .dark overrides in tokens.css still win.
  */
-:root {
-  /* Warm cream backgrounds */
-  --aui-background: 40 20% 96%;       /* #F5F5F0 */
-  --aui-foreground: 90 6% 10%;        /* #1a1a18 */
+@theme inline {
+  /* Ground */
+  --color-app-bg: hsl(var(--app-bg));
+  --color-app-fg: hsl(var(--app-fg));
+  --color-app-fg-muted: hsl(var(--app-fg-muted));
+  --color-app-surface: hsl(var(--app-surface));
+  --color-app-sidebar: hsl(var(--app-sidebar));
+  --color-app-composer: hsl(var(--app-composer));
 
-  --aui-card: 0 0% 100%;
-  --aui-card-foreground: 60 6% 10%;
+  /* Interaction — these tokens carry their own alpha. */
+  --color-app-hover: hsl(var(--app-hover));
+  --color-app-active: hsl(var(--app-active));
+  --color-app-border: hsl(var(--app-border));
+  --color-app-border-subtle: hsl(var(--app-border-subtle));
+  --color-app-ring: hsl(var(--app-ring));
 
-  --aui-popover: 0 0% 100%;
-  --aui-popover-foreground: 60 6% 10%;
+  /* Accent & semantic */
+  --color-app-accent: hsl(var(--app-accent));
+  --color-app-accent-fg: hsl(var(--app-accent-fg));
+  --color-app-accent-hover: hsl(var(--app-accent-hover));
+  --color-app-accent-text: hsl(var(--app-accent-text));
+  --color-app-danger: hsl(var(--app-danger));
+  --color-app-success: hsl(var(--app-success));
+  --color-app-warning: hsl(var(--app-warning));
 
-  /* Claude's signature orange-brown */
-  --aui-primary: 18 56% 43%;          /* #ae5630 */
-  --aui-primary-foreground: 0 0% 100%;
+  /* Chat */
+  --color-app-bubble-user: hsl(var(--app-bubble-user));
+  --color-app-overlay: hsl(var(--app-overlay));
 
-  /* Warm muted tones */
-  --aui-secondary: 40 10% 90%;
-  --aui-secondary-foreground: 60 6% 10%;
+  /* Code */
+  --color-app-code-bg: hsl(var(--app-code-bg));
+  --color-app-code-header: hsl(var(--app-code-header));
+  --color-app-code-button: hsl(var(--app-code-button));
+  --color-app-inline-code-bg: hsl(var(--app-inline-code-bg));
+  --color-app-inline-code-fg: hsl(var(--app-inline-code-fg));
 
-  --aui-muted: 40 10% 90%;
-  --aui-muted-foreground: 40 2% 41%;  /* #6b6a68 */
+  /* Terminal */
+  --color-app-terminal-bg: hsl(var(--app-terminal-bg));
+  --color-app-terminal-fg: hsl(var(--app-terminal-fg));
+  --color-app-terminal-muted: hsl(var(--app-terminal-muted));
+  --color-app-terminal-dim: hsl(var(--app-terminal-dim));
+  --color-app-terminal-accent: hsl(var(--app-terminal-accent));
+  --color-app-terminal-border: hsl(var(--app-terminal-border));
 
-  --aui-accent: 40 10% 90%;
-  --aui-accent-foreground: 60 6% 10%;
+  /* Shape */
+  --radius-ctl: var(--app-radius-ctl);
+  --radius-badge: var(--app-radius-badge);
+  --radius-bubble: var(--app-radius-bubble);
+  --radius-composer: var(--app-radius-composer);
+  --radius-surface: var(--app-radius-surface);
 
-  --aui-destructive: 0 84% 60%;
+  /* Typography */
+  --font-ui: var(--app-font-ui);
+  --font-prose: var(--app-font-prose);
+  --font-mono: var(--app-font-mono);
+}
+
+/*
+ * One state change, one motion. --app-transition carries both a duration and
+ * an easing ("140ms ease"), which no single Tailwind duration or ease slot
+ * accepts — so the motion role is spent here, as a utility that primitives
+ * apply by name. This is what replaces transition-colors vs transition-opacity
+ * being chosen per file.
+ */
+@utility transition-app {
+  transition-property: color, background-color, border-color, opacity,
+    box-shadow, transform;
+  /* --app-transition is "<duration> <easing>"; the shorthand below would
+     reset transition-property, so the two halves are applied separately. */
+  transition-duration: var(--app-transition-duration);
+  transition-timing-function: var(--app-transition-easing);
+}
+
+/*
+ * The assistant-ui vendor bridge.
+ *
+ * assistant-ui owns the --aui-* names, so we assign them from the same --app-*
+ * roles rather than maintaining a second palette. One source of truth, two
+ * spellings — the second imposed by a vendor.
+ *
+ * These are var() aliases, so the .dark block in tokens.css drives both
+ * families at once: redirect --app-bg and --aui-background follows. But the
+ * aliases must be repeated under `.dark` as well. assistant-ui ships its own
+ * `.dark { --aui-*: ... }` block with its stock grey palette, and a bare
+ * `:root` alias (specificity 0,0,1) loses to it (0,1,0) — dark mode would
+ * silently render in the vendor's greys. Same values, stated at both
+ * specificities, so ours wins in both modes.
+ */
+:root,
+.dark {
+  --aui-background: var(--app-bg);
+  --aui-foreground: var(--app-fg);
+
+  --aui-card: var(--app-surface);
+  --aui-card-foreground: var(--app-fg);
+
+  --aui-popover: var(--app-surface);
+  --aui-popover-foreground: var(--app-fg);
+
+  --aui-primary: var(--app-accent);
+  --aui-primary-foreground: var(--app-accent-fg);
+
+  --aui-secondary: var(--app-sidebar);
+  --aui-secondary-foreground: var(--app-fg);
+
+  --aui-muted: var(--app-sidebar);
+  --aui-muted-foreground: var(--app-fg-muted);
+
+  --aui-accent: var(--app-sidebar);
+  --aui-accent-foreground: var(--app-fg);
+
+  --aui-destructive: var(--app-danger);
   --aui-destructive-foreground: 0 0% 98%;
 
-  --aui-border: 40 8% 85%;
-  --aui-input: 40 8% 85%;
-  --aui-ring: 18 56% 43%;             /* matches primary */
-
-  --aui-radius: 0.75rem;
-
+  --aui-ring: var(--app-ring);
+  --aui-radius: var(--app-radius-surface);
   --aui-thread-max-width: 50rem;
 
-  /* Extended Claude palette tokens */
-  --claude-sidebar: 40 14% 90%;       /* #eae8e1 */
-  --claude-user-bubble: 37 14% 91%;   /* #E9E6DF */
-  --claude-composer: 0 0% 100%;       /* white */
-  --claude-code-bg: 40 14% 98%;       /* #e8e5db — subtly darker than page */
-  --claude-code-header: 60 5% 16%;    /* #2d2d2a */
-  --claude-code-button: 50 3% 34%;    /* #5a5955 */
-  --claude-inline-code-bg: 40 12% 89%; /* #e8e6df */
-  --claude-inline-code-text: 14 67% 36%; /* #953a21 */
-  --claude-primary-hover: 18 56% 38%; /* #9a4a29 */
-  --claude-border: 0 0% 0% / 0.08;
-  --claude-border-subtle: 0 0% 0% / 0.06;
-  --claude-hover: 0 0% 0% / 0.06;
-  --claude-active: 0 0% 0% / 0.08;
-  --claude-shadow: 0 0.25rem 1.25rem hsl(0 0% 0% / 0.04), 0 0 0 1px hsl(0 0% 0% / 0.06);
+  /* assistant-ui composes these without alpha, so they cannot read the
+     alpha-bearing --app-border. They get their own opaque contract token. */
+  --aui-border: var(--app-border-opaque);
+  --aui-input: var(--app-border-opaque);
 }
 
-.dark {
-  --aui-background: 36 6% 15%;        /* #2b2a27 */
-  --aui-foreground: 40 14% 93%;       /* #eee */
+/* ═══════════════════════════════════════════════════════════════════════
+ * assistant-ui structural overrides — QUARANTINED.
+ *
+ * The assistant's own prose (markdown, headings, code blocks in the thread)
+ * is rendered by assistant-ui internals, not by our components, so primitives
+ * cannot reach it. It is themed anyway: every rule below reads the --app-*
+ * contract, same as a primitive would. Same contract, different consumer.
+ *
+ * This block is the only place in the app allowed to style what it does not
+ * own, and it pins assistant-ui 0.12 — these class names are vendor internals
+ * and may move on upgrade. Nothing outside this block may target .aui-*.
+ * ═══════════════════════════════════════════════════════════════════════ */
 
-  --aui-card: 40 7% 12%;              /* #1f1e1b */
-  --aui-card-foreground: 40 14% 93%;
-
-  --aui-popover: 40 7% 12%;
-  --aui-popover-foreground: 40 14% 93%;
-
-  --aui-primary: 18 56% 43%;          /* #ae5630 — same in dark */
-  --aui-primary-foreground: 0 0% 100%;
-
-  --aui-secondary: 40 4% 22%;
-  --aui-secondary-foreground: 40 14% 93%;
-
-  --aui-muted: 40 4% 22%;
-  --aui-muted-foreground: 36 4% 59%;  /* #9a9893 */
-
-  --aui-accent: 40 4% 22%;
-  --aui-accent-foreground: 40 14% 93%;
-
-  --aui-destructive: 0 84% 60%;
-  --aui-destructive-foreground: 0 0% 98%;
-
-  --aui-border: 40 4% 25%;
-  --aui-input: 40 4% 25%;
-  --aui-ring: 18 56% 43%;
-
-  /* Extended dark tokens */
-  --claude-sidebar: 36 5% 13%;        /* darker than bg */
-  --claude-user-bubble: 40 3% 22%;    /* #393937 */
-  --claude-composer: 40 7% 12%;       /* #1f1e1b */
-  --claude-code-bg: 40 5% 18%;
-  --claude-code-header: 40 14% 85%;
-  --claude-code-button: 36 4% 59%;
-  --claude-inline-code-bg: 40 5% 20%;
-  --claude-inline-code-text: 18 56% 55%;
-  --claude-primary-hover: 18 50% 50%;
-  --claude-border: 0 0% 100% / 0.08;
-  --claude-border-subtle: 0 0% 100% / 0.06;
-  --claude-hover: 0 0% 100% / 0.06;
-  --claude-active: 0 0% 100% / 0.08;
-  --claude-shadow: 0 0.25rem 1.25rem hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(0 0% 100% / 0.06);
-}
-
-/* Serif font for the chat area (Claude's signature look) */
+/* The chat area speaks in the theme's prose voice. */
 .aui-thread-root {
-  font-family: Georgia, "Times New Roman", serif;
-  font-weight: 450;
+  font-family: var(--app-font-prose);
+  font-weight: var(--app-prose-weight);
   background-color: hsl(var(--aui-background));
   -webkit-font-smoothing: antialiased;
 }
@@ -122,14 +167,14 @@
 }
 
 /* Markdown content — match Claude's tight, readable spacing */
-.aui-md h1 { font-size: 1.125rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.375rem; }
-.aui-md h2 { font-size: 1rem; font-weight: 700; margin-top: 0.75rem; margin-bottom: 0.25rem; }
-.aui-md h3 { font-size: 0.9375rem; font-weight: 700; margin-top: 0.625rem; margin-bottom: 0.25rem; }
+.aui-md h1 { font-size: var(--app-md-h1); font-weight: 700; margin-top: 1rem; margin-bottom: 0.375rem; }
+.aui-md h2 { font-size: var(--app-md-h2); font-weight: 700; margin-top: 0.75rem; margin-bottom: 0.25rem; }
+.aui-md h3 { font-size: var(--app-md-h3); font-weight: 700; margin-top: 0.625rem; margin-bottom: 0.25rem; }
 .aui-md p { margin-top: 0.25rem; margin-bottom: 0.25rem; }
 .aui-md ul, .aui-md ol { margin-top: 0.125rem; margin-bottom: 0.125rem; padding-left: 1.25rem; }
 .aui-md li { margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; line-height: 1.5; }
 .aui-md li p { margin: 0; }
-.aui-md hr { margin-top: 0.625rem; margin-bottom: 0.625rem; border-color: hsl(var(--claude-border)); }
+.aui-md hr { margin-top: 0.625rem; margin-bottom: 0.625rem; border-color: hsl(var(--app-border)); }
 /* Code blocks — warm off-white with visible contrast against page.
    Long blocks scroll internally (the header bar above stays put) instead of
    stretching the message and hijacking the chat scroll. */
@@ -137,8 +182,8 @@
   font-size: 0.8rem;
   margin-top: 0.375rem;
   margin-bottom: 0.375rem;
-  background-color: hsl(var(--claude-code-bg)) !important;
-  border: 1px solid hsl(var(--claude-border));
+  background-color: hsl(var(--app-code-bg)) !important;
+  border: 1px solid hsl(var(--app-border));
   max-height: min(26rem, 60vh);
   overflow-y: auto;
 }
@@ -148,27 +193,27 @@
 }
 /* Code header (language label bar) */
 .aui-code-header-root {
-  background-color: hsl(var(--claude-code-bg)) !important;
-  color: hsl(var(--claude-code-header)) !important;
+  background-color: hsl(var(--app-code-bg)) !important;
+  color: hsl(var(--app-code-header)) !important;
   border-bottom: none !important;
 }
 .aui-code-header-root button {
-  color: hsl(var(--claude-code-button)) !important;
+  color: hsl(var(--app-code-button)) !important;
 }
 /* Inline code — warm tinted background, matching text color */
 .aui-md-inline-code {
   font-size: 0.8rem;
-  background-color: hsl(var(--claude-inline-code-bg)) !important;
-  color: hsl(var(--claude-inline-code-text)) !important;
+  background-color: hsl(var(--app-inline-code-bg)) !important;
+  color: hsl(var(--app-inline-code-fg)) !important;
   padding: 0.15em 0.4em;
   border-radius: 0.25rem;
-  border: 1px solid hsl(var(--claude-border)) !important;
+  border: 1px solid hsl(var(--app-border)) !important;
   font-weight: 500 !important;
 }
 /* Shiki code body — same background as header */
 .shiki-wrapper {
-  background-color: hsl(var(--claude-code-bg));
-  border-radius: 0 0 var(--aui-radius) var(--aui-radius);
+  background-color: hsl(var(--app-code-bg));
+  border-radius: 0 0 var(--app-radius-surface) var(--app-radius-surface);
   max-height: min(26rem, 60vh);
   overflow-y: auto;
 }
@@ -193,16 +238,16 @@
 .aui-md table { font-size: 0.875rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; }
 .aui-md th, .aui-md td { padding: 0.5rem 0.5rem; }
 .aui-md th { font-weight: 600; }
-.aui-md tr { border-bottom: 1px solid hsl(var(--claude-border-subtle)); }
-.aui-md thead tr { border-bottom: 1px solid hsl(var(--claude-border)); }
+.aui-md tr { border-bottom: 1px solid hsl(var(--app-border-subtle)); }
+.aui-md thead tr { border-bottom: 1px solid hsl(var(--app-border)); }
 .aui-md strong { font-weight: 700; }
 
 /* User messages — right-aligned within the centered content column */
 .aui-user-message-content {
-  background-color: hsl(var(--claude-user-bubble));
+  background-color: hsl(var(--app-bubble-user));
   color: hsl(var(--aui-foreground));
   padding: 1rem 1.25rem;
-  border-radius: 1.25rem;
+  border-radius: var(--app-radius-bubble);
 }
 
 /* Remove assistant avatar circle */
@@ -221,17 +266,17 @@
 
 /* Composer — match Claude's centered rounded input */
 .aui-composer-root {
-  background-color: hsl(var(--claude-composer));
-  box-shadow: var(--claude-shadow);
+  background-color: hsl(var(--app-composer));
+  box-shadow: var(--app-shadow);
   border: none;
-  border-radius: 1.5rem;
+  border-radius: var(--app-radius-composer);
   padding: 0.25rem;
   align-items: flex-end;
 }
 
 /* Input takes full width — forces its own row above the buttons */
 .aui-composer-input {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--app-font-prose);
   font-size: 1rem;
   padding: 1.25rem 1.5rem;
   min-height: 2.5rem;
@@ -248,19 +293,19 @@
 /* Send button — Claude's rounded orange, bottom-right */
 .aui-composer-send {
   background-color: hsl(var(--aui-primary));
-  border-radius: 0.75rem;
+  border-radius: var(--app-radius-ctl);
   margin-bottom: 0.5rem;
   margin-left: auto;
   margin-right: 0.75rem;
 }
 .aui-composer-send:hover {
-  background-color: hsl(var(--claude-primary-hover));
+  background-color: hsl(var(--app-accent-hover));
 }
 
 /* Cancel button — same position as send */
 .aui-composer-cancel {
   background-color: hsl(var(--aui-primary));
-  border-radius: 0.75rem;
+  border-radius: var(--app-radius-ctl);
   margin-bottom: 0.5rem;
   margin-left: auto;
   margin-right: 0.75rem;
