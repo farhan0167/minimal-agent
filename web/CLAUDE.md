@@ -30,7 +30,18 @@ This is a React + TypeScript chat frontend for the `minimal-agent` project. It u
 
 ### Styling
 
-Tailwind CSS v4 via `@tailwindcss/vite` plugin. No separate Tailwind config file — uses CSS-based configuration in `index.css`. The app uses a warm off-white palette (`#f5f5f0` background, `#1a1a18` text, `#ae5630` accent).
+Tailwind CSS v4 via `@tailwindcss/vite` plugin — no separate config file; CSS-based configuration lives in `index.css`.
+
+Styling is a four-floor system, each floor reaching only one floor down:
+
+- **features** (`components/chat · session · layout · tools`) compose primitives and pass props — **no** color/shape/font classes, no hex.
+- **primitives** (`components/ui/`) are the only place raw Tailwind utilities touch tokens; each decides what a widget *is* (padding, radius, focus ring) once.
+- **tokens** — `tokens.css` names every `--app-*` role (no values), and `index.css`'s `@theme` bridge exposes them as utilities (`bg-app-surface`, `rounded-ctl`, `font-prose`).
+- **themes** (`themes/*.css` + `*.ts`) hold the actual values, filling every token for light and dark. Identity (`data-theme`) and mode (`.dark`) are independent axes on `<html>`.
+
+`npm run check:tokens` fails the build on raw hex, Tailwind palette classes, `bg-[hsl(var(…))]`, or `font-serif` outside `components/ui/` and `themes/`.
+
+To add a theme or a primitive, read **[docs/design-system.md](docs/design-system.md)** — it is the maintainer's guide to this system.
 
 ### SSE message flow
 
