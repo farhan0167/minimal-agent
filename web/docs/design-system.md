@@ -145,8 +145,30 @@ last is what the "unstyled at that role" design is meant to make obvious.
 
 ## Writing a new theme
 
-A theme is **one CSS file + one manifest + one registry line**. Nothing above
-the themes floor changes. Concretely, to add a theme called `midnight`:
+Before filling values, decide what the theme *is* structurally. The contract's
+non-color axes — shape (`--app-radius-badge`, pill vs square), the prose and
+label voices, the canvas texture — are where a theme's identity actually lives;
+a theme that only re-answers the color roles reads as a recolor of whichever
+theme it copied. Blueprint is the worked example: its look is the label voice
+answered as uppercase tracked mono, white cards on a gray ground, and a
+dot-grid texture — the palette itself is nearly achromatic, and the first
+draft, which *was* only a palette, looked like nothing at all.
+
+Two consequences:
+
+- **If the aesthetic needs something the contract can't say, extend the
+  contract** (the three-file change above) — and give the new role a *neutral
+  answer* (`none`, `normal`, the UI face) so every existing theme fills it
+  without changing appearance. `--app-canvas-texture` and the label voice
+  both entered this way.
+- **A face the theme depends on is an asset, not a hope.** Bundle it
+  (`@fontsource-variable/*`) and import it in `themes/index.ts` beside the
+  theme that names it; a font stack that merely prefers an uninstalled face
+  renders as whatever the OS substitutes.
+
+Mechanically, a theme is **one CSS file + one manifest + one registry line**.
+Nothing above the themes floor changes. Concretely, to add a theme called
+`midnight`:
 
 ### 1. `themes/midnight.css` — fill the contract, both modes
 
@@ -223,6 +245,13 @@ Run `npm run check:tokens && npm run build`. Then flip to the theme in both
 light and dark and look for anything that didn't change — an un-themed corner is
 a leaked literal or a token your css missed. Treat your new theme as its own
 acceptance test.
+
+Then look at it rendered, not imagined: screenshot a real session — tool cards
+expanded, code blocks, the composer — in both modes, and compare against the
+reference aesthetic you are chasing, not against your memory of it. If the
+change touched primitives or chrome rather than only theme files, screenshot
+the other themes too: a new role with a neutral answer should leave them
+pixel-identical, and the screenshot is what proves it.
 
 That's the entire change. You did not open a single file in `components/`.
 
