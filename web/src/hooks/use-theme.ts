@@ -15,7 +15,7 @@ export type Mode = "light" | "dark";
 /**
  * Theme identity and mode: two independent axes.
  *
- * `theme` is which palette (claude, graphite…); `mode` is light or dark within
+ * `theme` is which palette (claude, blueprint…); `mode` is light or dark within
  * it. They persist separately because they answer different questions —
  * switching theme should not reset your light/dark choice, and vice versa.
  *

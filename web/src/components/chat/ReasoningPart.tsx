@@ -39,7 +39,7 @@ export function ReasoningPart({ text, status }: ReasoningMessagePartProps) {
       summary={(open) => (
         <>
           <span
-            className={`text-xs ${isThinking ? "motion-safe:animate-pulse" : ""}`}
+            className={`chat-reasoning-label text-xs ${isThinking ? "motion-safe:animate-pulse" : ""}`}
           >
             {isThinking ? "Thinking…" : "Reasoning"}
           </span>

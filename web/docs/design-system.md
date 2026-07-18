@@ -48,8 +48,8 @@ src/
     index.ts              the registry; import a theme's css + manifest here to register it
     claude.css            values for the claude theme, light + dark
     claude.ts             claude's manifest (Shiki + Mermaid companions)
-    graphite.css          values for graphite (the acceptance-test theme)
-    graphite.ts           graphite's manifest
+    blueprint.css         values for blueprint (the technical-minimal theme)
+    blueprint.ts          blueprint's manifest
   hooks/
     use-theme.ts          owns {theme, mode}; stamps <html>; persists both
     use-theme-tokens.ts   reads {theme, mode} from the DOM, for consumers that can't read --app-*
@@ -61,7 +61,7 @@ Two axes are always independent: **identity** (`data-theme="claude"`) and
 resets your light/dark choice, and vice versa.
 
 ```html
-<html data-theme="graphite" class="dark">
+<html data-theme="blueprint" class="dark">
 ```
 
 ---
@@ -83,10 +83,10 @@ for the authoritative, commented list; the groups are:
 | **Ground** | page, text, muted text, surface, sidebar, composer backgrounds |
 | **Interaction** | hover, active, border, subtle border, focus ring |
 | **Accent & semantic** | accent + its foreground/hover/text, danger, success, warning |
-| **Chat** | user bubble, modal overlay, shadow |
+| **Chat** | user bubble, modal overlay, shadow, empty-state canvas texture |
 | **Code** | code block bg/header/button, inline code bg/fg |
 | **Terminal** | the RunShell palette (bg, fg, muted, dim, accent, border) |
-| **Typography** | ui/prose/mono font, prose weight, markdown heading sizes |
+| **Typography** | ui/prose/mono font, prose weight, markdown heading sizes; the micro-label voice (label font + case + tracking) |
 | **Shape** | control/badge/bubble/composer/surface radii |
 | **Motion** | one transition (duration + easing) |
 
@@ -173,7 +173,7 @@ the mode on top:
 }
 ```
 
-**`--app-accent-fg` is not decoration.** A theme with a light accent (graphite's
+**`--app-accent-fg` is not decoration.** A theme with a light accent (blueprint's
 near-white button in dark mode) needs *dark* text on it. That token is the whole
 reason a button stays legible when the accent inverts. If you skip it, a light
 accent gets light text and vanishes.
@@ -209,7 +209,7 @@ import "./midnight.css";
 
 export const THEMES: Record<string, ThemeManifest> = {
   [claude.id]: claude,
-  [graphite.id]: graphite,
+  [blueprint.id]: blueprint,
   [midnight.id]: midnight,
 };
 ```
@@ -221,8 +221,8 @@ half-registered — the file that names it is the file that loads it.
 
 Run `npm run check:tokens && npm run build`. Then flip to the theme in both
 light and dark and look for anything that didn't change — an un-themed corner is
-a leaked literal or a token your css missed. This is exactly what graphite was
-built to surface; treat your new theme as its own acceptance test.
+a leaked literal or a token your css missed. Treat your new theme as its own
+acceptance test.
 
 That's the entire change. You did not open a single file in `components/`.
 

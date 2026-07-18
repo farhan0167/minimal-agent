@@ -46,7 +46,7 @@ export function Switch({
         className={
           // rounded-full, not rounded-badge: a toggle track is round by
           // nature. --app-radius-badge is the pill-vs-square *tag* axis (it
-          // squares off Badge in the graphite theme) — a switch does not
+          // squares off Badge in the blueprint theme) — a switch does not
           // belong to that axis, so it opts out with a shape constant.
           "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full " +
           "transition-app focus-visible:outline-none focus-visible:ring-2 " +

@@ -13,6 +13,8 @@
   "dependencies": {
     "@assistant-ui/react": "^0.14.27",
     "@assistant-ui/react-markdown": "^0.14.6",
+    "@fontsource-variable/geist": "^5.2.9",
+    "@fontsource-variable/geist-mono": "^5.2.8",
     "@tailwindcss/vite": "^4.2.2",
     "assistant-stream": "^0.3.25",
     "diff": "^9.0.0",

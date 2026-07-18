@@ -1,6 +1,6 @@
 import type { ThemeManifest } from "./types";
+import { blueprint } from "./blueprint";
 import { claude } from "./claude";
-import { graphite } from "./graphite";
 
 /**
  * The theme registry.
@@ -12,12 +12,18 @@ import { graphite } from "./graphite";
  * The CSS is imported here rather than in index.css so a theme is never
  * half-registered: the file that names it is the file that loads it.
  */
+// Blueprint's faces, bundled so the theme doesn't depend on what the OS has
+// installed. Loaded here beside the theme that names them — same reasoning as
+// the CSS imports below: the file that registers a theme loads its assets.
+import "@fontsource-variable/geist/index.css";
+import "@fontsource-variable/geist-mono/index.css";
+
+import "./blueprint.css";
 import "./claude.css";
-import "./graphite.css";
 
 export const THEMES: Record<string, ThemeManifest> = {
   [claude.id]: claude,
-  [graphite.id]: graphite,
+  [blueprint.id]: blueprint,
 };
 
 /** The theme a first-time visitor gets, and the fallback for an unknown id. */

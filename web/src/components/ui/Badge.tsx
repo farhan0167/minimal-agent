@@ -28,9 +28,12 @@ interface BadgeProps {
   className?: string;
 }
 
+// font-label + label-voice: badges speak in the theme's micro-label voice —
+// most themes answer it as their UI sans; a technical theme answers uppercase
+// tracked mono, and every badge becomes a drafting eyebrow at once.
 const BASE =
   "inline-flex items-center gap-1 shrink-0 py-0.5 " +
-  "font-medium rounded-badge border";
+  "font-label label-voice font-medium rounded-badge border";
 
 const SIZES: Record<BadgeSize, string> = {
   sm: "px-1.5 text-[10px]",

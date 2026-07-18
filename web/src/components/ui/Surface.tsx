@@ -16,7 +16,6 @@ import type { ReactNode } from "react";
 
 export type SurfaceVariant =
   | "card"
-  | "outline"
   | "panel"
   | "bubble"
   | "composer"
@@ -31,11 +30,6 @@ interface SurfaceProps {
 
 const VARIANTS: Record<SurfaceVariant, string> = {
   card: "bg-app-surface border border-app-border rounded-surface overflow-hidden",
-  // A bordered box that lets the page through: its ground comes from whatever
-  // it wraps (a tool card's tinted header bar), not from a fill of its own.
-  // Distinct from `card` because --app-surface is pure white in the claude
-  // theme — filling it flattens the very tint that gives the box its shape.
-  outline: "border border-app-border rounded-surface overflow-hidden",
   panel: "bg-app-bg border border-app-border rounded-surface shadow-(--app-shadow)",
   bubble: "bg-app-bubble-user rounded-bubble",
   composer: "bg-app-composer border border-app-border rounded-composer",

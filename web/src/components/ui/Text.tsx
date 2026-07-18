@@ -32,10 +32,12 @@ interface TextProps extends Omit<HTMLAttributes<HTMLElement>, "color"> {
 }
 
 const VARIANTS: Record<TextVariant, string> = {
-  // The theme's voice: serif in claude, sans in graphite. Weight travels with
+  // The theme's voice: serif in claude, sans in blueprint. Weight travels with
   // the face because a 450 serif and a 450 sans are not the same colour of grey.
   prose: "font-prose font-(--app-prose-weight) text-app-fg",
-  label: "font-ui text-xs font-medium text-app-fg",
+  // Labels speak in the micro-label voice (font-label + case/tracking), so a
+  // technical theme can turn them into uppercase mono eyebrows in one token.
+  label: "font-label label-voice text-xs font-medium text-app-fg",
   caption: "font-ui text-xs text-app-fg-muted",
   code: "font-mono text-xs text-app-fg-muted",
 };

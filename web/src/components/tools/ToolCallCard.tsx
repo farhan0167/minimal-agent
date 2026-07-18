@@ -32,11 +32,14 @@ export function ToolCallCard({
   children,
 }: ToolCallCardProps) {
   return (
-    <Surface variant="outline" className="my-2">
+    <Surface variant="card" className="my-2">
       <Disclosure
         summary={
           <>
-            <span className="font-mono text-sm font-medium shrink-0 text-app-fg">
+            {/* label-voice, mono kept: a tool name is a code identifier, so it
+                stays mono in every theme; the voice only adds a technical
+                theme's case + tracking. */}
+            <span className="label-voice font-mono text-xs font-medium shrink-0 text-app-fg">
               {name}
             </span>
             {subtitle && (

@@ -77,12 +77,15 @@ export function NewSessionDialog({ onCreate }: NewSessionDialogProps) {
 
   return (
     <>
+      {/* The sidebar's one real call to action wears the accent: ink in
+          blueprint, terracotta in claude. (The old ghost + color-override
+          spelling was also a floor violation — className recoloring a
+          primitive.) */}
       <Button
-        variant="ghost"
+        variant="primary"
         block
         onClick={handleButtonClick}
         disabled={isCreating}
-        className="px-3 py-2 text-sm bg-app-composer border border-app-border text-app-fg"
       >
         <Plus className="w-4 h-4" />
         {isCreating && !isOpen ? "Creating..." : "New Session"}

@@ -73,6 +73,7 @@
   --font-ui: var(--app-font-ui);
   --font-prose: var(--app-font-prose);
   --font-mono: var(--app-font-mono);
+  --font-label: var(--app-font-label);
 }
 
 /*
@@ -89,6 +90,15 @@
      reset transition-property, so the two halves are applied separately. */
   transition-duration: var(--app-transition-duration);
   transition-timing-function: var(--app-transition-easing);
+}
+
+/* The micro-label voice's case + tracking, spent together for the same reason
+   as transition-app: neither fits a @theme slot, and a label that uppercases
+   without tracking (or vice versa) is a look nobody chose. The face itself
+   rides the font-label bridge slot; a call site says `font-label label-voice`. */
+@utility label-voice {
+  text-transform: var(--app-label-case);
+  letter-spacing: var(--app-label-tracking);
 }
 
 /* Native <option> lists render in an OS popup that ignores page CSS and a
@@ -121,6 +131,26 @@ select option {
   font-weight: var(--app-prose-weight);
   color: hsl(var(--app-fg));
   -webkit-font-smoothing: antialiased;
+  /* The drafting sheet needs a positioned, isolated host so its z-index:-1
+     layer stays behind the messages but above this element's own ground. */
+  position: relative;
+  isolation: isolate;
+}
+
+/* The thread's drafting sheet: the theme's canvas texture painted on the
+   non-scrolling shell (so messages scroll over a fixed sheet), strongest at
+   the center and fading toward the edges. The mask is structural — the same
+   in every theme — while the texture itself is the themed part; themes that
+   answer `none` paint nothing here. */
+.chat-thread::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--app-canvas-texture);
+  background-size: var(--app-canvas-texture-size);
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 45%, black 35%, transparent 100%);
 }
 
 /* Assistant answer — reading rhythm. (Reasoning traces deliberately inherit
@@ -150,6 +180,24 @@ select option {
 }
 .chat-user-attachments:not(:last-child) {
   margin-bottom: 0.5rem;
+}
+
+/* Reasoning disclosure label — the one micro-label that can't go through the
+   Text primitive: it must inherit the trigger's muted→fg hover color, and a
+   Text variant carries its own. The voice's face/case/tracking apply here on
+   a first-party class instead. */
+.chat-reasoning-label {
+  font-family: var(--app-font-label);
+  text-transform: var(--app-label-case);
+  letter-spacing: var(--app-label-tracking);
+}
+
+/* Welcome canvas — the empty state's ground texture. Painted here, not in
+   the feature, so a theme can answer with a dot grid (blueprint) or nothing
+   at all (claude) without WelcomeScreen knowing themes exist. */
+.chat-welcome {
+  background-image: var(--app-canvas-texture);
+  background-size: var(--app-canvas-texture-size);
 }
 
 /* Composer frame — the floating centered input: ground + shadow, no border;

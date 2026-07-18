@@ -40,6 +40,11 @@
  *
  * ── Chat ───────────────────────────────────────────────────────────────────
  *   --app-bubble-user --app-overlay --app-shadow
+ *   --app-canvas-texture --app-canvas-texture-size
+ *   The empty-state canvas: a background-image (and its tile size) painted
+ *   behind the welcome screen. Most themes answer `none` / `auto`; a theme
+ *   with a drafting-table identity answers a dot grid. Two tokens because a
+ *   background shorthand would clobber the ground color under it.
  *
  * ── Code ───────────────────────────────────────────────────────────────────
  *   --app-code-bg --app-code-header --app-code-button
@@ -54,6 +59,14 @@
  *   --app-md-h1 --app-md-h2 --app-md-h3
  *   --app-font-prose is the theme's voice; --app-font-ui is chrome, and stays
  *   sans in every theme we expect to write.
+ *
+ *   --app-font-label --app-label-case --app-label-tracking
+ *   The micro-label voice: badges, section labels, tool-card names — the
+ *   metadata register. Most themes answer with their UI face, `none`, and
+ *   `normal`; a technical theme answers mono, `uppercase`, and tracking, which
+ *   turns every label into a drafting-style eyebrow without any component
+ *   knowing. Spent via the `font-label` bridge slot and the `label-voice`
+ *   utility (case + tracking travel together; a slot can't hold either).
  *
  * ── Shape ──────────────────────────────────────────────────────────────────
  *   --app-radius-ctl --app-radius-badge --app-radius-bubble
