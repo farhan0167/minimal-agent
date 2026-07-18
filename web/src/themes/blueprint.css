@@ -1,0 +1,145 @@
+/*
+ * The blueprint theme — values.
+ *
+ * Technical minimalism in the Vercel/Geist lineage, with a whisper of the
+ * drafting table. The composition, not the palette, is the identity: white
+ * cards lifted off a gray page by a hairline ring and a 1px of shadow, and —
+ * the load-bearing move — the micro-label voice answered as uppercase tracked
+ * mono, which turns every badge, section label, and tool name into a
+ * drafting-style eyebrow. The accent is true ink: black on white, inverting
+ * to white on near-black in dark mode.
+ *
+ * The faces are real Geist (bundled via @fontsource-variable, imported next
+ * to this file in the registry), not a stack that hopes it's installed.
+ *
+ * The one literal motif is the canvas texture: a dot grid behind the empty
+ * state — construction lines on an otherwise blank sheet. It is the token the
+ * role was added for; every other theme answers it `none`.
+ *
+ * Same shape as claude.css: a light block and a .dark block, both (0,1,1),
+ * dark following light so source order settles the tie within a mode.
+ */
+
+[data-theme="blueprint"] {
+  /* ── Ground — a gray sheet; the surfaces are the white things on it. ───── */
+  --app-bg: 0 0% 98%;
+  --app-fg: 0 0% 9%;
+  --app-fg-muted: 0 0% 42%;
+  --app-surface: 0 0% 100%;
+  --app-sidebar: 0 0% 98%;
+  --app-composer: 0 0% 100%;
+
+  /* ── Interaction — hairlines do the structural work; fills stay quiet. ─── */
+  --app-hover: 0 0% 0% / 0.04;
+  --app-active: 0 0% 0% / 0.07;
+  --app-border: 0 0% 0% / 0.08;
+  --app-border-subtle: 0 0% 0% / 0.05;
+  --app-ring: 0 0% 9%;
+  --app-border-opaque: 0 0% 89%;
+
+  /* ── Accent & semantic — ink; the Geist status hues carry the only chroma. */
+  --app-accent: 0 0% 9%;
+  --app-accent-fg: 0 0% 100%;
+  --app-accent-hover: 0 0% 22%;
+  --app-accent-text: 0 0% 9%;
+  --app-danger: 358 66% 48%;
+  --app-success: 131 41% 33%;
+  --app-warning: 36 100% 30%;
+
+  /* ── Chat — a ring plus 1px of drop: cards sit just proud of the sheet. ── */
+  --app-bubble-user: 0 0% 93%;
+  --app-overlay: 0 0% 0% / 0.4;
+  --app-shadow: 0 1px 2px hsl(0 0% 0% / 0.05), 0 0 0 1px hsl(0 0% 0% / 0.08);
+  --app-canvas-texture: radial-gradient(hsl(0 0% 0% / 0.13) 1px, transparent 1px);
+  --app-canvas-texture-size: 16px 16px;
+
+  /* ── Code ────────────────────────────────────────────────────────────── */
+  --app-code-bg: 0 0% 97%;
+  --app-code-header: 0 0% 9%;
+  --app-code-button: 0 0% 40%;
+  --app-inline-code-bg: 0 0% 94%;
+  --app-inline-code-fg: 0 0% 9%;
+
+  /* ── Terminal — true black: darker than even dark mode's ground. ──────── */
+  --app-terminal-bg: 0 0% 4%;
+  --app-terminal-fg: 0 0% 93%;
+  --app-terminal-muted: 0 0% 63%;
+  --app-terminal-dim: 0 0% 45%;
+  --app-terminal-accent: 158 64% 52%;
+  --app-terminal-border: 0 0% 15%;
+
+  /* ── Typography — bundled Geist; the label voice is the theme's signature:
+     uppercase tracked mono turns metadata into drafting eyebrows. ───────── */
+  --app-font-ui: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --app-font-prose: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --app-font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --app-font-label: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --app-label-case: uppercase;
+  --app-label-tracking: 0.05em;
+  --app-prose-weight: 400;
+  --app-md-h1: 1.125rem;
+  --app-md-h2: 1rem;
+  --app-md-h3: 0.9375rem;
+
+  /* ── Shape — Geist's actual register: crisp but not squared-off. ──────── */
+  --app-radius-ctl: 0.375rem;
+  --app-radius-badge: 0.25rem;
+  --app-radius-bubble: 0.75rem;
+  --app-radius-composer: 0.75rem;
+  --app-radius-surface: 0.5rem;
+
+  /* ── Motion — quick and matter-of-fact. ──────────────────────────────── */
+  --app-transition-duration: 120ms;
+  --app-transition-easing: ease;
+  --app-transition: var(--app-transition-duration) var(--app-transition-easing);
+}
+
+[data-theme="blueprint"].dark {
+  /* Ground — Vercel dark: near-black sheet, #141414-class cards. */
+  --app-bg: 0 0% 4%;
+  --app-fg: 0 0% 93%;
+  --app-fg-muted: 0 0% 63%;
+  --app-surface: 0 0% 8%;
+  --app-sidebar: 0 0% 4%;
+  --app-composer: 0 0% 8%;
+
+  /* Interaction */
+  --app-hover: 0 0% 100% / 0.06;
+  --app-active: 0 0% 100% / 0.09;
+  --app-border: 0 0% 100% / 0.10;
+  --app-border-subtle: 0 0% 100% / 0.06;
+  --app-ring: 0 0% 93%;
+  --app-border-opaque: 0 0% 16%;
+
+  /* Accent & semantic — the ink inverts: near-white ground, dark label. */
+  --app-accent: 0 0% 93%;
+  --app-accent-fg: 0 0% 4%;
+  --app-accent-hover: 0 0% 100%;
+  --app-accent-text: 0 0% 93%;
+  --app-danger: 358 100% 69%;
+  --app-success: 131 41% 57%;
+  --app-warning: 39 90% 55%;
+
+  /* Chat — the ring brightens; the dot grid flips to white ink. */
+  --app-bubble-user: 0 0% 13%;
+  --app-overlay: 0 0% 0% / 0.6;
+  --app-shadow: 0 1px 2px hsl(0 0% 0% / 0.5), 0 0 0 1px hsl(0 0% 100% / 0.10);
+  --app-canvas-texture: radial-gradient(hsl(0 0% 100% / 0.14) 1px, transparent 1px);
+
+  /* Code */
+  --app-code-bg: 0 0% 11%;
+  --app-code-header: 0 0% 85%;
+  --app-code-button: 0 0% 60%;
+  --app-inline-code-bg: 0 0% 14%;
+  --app-inline-code-fg: 0 0% 93%;
+
+  /* Terminal — unchanged from light: the shell reads as a shell in both. */
+  --app-terminal-bg: 0 0% 4%;
+  --app-terminal-fg: 0 0% 93%;
+  --app-terminal-muted: 0 0% 63%;
+  --app-terminal-dim: 0 0% 45%;
+  --app-terminal-accent: 158 64% 52%;
+  --app-terminal-border: 0 0% 15%;
+
+  /* Typography, Shape and Motion are mode-invariant. */
+}

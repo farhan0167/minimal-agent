@@ -53,7 +53,7 @@ export function ToolCallRenderer({
               src={src}
               alt={`tool result ${i + 1}`}
               loading="lazy"
-              className="max-w-full max-h-64 rounded-lg border border-[hsl(var(--claude-border))]"
+              className="max-w-full max-h-64 rounded-ctl border border-app-border"
             />
           ))}
         </div>

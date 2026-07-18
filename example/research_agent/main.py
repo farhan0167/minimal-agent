@@ -25,6 +25,8 @@ from minimal_agent.tools.builtin import (
     ReadFile,
     WebExtract,
     WebSearch,
+    WriteFile,
+    EditFile,
 )
 from minimal_agent.tools.mcp import MCPToolProvider
 
@@ -43,7 +45,7 @@ behavior = Path(__file__).parent / "behavior.md"
 reasoning = ReasoningConfig(response_field="reasoning")
 
 llm = LLM(
-    model=os.environ.get("LLM_MODEL", "openai/gpt-4o-mini"),
+    model=os.environ.get("LLM_MODEL", "qwen/qwen3.7-plus"),
     backend=os.environ.get("LLM_BACKEND", "openrouter"),
     api_key=os.environ["OPENROUTER_API_KEY"],
     reasoning_config=reasoning,
@@ -57,15 +59,23 @@ async def main():
     # connections and must stay open for the agent's whole life, so the app
     # is constructed and served inside the block — with the async `a_serve()`,
     # because the blocking `app.serve()` would try to own its own event loop.
+    # One dict, shared by all three file tools: read_file records what it has
+    # read here, and edit_file/write_file consult it for the read-before-edit
+    # guard. Separate dicts would mean reads never satisfy the guard and
+    # edit_file rejects every call with "File has not been read yet".
+    read_timestamps: dict[str, float] = {}
+
     async with MCPToolProvider.from_json() as mcp_tools:
         agent = Agent(
             llm=llm,
             tools=[
-                ReadFile(workspace_root=workspace, read_timestamps={}),
+                ReadFile(workspace_root=workspace, read_timestamps=read_timestamps),
                 Grep(workspace_root=workspace),
                 Glob(workspace_root=workspace),
                 WebSearch(),
                 WebExtract(),
+                EditFile(workspace_root=workspace, read_timestamps=read_timestamps),
+                WriteFile(workspace_root=workspace, read_timestamps=read_timestamps),
                 *mcp_tools,  # e.g. mcp__notionApi__* from .minimal_agent/mcp.json
             ],
             prompt=behavior,

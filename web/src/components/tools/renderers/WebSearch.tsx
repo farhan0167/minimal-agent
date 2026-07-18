@@ -78,7 +78,7 @@ export function WebSearchRenderer({ name, args, result, status }: ToolRenderProp
         {parsed ? (
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {parsed.answer && (
-              <p className="text-sm text-[hsl(var(--aui-foreground))] bg-[hsl(var(--claude-hover))] p-3 rounded-lg">
+              <p className="text-sm text-app-fg bg-app-hover p-3 rounded-ctl">
                 {parsed.answer}
               </p>
             )}
@@ -87,7 +87,7 @@ export function WebSearchRenderer({ name, args, result, status }: ToolRenderProp
               return (
                 <div
                   key={i}
-                  className="p-3 rounded-lg border border-[hsl(var(--claude-border))] bg-[hsl(var(--claude-hover))]"
+                  className="p-3 rounded-ctl border border-app-border bg-app-hover"
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     {host && (
@@ -105,18 +105,18 @@ export function WebSearchRenderer({ name, args, result, status }: ToolRenderProp
                       href={hit.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-sm font-medium truncate text-[hsl(var(--aui-primary))] hover:underline"
+                      className="text-sm font-medium truncate text-app-accent hover:underline"
                     >
                       {hit.title || hit.url}
                     </a>
                   </div>
                   {host && (
-                    <div className="text-xs text-[hsl(var(--aui-muted-foreground))] mt-0.5 truncate">
+                    <div className="text-xs text-app-fg-muted mt-0.5 truncate">
                       {host}
                     </div>
                   )}
                   {hit.snippet && (
-                    <p className="text-xs text-[hsl(var(--aui-muted-foreground))] mt-1 line-clamp-2">
+                    <p className="text-xs text-app-fg-muted mt-1 line-clamp-2">
                       {hit.snippet}
                     </p>
                   )}

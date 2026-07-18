@@ -1,5 +1,6 @@
-import { useState, type ComponentType } from "react";
 import type { ReasoningMessagePartProps } from "@assistant-ui/react";
+import { Disclosure } from "../ui/Disclosure";
+import { MarkdownText } from "./MarkdownText";
 
 /** Last non-empty line of the trace — a peek at the current thought. */
 function tailOfThought(text: string): string {
@@ -18,52 +19,42 @@ function tailOfThought(text: string): string {
  * expanding shows the full trace rendered as markdown.
  *
  * Wired into the assistant message via MessagePrimitive.Parts' `Reasoning`
- * slot — the prebuilt <Thread> has no reasoning support of its own. The
- * Markdown component reads the part text from assistant-ui's part context
+ * slot. MarkdownText reads the part text from assistant-ui's part context
  * (useMessagePartText accepts reasoning parts), so it takes no props.
  */
-export function makeReasoningPart(Markdown: ComponentType) {
-  return function ReasoningPart({ text, status }: ReasoningMessagePartProps) {
-    const [open, setOpen] = useState(false);
+export function ReasoningPart({ text, status }: ReasoningMessagePartProps) {
+  // Nothing to disclose yet — stay out of the layout entirely.
+  if (!text) return null;
 
-    // Nothing to disclose yet — stay out of the layout entirely.
-    if (!text) return null;
+  const isThinking = status?.type === "running";
+  const isInterrupted =
+    status?.type === "incomplete" && status.reason === "cancelled";
 
-    const isThinking = status?.type === "running";
-    const isInterrupted =
-      status?.type === "incomplete" && status.reason === "cancelled";
-
-    return (
-      <div className="my-2">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="flex items-center gap-1 w-full min-w-0 text-xs text-[hsl(var(--aui-muted-foreground))] hover:text-[hsl(var(--aui-foreground))] transition-colors"
-        >
+  return (
+    <Disclosure
+      variant="inline"
+      className="my-2"
+      // The preview is only meaningful while collapsed *and* still thinking;
+      // once open, the full trace below says it better.
+      summary={(open) => (
+        <>
           <span
-            className="inline-block transition-transform"
-            style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
+            className={`chat-reasoning-label text-xs ${isThinking ? "motion-safe:animate-pulse" : ""}`}
           >
-            ▸
-          </span>
-          <span className={isThinking ? "animate-pulse" : undefined}>
             {isThinking ? "Thinking…" : "Reasoning"}
           </span>
-          {isInterrupted && <span className="italic">(interrupted)</span>}
+          {isInterrupted && <span className="text-xs italic">(interrupted)</span>}
           {isThinking && !open && (
-            <span className="ml-2 truncate italic opacity-70">
+            <span className="ml-2 truncate text-xs italic opacity-70">
               {tailOfThought(text)}
             </span>
           )}
-        </button>
-
-        {open && (
-          <div className="mt-1.5 border-l-2 border-[hsl(var(--aui-border))] pl-3 text-sm text-[hsl(var(--aui-muted-foreground))]">
-            <Markdown />
-          </div>
-        )}
+        </>
+      )}
+    >
+      <div className="mt-1.5 border-l-2 border-app-border pl-3 text-sm text-app-fg-muted">
+        <MarkdownText />
       </div>
-    );
-  };
+    </Disclosure>
+  );
 }

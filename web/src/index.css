@@ -1,178 +1,296 @@
 @import "tailwindcss";
-@import "@assistant-ui/react-ui/styles/index.css";
-@import "@assistant-ui/react-ui/styles/markdown.css";
+/* The contract's documentation — no values; themes/ fills it, and themes/index.ts
+   imports the active theme's CSS so a theme is never half-registered. */
+@import "./tokens.css";
 
 /*
- * Claude-inspired theme for assistant-ui.
- * Warm cream background, serif typography, orange-brown accent.
- * Based on: https://www.assistant-ui.com/examples/claude
+ * The Tailwind v4 bridge. Written once, never per-theme.
+ *
+ * Maps the --app-* contract in tokens.css onto Tailwind's namespaces, so call
+ * sites read `bg-app-hover rounded-ctl font-prose` instead of the
+ * `bg-[hsl(var(--claude-hover))]` arbitrary-value syntax. That makes the lint
+ * rule a trivial grep: outside components/ui/ and themes/, no bg-[hsl( at all.
+ *
+ * `inline` matters here — it resolves var() references at use site rather than
+ * copying values, so the .dark overrides in tokens.css still win.
  */
-:root {
-  /* Warm cream backgrounds */
-  --aui-background: 40 20% 96%;       /* #F5F5F0 */
-  --aui-foreground: 90 6% 10%;        /* #1a1a18 */
+@theme inline {
+  /* Ground */
+  --color-app-bg: hsl(var(--app-bg));
+  --color-app-fg: hsl(var(--app-fg));
+  --color-app-fg-muted: hsl(var(--app-fg-muted));
+  --color-app-surface: hsl(var(--app-surface));
+  --color-app-sidebar: hsl(var(--app-sidebar));
+  --color-app-composer: hsl(var(--app-composer));
 
-  --aui-card: 0 0% 100%;
-  --aui-card-foreground: 60 6% 10%;
+  /* Interaction — these tokens carry their own alpha. */
+  --color-app-hover: hsl(var(--app-hover));
+  --color-app-active: hsl(var(--app-active));
+  --color-app-border: hsl(var(--app-border));
+  --color-app-border-subtle: hsl(var(--app-border-subtle));
+  --color-app-ring: hsl(var(--app-ring));
+  /* The flattened edge. Bridged as a utility because Switch's off-state needs
+     a *ground*, and the alpha tokens above tint their host rather than paint
+     it — a translucent knob track shows the row through. */
+  --color-app-border-opaque: hsl(var(--app-border-opaque));
 
-  --aui-popover: 0 0% 100%;
-  --aui-popover-foreground: 60 6% 10%;
+  /* Accent & semantic */
+  --color-app-accent: hsl(var(--app-accent));
+  --color-app-accent-fg: hsl(var(--app-accent-fg));
+  --color-app-accent-hover: hsl(var(--app-accent-hover));
+  --color-app-accent-text: hsl(var(--app-accent-text));
+  --color-app-danger: hsl(var(--app-danger));
+  --color-app-success: hsl(var(--app-success));
+  --color-app-warning: hsl(var(--app-warning));
 
-  /* Claude's signature orange-brown */
-  --aui-primary: 18 56% 43%;          /* #ae5630 */
-  --aui-primary-foreground: 0 0% 100%;
+  /* Chat */
+  --color-app-bubble-user: hsl(var(--app-bubble-user));
+  --color-app-overlay: hsl(var(--app-overlay));
 
-  /* Warm muted tones */
-  --aui-secondary: 40 10% 90%;
-  --aui-secondary-foreground: 60 6% 10%;
+  /* Code */
+  --color-app-code-bg: hsl(var(--app-code-bg));
+  --color-app-code-header: hsl(var(--app-code-header));
+  --color-app-code-button: hsl(var(--app-code-button));
+  --color-app-inline-code-bg: hsl(var(--app-inline-code-bg));
+  --color-app-inline-code-fg: hsl(var(--app-inline-code-fg));
 
-  --aui-muted: 40 10% 90%;
-  --aui-muted-foreground: 40 2% 41%;  /* #6b6a68 */
+  /* Terminal */
+  --color-app-terminal-bg: hsl(var(--app-terminal-bg));
+  --color-app-terminal-fg: hsl(var(--app-terminal-fg));
+  --color-app-terminal-muted: hsl(var(--app-terminal-muted));
+  --color-app-terminal-dim: hsl(var(--app-terminal-dim));
+  --color-app-terminal-accent: hsl(var(--app-terminal-accent));
+  --color-app-terminal-border: hsl(var(--app-terminal-border));
 
-  --aui-accent: 40 10% 90%;
-  --aui-accent-foreground: 60 6% 10%;
+  /* Shape */
+  --radius-ctl: var(--app-radius-ctl);
+  --radius-badge: var(--app-radius-badge);
+  --radius-bubble: var(--app-radius-bubble);
+  --radius-composer: var(--app-radius-composer);
+  --radius-surface: var(--app-radius-surface);
 
-  --aui-destructive: 0 84% 60%;
-  --aui-destructive-foreground: 0 0% 98%;
-
-  --aui-border: 40 8% 85%;
-  --aui-input: 40 8% 85%;
-  --aui-ring: 18 56% 43%;             /* matches primary */
-
-  --aui-radius: 0.75rem;
-
-  --aui-thread-max-width: 50rem;
-
-  /* Extended Claude palette tokens */
-  --claude-sidebar: 40 14% 90%;       /* #eae8e1 */
-  --claude-user-bubble: 37 14% 91%;   /* #E9E6DF */
-  --claude-composer: 0 0% 100%;       /* white */
-  --claude-code-bg: 40 14% 98%;       /* #e8e5db — subtly darker than page */
-  --claude-code-header: 60 5% 16%;    /* #2d2d2a */
-  --claude-code-button: 50 3% 34%;    /* #5a5955 */
-  --claude-inline-code-bg: 40 12% 89%; /* #e8e6df */
-  --claude-inline-code-text: 14 67% 36%; /* #953a21 */
-  --claude-primary-hover: 18 56% 38%; /* #9a4a29 */
-  --claude-border: 0 0% 0% / 0.08;
-  --claude-border-subtle: 0 0% 0% / 0.06;
-  --claude-hover: 0 0% 0% / 0.06;
-  --claude-active: 0 0% 0% / 0.08;
-  --claude-shadow: 0 0.25rem 1.25rem hsl(0 0% 0% / 0.04), 0 0 0 1px hsl(0 0% 0% / 0.06);
+  /* Typography */
+  --font-ui: var(--app-font-ui);
+  --font-prose: var(--app-font-prose);
+  --font-mono: var(--app-font-mono);
+  --font-label: var(--app-font-label);
 }
 
-.dark {
-  --aui-background: 36 6% 15%;        /* #2b2a27 */
-  --aui-foreground: 40 14% 93%;       /* #eee */
-
-  --aui-card: 40 7% 12%;              /* #1f1e1b */
-  --aui-card-foreground: 40 14% 93%;
-
-  --aui-popover: 40 7% 12%;
-  --aui-popover-foreground: 40 14% 93%;
-
-  --aui-primary: 18 56% 43%;          /* #ae5630 — same in dark */
-  --aui-primary-foreground: 0 0% 100%;
-
-  --aui-secondary: 40 4% 22%;
-  --aui-secondary-foreground: 40 14% 93%;
-
-  --aui-muted: 40 4% 22%;
-  --aui-muted-foreground: 36 4% 59%;  /* #9a9893 */
-
-  --aui-accent: 40 4% 22%;
-  --aui-accent-foreground: 40 14% 93%;
-
-  --aui-destructive: 0 84% 60%;
-  --aui-destructive-foreground: 0 0% 98%;
-
-  --aui-border: 40 4% 25%;
-  --aui-input: 40 4% 25%;
-  --aui-ring: 18 56% 43%;
-
-  /* Extended dark tokens */
-  --claude-sidebar: 36 5% 13%;        /* darker than bg */
-  --claude-user-bubble: 40 3% 22%;    /* #393937 */
-  --claude-composer: 40 7% 12%;       /* #1f1e1b */
-  --claude-code-bg: 40 5% 18%;
-  --claude-code-header: 40 14% 85%;
-  --claude-code-button: 36 4% 59%;
-  --claude-inline-code-bg: 40 5% 20%;
-  --claude-inline-code-text: 18 56% 55%;
-  --claude-primary-hover: 18 50% 50%;
-  --claude-border: 0 0% 100% / 0.08;
-  --claude-border-subtle: 0 0% 100% / 0.06;
-  --claude-hover: 0 0% 100% / 0.06;
-  --claude-active: 0 0% 100% / 0.08;
-  --claude-shadow: 0 0.25rem 1.25rem hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(0 0% 100% / 0.06);
+/*
+ * One state change, one motion. --app-transition carries both a duration and
+ * an easing ("140ms ease"), which no single Tailwind duration or ease slot
+ * accepts — so the motion role is spent here, as a utility that primitives
+ * apply by name. This is what replaces transition-colors vs transition-opacity
+ * being chosen per file.
+ */
+@utility transition-app {
+  transition-property: color, background-color, border-color, opacity,
+    box-shadow, transform;
+  /* --app-transition is "<duration> <easing>"; the shorthand below would
+     reset transition-property, so the two halves are applied separately. */
+  transition-duration: var(--app-transition-duration);
+  transition-timing-function: var(--app-transition-easing);
 }
 
-/* Serif font for the chat area (Claude's signature look) */
-.aui-thread-root {
-  font-family: Georgia, "Times New Roman", serif;
-  font-weight: 450;
-  background-color: hsl(var(--aui-background));
+/* The micro-label voice's case + tracking, spent together for the same reason
+   as transition-app: neither fits a @theme slot, and a label that uppercases
+   without tracking (or vice versa) is a look nobody chose. The face itself
+   rides the font-label bridge slot; a call site says `font-label label-voice`. */
+@utility label-voice {
+  text-transform: var(--app-label-case);
+  letter-spacing: var(--app-label-tracking);
+}
+
+/* Native <option> lists render in an OS popup that ignores page CSS and a
+   Tailwind class on the option. Only these two properties, set on the element
+   itself, are honoured across browsers — without them the popup falls back to
+   OS defaults (black-on-white) and unselected items vanish in dark mode. The
+   opaque ground is deliberate: a translucent --app-surface would let the OS
+   popup's own backdrop bleed through. */
+select option {
+  color: hsl(var(--app-fg));
+  background-color: hsl(var(--app-surface));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Chat chrome — the thread's structural styles.
+ *
+ * assistant-ui primitives render their own elements (the thread viewport,
+ * the composer form/textarea, markdown output), so their look cannot live in
+ * a components/ui primitive. It lives here instead, on class names WE own
+ * (components/chat assigns them), reading the same --app-* contract a
+ * primitive would. Since the migration off @assistant-ui/react-ui there is
+ * no vendor CSS in the app — nothing here pins a package version.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* The chat area speaks in the theme's prose voice — face, weight, AND color:
+   nothing above the thread sets a text color, so without --app-fg here the
+   prose inherits the browser's black and vanishes in dark mode. */
+.chat-thread {
+  font-family: var(--app-font-prose);
+  font-weight: var(--app-prose-weight);
+  color: hsl(var(--app-fg));
   -webkit-font-smoothing: antialiased;
+  /* The drafting sheet needs a positioned, isolated host so its z-index:-1
+     layer stays behind the messages but above this element's own ground. */
+  position: relative;
+  isolation: isolate;
 }
 
-/* Tighter font sizing for messages */
-.aui-assistant-message-content,
-.aui-user-message-content {
+/* The thread's drafting sheet: the theme's canvas texture painted on the
+   non-scrolling shell (so messages scroll over a fixed sheet), strongest at
+   the center and fading toward the edges. The mask is structural — the same
+   in every theme — while the texture itself is the themed part; themes that
+   answer `none` paint nothing here. */
+.chat-thread::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--app-canvas-texture);
+  background-size: var(--app-canvas-texture-size);
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 45%, black 35%, transparent 100%);
+}
+
+/* Assistant answer — reading rhythm. (Reasoning traces deliberately inherit
+   their smaller size from the disclosure that wraps them.) */
+.chat-message-body {
   font-size: 1rem;
   line-height: 1.7;
 }
 
-/* Markdown content — match Claude's tight, readable spacing */
-.aui-md h1 { font-size: 1.125rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.375rem; }
-.aui-md h2 { font-size: 1rem; font-weight: 700; margin-top: 0.75rem; margin-bottom: 0.25rem; }
-.aui-md h3 { font-size: 0.9375rem; font-weight: 700; margin-top: 0.625rem; margin-bottom: 0.25rem; }
-.aui-md p { margin-top: 0.25rem; margin-bottom: 0.25rem; }
-.aui-md ul, .aui-md ol { margin-top: 0.125rem; margin-bottom: 0.125rem; padding-left: 1.25rem; }
-.aui-md li { margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; line-height: 1.5; }
-.aui-md li p { margin: 0; }
-.aui-md hr { margin-top: 0.625rem; margin-bottom: 0.625rem; border-color: hsl(var(--claude-border)); }
-/* Code blocks — warm off-white with visible contrast against page.
+/* User bubble — a short utterance, not prose: snug padding and a tighter
+   line-height than the answer's 1.7 reading rhythm. With 1.7 and 1rem
+   vertical padding a single line floats in an oversized, bottom-heavy box. */
+.chat-user-bubble {
+  background-color: hsl(var(--app-bubble-user));
+  border-radius: var(--app-radius-bubble);
+  padding: 0.55rem 0.95rem;
+  line-height: 1.5;
+}
+
+/* Image attachments inside the user bubble (see UserMessage.tsx): stacked
+   above the text with a small gap; full bubble width so live turns match the
+   reload layout (image + text in one bubble). */
+.chat-user-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.chat-user-attachments:not(:last-child) {
+  margin-bottom: 0.5rem;
+}
+
+/* Reasoning disclosure label — the one micro-label that can't go through the
+   Text primitive: it must inherit the trigger's muted→fg hover color, and a
+   Text variant carries its own. The voice's face/case/tracking apply here on
+   a first-party class instead. */
+.chat-reasoning-label {
+  font-family: var(--app-font-label);
+  text-transform: var(--app-label-case);
+  letter-spacing: var(--app-label-tracking);
+}
+
+/* Welcome canvas — the empty state's ground texture. Painted here, not in
+   the feature, so a theme can answer with a dot grid (blueprint) or nothing
+   at all (claude) without WelcomeScreen knowing themes exist. */
+.chat-welcome {
+  background-image: var(--app-canvas-texture);
+  background-size: var(--app-canvas-texture-size);
+}
+
+/* Composer frame — the floating centered input: ground + shadow, no border;
+   the shadow is the edge. */
+.chat-composer {
+  background-color: hsl(var(--app-composer));
+  box-shadow: var(--app-shadow);
+  border-radius: var(--app-radius-composer);
+}
+
+/* Markdown prose — readable rhythm on the bare elements MarkdownText emits
+ * (our MarkdownTextPrimitive adds no per-element classes; the `.chat-prose`
+ * container scopes them).
+ *
+ * The spacing is a designed vertical rhythm: paragraphs and lists breathe at
+ * ~0.7rem, headings open a larger gap above than below so a section binds to
+ * the text it introduces, and list items carry a real left indent so bullets
+ * share one spine. */
+.chat-prose h1 { font-size: var(--app-md-h1); font-weight: 700; margin-top: 1.4rem; margin-bottom: 0.5rem; line-height: 1.3; }
+.chat-prose h2 { font-size: var(--app-md-h2); font-weight: 700; margin-top: 1.2rem; margin-bottom: 0.45rem; line-height: 1.3; }
+.chat-prose h3 { font-size: var(--app-md-h3); font-weight: 700; margin-top: 1rem; margin-bottom: 0.4rem; line-height: 1.3; }
+.chat-prose p { margin-top: 0.7rem; margin-bottom: 0.7rem; }
+.chat-prose ul, .chat-prose ol { margin-top: 0.7rem; margin-bottom: 0.7rem; padding-left: 1.5rem; }
+.chat-prose ul { list-style-type: disc; }
+.chat-prose ol { list-style-type: decimal; }
+.chat-prose li { margin-top: 0.25rem; margin-bottom: 0.25rem; padding-left: 0.15rem; }
+.chat-prose li > p { margin: 0; }
+.chat-prose li ul, .chat-prose li ol { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+.chat-prose hr { margin-top: 1.1rem; margin-bottom: 1.1rem; border: none; border-top: 1px solid hsl(var(--app-border)); }
+.chat-prose a { color: hsl(var(--app-accent-text)); text-decoration: underline; }
+.chat-prose blockquote { border-left: 2px solid hsl(var(--app-border)); padding-left: 0.75rem; color: hsl(var(--app-fg-muted)); margin: 0.7rem 0; }
+.chat-prose strong { font-weight: 700; }
+/* The first block in a message carries no top margin — the message row already
+   owns that gap, and a doubled gap is what made turns look unevenly spaced. */
+.chat-prose > :first-child { margin-top: 0; }
+.chat-prose > :last-child { margin-bottom: 0; }
+
+/* Code blocks — the code ground with visible contrast against the page.
    Long blocks scroll internally (the header bar above stays put) instead of
-   stretching the message and hijacking the chat scroll. */
-.aui-md-pre {
+   stretching the message and hijacking the chat scroll.
+
+   Scoped with :not(.shiki): once Shiki lands, the highlighted <pre class=
+   "shiki"> sits INSIDE .shiki-wrapper, which already owns the max-height and
+   vertical scroll — giving the inner pre its own cap would nest two
+   scrollbars. This rule styles only the plain fallback pre (first paint /
+   grammar still loading). */
+.chat-prose pre:not(.shiki) {
+  font-family: var(--app-font-mono);
   font-size: 0.8rem;
   margin-top: 0.375rem;
   margin-bottom: 0.375rem;
-  background-color: hsl(var(--claude-code-bg)) !important;
-  border: 1px solid hsl(var(--claude-border));
+  padding: 1rem;
+  background-color: hsl(var(--app-code-bg));
+  border-radius: 0 0 var(--app-radius-surface) var(--app-radius-surface);
   max-height: min(26rem, 60vh);
-  overflow-y: auto;
+  overflow: auto;
 }
-.aui-md-pre code {
+.chat-prose pre code {
   font-size: 0.8rem;
-  background-color: transparent !important;
+  background-color: transparent;
+  border: none;
+  padding: 0;
 }
-/* Code header (language label bar) */
-.aui-code-header-root {
-  background-color: hsl(var(--claude-code-bg)) !important;
-  color: hsl(var(--claude-code-header)) !important;
-  border-bottom: none !important;
-}
-.aui-code-header-root button {
-  color: hsl(var(--claude-code-button)) !important;
-}
-/* Inline code — warm tinted background, matching text color */
-.aui-md-inline-code {
+/* Inline code — tinted background, matching text color. */
+.chat-prose :not(pre) > code {
+  font-family: var(--app-font-mono);
   font-size: 0.8rem;
-  background-color: hsl(var(--claude-inline-code-bg)) !important;
-  color: hsl(var(--claude-inline-code-text)) !important;
+  background-color: hsl(var(--app-inline-code-bg));
+  color: hsl(var(--app-inline-code-fg));
   padding: 0.15em 0.4em;
   border-radius: 0.25rem;
-  border: 1px solid hsl(var(--claude-border)) !important;
-  font-weight: 500 !important;
+  border: 1px solid hsl(var(--app-border));
+  font-weight: 500;
 }
-/* Shiki code body — same background as header */
+
+/* Code header (language label bar above a fence — CodeHeaderBar.tsx). */
+.chat-code-header {
+  background-color: hsl(var(--app-code-bg));
+  color: hsl(var(--app-code-header));
+}
+.chat-code-header button {
+  color: hsl(var(--app-code-button));
+}
+
+/* Shiki code body — same ground as the header above it. */
 .shiki-wrapper {
-  background-color: hsl(var(--claude-code-bg));
-  border-radius: 0 0 var(--aui-radius) var(--aui-radius);
+  background-color: hsl(var(--app-code-bg));
+  border-radius: 0 0 var(--app-radius-surface) var(--app-radius-surface);
   max-height: min(26rem, 60vh);
   overflow-y: auto;
 }
-/* Shiki syntax highlighter — dual theme support */
+/* Shiki syntax highlighter — both modes compiled to CSS variables
+   (defaultColor: false); these rules pick between them. */
 .shiki {
   --shiki-light-bg: transparent !important;
   --shiki-dark-bg: transparent !important;
@@ -190,100 +308,9 @@
   color: var(--shiki-dark) !important;
 }
 
-.aui-md table { font-size: 0.875rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; }
-.aui-md th, .aui-md td { padding: 0.5rem 0.5rem; }
-.aui-md th { font-weight: 600; }
-.aui-md tr { border-bottom: 1px solid hsl(var(--claude-border-subtle)); }
-.aui-md thead tr { border-bottom: 1px solid hsl(var(--claude-border)); }
-.aui-md strong { font-weight: 700; }
-
-/* User messages — right-aligned within the centered content column */
-.aui-user-message-content {
-  background-color: hsl(var(--claude-user-bubble));
-  color: hsl(var(--aui-foreground));
-  padding: 1rem 1.25rem;
-  border-radius: 1.25rem;
-}
-
-/* Remove assistant avatar circle */
-.aui-avatar-root {
-  display: none;
-}
-
-/* Icon buttons (edit pencil, branch-picker chevrons, copy…) hold a
-   position:absolute screen-reader label, but .aui-button itself isn't
-   positioned — the label anchors to the document, escapes the thread
-   viewport's clipping, and can land below the window, stretching the page
-   into a second window-level scrollbar. Anchor labels to their button. */
-.aui-button {
-  position: relative;
-}
-
-/* Composer — match Claude's centered rounded input */
-.aui-composer-root {
-  background-color: hsl(var(--claude-composer));
-  box-shadow: var(--claude-shadow);
-  border: none;
-  border-radius: 1.5rem;
-  padding: 0.25rem;
-  align-items: flex-end;
-}
-
-/* Input takes full width — forces its own row above the buttons */
-.aui-composer-input {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1rem;
-  padding: 1.25rem 1.5rem;
-  min-height: 2.5rem;
-  width: 100%;
-  order: -1;
-}
-
-/* Attachment button — bottom-left, mirrors send button spacing */
-.aui-composer-attach {
-  margin-bottom: 0.5rem;
-  margin-left: 0.75rem;
-}
-
-/* Send button — Claude's rounded orange, bottom-right */
-.aui-composer-send {
-  background-color: hsl(var(--aui-primary));
-  border-radius: 0.75rem;
-  margin-bottom: 0.5rem;
-  margin-left: auto;
-  margin-right: 0.75rem;
-}
-.aui-composer-send:hover {
-  background-color: hsl(var(--claude-primary-hover));
-}
-
-/* Cancel button — same position as send */
-.aui-composer-cancel {
-  background-color: hsl(var(--aui-primary));
-  border-radius: 0.75rem;
-  margin-bottom: 0.5rem;
-  margin-left: auto;
-  margin-right: 0.75rem;
-}
-
-/* Composer footer area */
-.aui-thread-viewport-footer {
-  padding: 0.5rem 1rem 1.25rem;
-}
-
-/* Image attachments rendered inside the user bubble (see UserMessage.tsx).
-   Stacked above the text with a small gap; the image fills the bubble width
-   so live turns match the reload layout (image + text in one bubble). */
-.aui-user-message-attachments-inline {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.aui-user-message-attachments-inline:not(:last-child) {
-  margin-bottom: 0.5rem;
-}
-.aui-user-message-image-attachment {
-  display: block;
-  width: 100%;
-  height: auto;
-}
+/* Tables — bordered rows, scrolling horizontally when too wide. */
+.chat-prose table { font-size: 0.875rem; max-width: 100%; border-collapse: collapse; overflow-x: auto; display: block; margin-top: 0.7rem; margin-bottom: 0.7rem; }
+.chat-prose th, .chat-prose td { padding: 0.5rem 0.5rem; text-align: left; }
+.chat-prose th { font-weight: 600; }
+.chat-prose tr { border-bottom: 1px solid hsl(var(--app-border-subtle)); }
+.chat-prose thead tr { border-bottom: 1px solid hsl(var(--app-border)); }

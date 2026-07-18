@@ -5,6 +5,38 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>minimal-agent</title>
+    <script>
+      // Stamp theme and mode before first paint.
+      //
+      // Every --app-* token lives under [data-theme="…"], so until this runs
+      // the page has no palette at all — not a wrong one, none. React sets the
+      // same two attributes on mount (hooks/use-theme.ts), but "on mount" is
+      // one paint too late: you would see an unstyled flash on every load.
+      //
+      // Inline and synchronous on purpose: a deferred or external script would
+      // reintroduce the gap it exists to close. Kept deliberately dumb — it
+      // reads the same two keys use-theme.ts writes and duplicates no logic
+      // beyond the defaults; the hook remains the source of truth.
+      (function () {
+        try {
+          var mode = localStorage.getItem("minimal-agent.theme");
+          if (mode !== "light" && mode !== "dark") {
+            mode = window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+          }
+          document.documentElement.classList.toggle("dark", mode === "dark");
+          // Unvalidated here — the registry cannot be consulted before the
+          // bundle loads. use-theme.ts resolves it on mount and corrects an
+          // unknown id; the worst case is one unstyled paint, same as before.
+          document.documentElement.dataset.theme =
+            localStorage.getItem("minimal-agent.theme-id") || "claude";
+        } catch (e) {
+          // Private mode / blocked storage: ship the default rather than nothing.
+          document.documentElement.dataset.theme = "claude";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1,0 +1,86 @@
+/*
+ * The token contract.
+ *
+ * Every --app-* token a theme must answer, listed in one place. This file is
+ * the contract's documentation and deliberately holds no values: a theme
+ * (themes/*.css) fills it. A theme that misses a token leaves the app unstyled
+ * at that role — which is louder, and easier to fix, than silently inheriting
+ * a look nobody chose.
+ *
+ * Nothing here is a look — these are roles. --app-hover says what a thing is
+ * *for*, never what it looks like, which is what lets a second theme be one
+ * file instead of a twenty-file diff.
+ *
+ * Two rules keep the contract honest:
+ *   1. Primitives (components/ui/) reference these tokens and never literals.
+ *   2. A theme must define every token below, in both modes.
+ *
+ * Color tokens are bare HSL triplets ("40 20% 96%") so call sites can compose
+ * alpha: hsl(var(--app-bg) / 0.5). The bridge in index.css maps them to
+ * Tailwind utilities, so components read `bg-app-bg`, not `bg-[hsl(var(...))]`.
+ *
+ * Alpha-bearing tokens (--app-border, --app-hover, --app-active, --app-overlay)
+ * are the exception: they carry their own opacity ("0 0% 0% / 0.08") because
+ * their whole job is to tint whatever they sit on. They bridge as full colors.
+ *
+ * ── Ground ─────────────────────────────────────────────────────────────────
+ *   --app-bg --app-fg --app-fg-muted --app-surface --app-sidebar --app-composer
+ *
+ * ── Interaction ────────────────────────────────────────────────────────────
+ *   --app-hover --app-active --app-border --app-border-subtle --app-ring
+ *   --app-border-opaque   the same edge pre-flattened against --app-bg, for
+ *                         consumers that need a solid ground (Switch's
+ *                         off-state track)
+ *
+ * ── Accent & semantic ──────────────────────────────────────────────────────
+ *   --app-accent --app-accent-fg --app-accent-hover --app-accent-text
+ *   --app-danger --app-success --app-warning
+ *   --app-accent-fg is not decoration: a theme with a light accent needs dark
+ *   text on it. Soft variants are composed via alpha at the call site.
+ *
+ * ── Chat ───────────────────────────────────────────────────────────────────
+ *   --app-bubble-user --app-overlay --app-shadow
+ *   --app-canvas-texture --app-canvas-texture-size
+ *   The empty-state canvas: a background-image (and its tile size) painted
+ *   behind the welcome screen. Most themes answer `none` / `auto`; a theme
+ *   with a drafting-table identity answers a dot grid. Two tokens because a
+ *   background shorthand would clobber the ground color under it.
+ *
+ * ── Code ───────────────────────────────────────────────────────────────────
+ *   --app-code-bg --app-code-header --app-code-button
+ *   --app-inline-code-bg --app-inline-code-fg
+ *
+ * ── Terminal ───────────────────────────────────────────────────────────────
+ *   --app-terminal-bg --app-terminal-fg --app-terminal-muted
+ *   --app-terminal-dim --app-terminal-accent --app-terminal-border
+ *
+ * ── Typography ─────────────────────────────────────────────────────────────
+ *   --app-font-ui --app-font-prose --app-font-mono --app-prose-weight
+ *   --app-md-h1 --app-md-h2 --app-md-h3
+ *   --app-font-prose is the theme's voice; --app-font-ui is chrome, and stays
+ *   sans in every theme we expect to write.
+ *
+ *   --app-font-label --app-label-case --app-label-tracking
+ *   The micro-label voice: badges, section labels, tool-card names — the
+ *   metadata register. Most themes answer with their UI face, `none`, and
+ *   `normal`; a technical theme answers mono, `uppercase`, and tracking, which
+ *   turns every label into a drafting-style eyebrow without any component
+ *   knowing. Spent via the `font-label` bridge slot and the `label-voice`
+ *   utility (case + tracking travel together; a slot can't hold either).
+ *
+ * ── Shape ──────────────────────────────────────────────────────────────────
+ *   --app-radius-ctl --app-radius-badge --app-radius-bubble
+ *   --app-radius-composer --app-radius-surface
+ *   --app-radius-badge is the pill-vs-square axis: the one token that makes a
+ *   theme structurally, not just chromatically, different.
+ *
+ * ── Motion ─────────────────────────────────────────────────────────────────
+ *   --app-transition-duration --app-transition-easing --app-transition
+ *   Split into two roles because CSS has no single property that takes both
+ *   without also resetting transition-property; the `transition-app` utility
+ *   in index.css spends them. --app-transition composes the pair.
+ *
+ * ── Manifest (themes/*.ts, not CSS) ────────────────────────────────────────
+ *   shiki.light/dark and mermaid.light/dark — both render to their own colour
+ *   systems and cannot read these tokens, so the theme names them in TS.
+ */

@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { AttachmentPrimitive, useAttachment } from "@assistant-ui/react";
 import { CircleXIcon } from "lucide-react";
+import { Button } from "../ui/Button";
 
 /**
  * The image data URI for the current attachment, or undefined if it isn't an
@@ -10,8 +11,12 @@ import { CircleXIcon } from "lucide-react";
  * - **Sent / reloaded** attachments carry the image in `content` as a data URI
  *   (SimpleImageAttachmentAdapter.send() puts it there).
  * - **Pending** composer attachments only have the raw `File`; we mint an
- *   object URL for it in an effect and revoke it on cleanup. Minting in the
- *   selector instead would leak a URL every render and loop forever (#185).
+ *   object URL for it. Minting in the selector would leak a URL every render
+ *   and loop forever (#185). Minting in a render-time useMemo breaks under
+ *   StrictMode: the memo survives the simulated mount→cleanup→remount cycle,
+ *   so cleanup revokes the very URL the remounted effect re-registers — a
+ *   permanently broken thumbnail. So the URL is minted *inside* the effect
+ *   and held in state: the StrictMode remount then mints a fresh one.
  *
  * Each `useAttachment` selector returns a stable primitive (string|undefined),
  * never a fresh object — object results are reference-compared and re-render
@@ -25,17 +30,29 @@ function useAttachmentImageSrc(): string | undefined {
   );
   const file = useAttachment((a) => (a.type === "image" ? a.file : undefined));
 
-  // Compute the object URL during render (available on first paint, no flash),
-  // and revoke it on unmount / when the file changes. `content` wins when
-  // present, so we only mint a URL for a still-pending composer attachment.
-  const fileSrc = useMemo(
-    () => (!contentSrc && file ? URL.createObjectURL(file) : undefined),
-    [file, contentSrc],
-  );
+  // `content` wins when present, so a URL is only minted for a still-pending
+  // composer attachment, and revoked when the file changes or on unmount.
+  //
+  // The set-state-in-effect rule is disabled deliberately: an object URL is an
+  // external resource whose lifecycle must be tied to the effect (mint on
+  // setup, revoke on cleanup) — the render-time alternatives either leak URLs
+  // or hand out revoked ones under StrictMode (see above). The one extra
+  // render per file change is the price of a correct lifecycle.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  const [fileSrc, setFileSrc] = useState<string>();
   useEffect(() => {
-    if (!fileSrc) return;
-    return () => URL.revokeObjectURL(fileSrc);
-  }, [fileSrc]);
+    if (contentSrc || !file) {
+      setFileSrc(undefined);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setFileSrc(url);
+    return () => {
+      setFileSrc(undefined);
+      URL.revokeObjectURL(url);
+    };
+  }, [file, contentSrc]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   return contentSrc ?? fileSrc;
 }
@@ -63,27 +80,27 @@ export function AttachmentImage({
   if (!src) return <Fallback />;
 
   return (
-    <AttachmentPrimitive.Root
-      className="aui-attachment-root"
-      style={{ display: "inline-block" }}
-    >
+    <AttachmentPrimitive.Root className="relative inline-block">
       <img
         src={src}
         alt={name}
-        className={className}
+        className={`rounded-ctl ${className ?? ""}`}
         style={{
           display: "block",
           maxWidth: "100%",
           maxHeight,
-          borderRadius: "0.5rem",
         }}
       />
       {canRemove && (
-        <AttachmentPrimitive.Remove
-          className="aui-attachment-remove"
-          aria-label="Remove file"
-        >
-          <CircleXIcon />
+        <AttachmentPrimitive.Remove asChild>
+          <Button
+            variant="icon"
+            size="sm"
+            aria-label="Remove file"
+            className="absolute -top-2 -right-2 rounded-full bg-app-surface border border-app-border"
+          >
+            <CircleXIcon className="w-3.5 h-3.5" />
+          </Button>
         </AttachmentPrimitive.Remove>
       )}
     </AttachmentPrimitive.Root>

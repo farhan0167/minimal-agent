@@ -1,42 +1,65 @@
-import { MessagePrimitive } from "@assistant-ui/react";
 import {
-  AssistantActionBar,
-  BranchPicker,
-  AssistantMessage as DefaultAssistantMessage,
-} from "@assistant-ui/react-ui";
-import { makeReasoningPart } from "./ReasoningPart";
+  AuiIf,
+  ActionBarPrimitive,
+  MessagePrimitive,
+} from "@assistant-ui/react";
+import { CheckIcon, CopyIcon, RefreshCwIcon } from "lucide-react";
+import { Button } from "../ui/Button";
+import { MarkdownText } from "./MarkdownText";
+import { ReasoningPart } from "./ReasoningPart";
+import { ImagePart } from "./ImagePart";
+import { BranchPicker } from "./BranchPicker";
 
 /**
- * Custom assistant message body.
+ * Assistant message: the full agent turn — reasoning traces, tool calls, and
+ * answer text as ordered parts. Text and reasoning render through the app's
+ * markdown component; tool calls resolve from the globally-registered
+ * `makeAssistantToolUI` components (via the runtime's model context); images
+ * (the harness flush mid-turn) render inline.
  *
- * The prebuilt <Thread> renders assistant messages through a fixed component
- * set that has no reasoning slot, so a reasoning content part would be
- * silently dropped. We reproduce the default layout (avatar → content →
- * branch picker → action bar) but render the content ourselves via
- * MessagePrimitive.Content, which DOES expose a `Reasoning` slot.
- *
- * Text renders with the app's markdown component; tool calls resolve from the
- * globally-registered `makeAssistantToolUI` components (via the runtime's
- * model context), exactly as they did under the default message.
+ * The action bar (copy / regenerate) shows on the last message and on hover
+ * for earlier ones; the branch picker appears once regeneration created
+ * branches.
  */
-export function makeAssistantMessage(Text: React.ComponentType) {
-  // Reasoning renders through the same markdown component as answer text.
-  const Reasoning = makeReasoningPart(Text);
-  return function AssistantMessage() {
-    return (
-      <DefaultAssistantMessage.Root>
-        <DefaultAssistantMessage.Avatar />
-        <div className="aui-assistant-message-content">
-          <MessagePrimitive.Content
-            components={{
-              Text: Text as never,
-              Reasoning,
-            }}
-          />
-        </div>
+export function AssistantMessage() {
+  return (
+    <MessagePrimitive.Root className="w-full py-2">
+      <div className="chat-message-body">
+        <MessagePrimitive.Parts
+          components={{
+            Text: MarkdownText,
+            Reasoning: ReasoningPart,
+            Image: ImagePart,
+          }}
+        />
+      </div>
+      {/* Fixed-height row: the action bar mounts/unmounts with hover
+          (autohide), so without a reserved height its appearance would push
+          every message below it down. */}
+      <div className="mt-1 flex h-7 items-center gap-2">
         <BranchPicker />
-        <AssistantActionBar />
-      </DefaultAssistantMessage.Root>
-    );
-  };
+        <ActionBarPrimitive.Root
+          hideWhenRunning
+          autohide="not-last"
+          className="flex items-center gap-1"
+        >
+          <ActionBarPrimitive.Copy asChild>
+            <Button variant="icon" size="sm" aria-label="Copy message">
+              <AuiIf condition={(s) => s.message.isCopied}>
+                <CheckIcon className="w-3.5 h-3.5" />
+              </AuiIf>
+              <AuiIf condition={(s) => !s.message.isCopied}>
+                <CopyIcon className="w-3.5 h-3.5" />
+              </AuiIf>
+            </Button>
+          </ActionBarPrimitive.Copy>
+          <ActionBarPrimitive.Reload asChild>
+            <Button variant="icon" size="sm" aria-label="Regenerate reply">
+              <RefreshCwIcon className="w-3.5 h-3.5" />
+            </Button>
+          </ActionBarPrimitive.Reload>
+        </ActionBarPrimitive.Root>
+      </div>
+    </MessagePrimitive.Root>
+  );
 }

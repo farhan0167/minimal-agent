@@ -1,35 +1,27 @@
-import { useEffect, useRef, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
+import { useRef, type ReactNode } from "react";
+import { MinusIcon, PlusIcon } from "lucide-react";
+import { Button } from "../ui/Button";
+import { Dialog } from "../ui/Dialog";
 import { useWheelZoom, type Zoom } from "./use-zoom";
-
-const zoomButtonClass =
-  "p-1.5 rounded hover:bg-[hsl(var(--claude-hover))] transition-colors";
 
 export function ZoomControls({ zoom, zoomBy, reset }: Zoom) {
   return (
-    <div className="flex items-center font-sans text-[hsl(var(--aui-foreground))]">
-      <button
-        onClick={() => zoomBy(1 / 1.25)}
-        className={zoomButtonClass}
-        title="Zoom out"
-      >
+    <div className="flex items-center font-ui text-app-fg">
+      <Button variant="icon" onClick={() => zoomBy(1 / 1.25)} title="Zoom out" aria-label="Zoom out">
         <MinusIcon className="w-4 h-4" />
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="icon"
         onClick={reset}
-        className="w-12 py-1 text-xs text-center tabular-nums rounded hover:bg-[hsl(var(--claude-hover))] transition-colors"
         title="Reset zoom"
+        aria-label="Reset zoom"
+        className="w-12 py-1 text-xs tabular-nums"
       >
         {Math.round(zoom * 100)}%
-      </button>
-      <button
-        onClick={() => zoomBy(1.25)}
-        className={zoomButtonClass}
-        title="Zoom in"
-      >
+      </Button>
+      <Button variant="icon" onClick={() => zoomBy(1.25)} title="Zoom in" aria-label="Zoom in">
         <PlusIcon className="w-4 h-4" />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -62,10 +54,11 @@ export function ZoomPane({
 }
 
 /**
- * Shared modal chrome for rich-content previews (HTML, SVG, Mermaid):
- * dimmed overlay, titled header with optional controls (zoom), close on
- * Esc / overlay click / the X button. Portal-mounted so the chat's serif
- * font and stacking contexts don't leak in.
+ * Shared modal chrome for rich-content previews (HTML, SVG, Mermaid).
+ *
+ * The overlay, Esc/backdrop close, focus trap and scroll lock now come from
+ * <Dialog>; this is only the size choice and the zoom controls slot. Always
+ * mounted open — callers conditionally render it rather than passing `open`.
  */
 export function PreviewDialog({
   title,
@@ -78,41 +71,9 @@ export function PreviewDialog({
   onClose: () => void;
   children: ReactNode;
 }) {
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="flex flex-col w-full max-w-5xl h-[85vh] rounded-xl overflow-hidden bg-[hsl(var(--aui-background))] border border-[hsl(var(--claude-border))] shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-2 border-b border-[hsl(var(--claude-border))] font-sans">
-          <span className="text-sm font-medium text-[hsl(var(--aui-foreground))]">
-            {title}
-          </span>
-          <div className="flex items-center gap-2">
-            {controls}
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded hover:bg-[hsl(var(--claude-hover))] transition-colors"
-              title="Close (Esc)"
-            >
-              <XIcon className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-        {children}
-      </div>
-    </div>,
-    document.body,
+  return (
+    <Dialog open onClose={onClose} title={title} size="full" controls={controls}>
+      {children}
+    </Dialog>
   );
 }

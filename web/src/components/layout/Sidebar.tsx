@@ -3,6 +3,8 @@ import type { Session, CreateSessionRequest } from "../../types/session";
 import { SessionList } from "../session/SessionList";
 import { NewSessionDialog } from "../session/NewSessionDialog";
 import { Terminal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Button } from "../ui/Button";
+import { Text } from "../ui/Text";
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 480;
@@ -66,44 +68,48 @@ export function Sidebar({
     <div className="relative flex" style={{ width: currentWidth }}>
       <aside
         ref={sidebarRef}
-        className="flex flex-col h-full w-full border-r border-[hsl(var(--claude-border))] bg-[hsl(var(--claude-sidebar))]"
+        className="flex flex-col h-full w-full border-r border-app-border bg-app-sidebar"
         style={{ width: currentWidth }}
       >
         {/* Brand + collapse toggle */}
-        <div className="flex items-center justify-between h-14 px-3 border-b border-[hsl(var(--claude-border))]">
+        <div className="flex items-center justify-between h-14 px-3 border-b border-app-border">
           {!isCollapsed && (
             <div className="flex items-center gap-2 min-w-0">
-              <Terminal className="w-4 h-4 text-[hsl(var(--aui-primary))] shrink-0" />
-              <span className="text-sm font-semibold text-[hsl(var(--aui-foreground))] truncate font-serif">
+              <Terminal className="w-4 h-4 text-app-accent shrink-0" />
+              <Text variant="prose" as="span" className="text-sm font-semibold truncate">
                 minimal-agent
-              </span>
+              </Text>
             </div>
           )}
-          <button
+          <Button
+            variant="icon"
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className={`p-1.5 rounded-md hover:bg-[hsl(var(--claude-hover))] transition-colors shrink-0
-              ${isCollapsed ? "mx-auto" : ""}`}
+            className={`shrink-0 ${isCollapsed ? "mx-auto" : ""}`}
             title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!isCollapsed}
           >
             {isCollapsed ? (
-              <PanelLeftOpen className="w-4 h-4 text-[hsl(var(--aui-muted-foreground))]" />
+              <PanelLeftOpen className="w-4 h-4" />
             ) : (
-              <PanelLeftClose className="w-4 h-4 text-[hsl(var(--aui-muted-foreground))]" />
+              <PanelLeftClose className="w-4 h-4" />
             )}
-          </button>
+          </Button>
         </div>
 
         {/* New session button */}
         <div className={isCollapsed ? "p-1.5" : "p-3"}>
           {isCollapsed ? (
-            <button
+            <Button
+              variant="ghost"
+              block
               onClick={() => setIsCollapsed(false)}
-              className="flex items-center justify-center w-full p-2 rounded-md
-                hover:bg-[hsl(var(--claude-hover))] transition-colors"
+              className="p-2"
               title="New Session"
+              aria-label="New Session"
             >
-              <span className="text-lg text-[hsl(var(--aui-muted-foreground))]">+</span>
-            </button>
+              <span className="text-lg">+</span>
+            </Button>
           ) : (
             <NewSessionDialog onCreate={onCreate} />
           )}
@@ -125,8 +131,8 @@ export function Sidebar({
       <div
         onMouseDown={handleMouseDown}
         className={`absolute top-0 right-0 w-1 h-full cursor-col-resize z-10
-          hover:bg-[hsl(var(--aui-primary)/0.25)] active:bg-[hsl(var(--aui-primary)/0.38)] transition-colors
-          ${isDragging ? "bg-[hsl(var(--aui-primary)/0.38)]" : ""}`}
+          hover:bg-app-accent/25 active:bg-app-accent/40 transition-app
+          ${isDragging ? "bg-app-accent/40" : ""}`}
       />
     </div>
   );
